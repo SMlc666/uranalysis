@@ -1,0 +1,803 @@
+#include "engine/decompiler/transforms.h"
+
+#include <algorithm>
+#include <functional>
+#include <sstream>
+#include <unordered_map>
+#include <unordered_set>
+
+namespace engine::decompiler {
+
+namespace {
+
+struct TempState {
+    std::unordered_set<std::string> used_names;
+    int counter = 0;
+};
+
+std::string type_for_size(std::size_t size) {
+    switch (size) {
+        case 1: return "uint8_t";
+        case 2: return "uint16_t";
+        case 4: return "uint32_t";
+        case 8: return "uint64_t";
+        default: return "auto";
+    }
+}
+
+std::string next_temp_name(TempState& state) {
+    while (true) {
+        std::string name = "tmp" + std::to_string(state.counter++);
+        if (state.used_names.insert(name).second) {
+            return name;
+        }
+    }
+}
+
+void collect_exprs(const mlil::MlilExpr& expr,
+                   std::unordered_map<std::string, int>& counts,
+                   std::unordered_map<std::string, mlil::MlilExpr>& reps,
+                   std::unordered_map<std::string, int>& costs) {
+    if (is_pure_expr(expr)) {
+        const std::string key = expr_key(expr);
+        if (!key.empty()) {
+            counts[key]++;
+            reps.emplace(key, expr);
+            costs.emplace(key, expr_cost(expr));
+        }
+    }
+    for (const auto& arg : expr.args) {
+        collect_exprs(arg, counts, reps, costs);
+    }
+}
+
+void collect_stmt_exprs(const Stmt& stmt,
+                        std::unordered_map<std::string, int>& counts,
+                        std::unordered_map<std::string, mlil::MlilExpr>& reps,
+                        std::unordered_map<std::string, int>& costs) {
+    collect_exprs(stmt.expr, counts, reps, costs);
+    collect_exprs(stmt.target, counts, reps, costs);
+    collect_exprs(stmt.condition, counts, reps, costs);
+    for (const auto& arg : stmt.args) {
+        collect_exprs(arg, counts, reps, costs);
+    }
+}
+
+void collect_var_names(const mlil::MlilExpr& expr, std::unordered_set<std::string>& out) {
+    if (expr.kind == mlil::MlilExprKind::kVar && !expr.var.name.empty()) {
+        out.insert(expr.var.name);
+        return;
+    }
+    for (const auto& arg : expr.args) {
+        collect_var_names(arg, out);
+    }
+}
+
+bool is_simple_offset_expr(const mlil::MlilExpr& expr) {
+    if (expr.kind != mlil::MlilExprKind::kOp || expr.args.size() != 2) {
+        return false;
+    }
+    if (expr.op != mlil::MlilOp::kAdd && expr.op != mlil::MlilOp::kSub) {
+        return false;
+    }
+    return is_var_or_imm(expr.args[0]) && is_var_or_imm(expr.args[1]);
+}
+
+bool is_simple_address_expr(const mlil::MlilExpr& expr) {
+    if (expr.kind != mlil::MlilExprKind::kOp || expr.args.size() != 2 || expr.op != mlil::MlilOp::kAdd) {
+        return false;
+    }
+    return (is_var_or_imm(expr.args[0]) && is_simple_offset_expr(expr.args[1])) ||
+           (is_var_or_imm(expr.args[1]) && is_simple_offset_expr(expr.args[0]));
+}
+
+bool is_simple_cse_expr(const mlil::MlilExpr& expr) {
+    if (expr.kind == mlil::MlilExprKind::kImm || expr.kind == mlil::MlilExprKind::kVar) {
+        return true;
+    }
+    return is_simple_offset_expr(expr) || is_simple_address_expr(expr);
+}
+
+struct AvailableExpr {
+    mlil::MlilExpr temp;
+    std::unordered_set<std::string> deps;
+};
+
+void materialize_segment(std::vector<Stmt>& segment, Function& function, TempState& state, std::vector<Stmt>& out) {
+    if (segment.empty()) {
+        return;
+    }
+    std::unordered_map<std::string, int> counts;
+    std::unordered_map<std::string, mlil::MlilExpr> reps;
+    std::unordered_map<std::string, int> costs;
+    for (const auto& stmt : segment) {
+        collect_stmt_exprs(stmt, counts, reps, costs);
+    }
+
+    const int kRepeatCost = 3;
+    const int kComplexCost = 6;
+
+    auto should_materialize = [&](const std::string& key) -> bool {
+        if (key.empty()) {
+            return false;
+        }
+        auto rep_it = reps.find(key);
+        if (rep_it != reps.end() && is_simple_cse_expr(rep_it->second)) {
+            return false;
+        }
+        auto count_it = counts.find(key);
+        if (count_it == counts.end()) {
+            return false;
+        }
+        const int count = count_it->second;
+        const int cost = costs[key];
+        return cost >= kComplexCost || (count >= 2 && cost >= kRepeatCost);
+    };
+
+    std::unordered_map<std::string, AvailableExpr> available;
+
+    auto invalidate_available = [&](const std::unordered_set<std::string>& names) {
+        if (names.empty()) {
+            return;
+        }
+        for (auto it = available.begin(); it != available.end();) {
+            bool kill = false;
+            for (const auto& name : names) {
+                if (it->second.deps.find(name) != it->second.deps.end()) {
+                    kill = true;
+                    break;
+                }
+            }
+            if (kill) {
+                it = available.erase(it);
+            } else {
+                ++it;
+            }
+        }
+    };
+
+    std::function<void(mlil::MlilExpr&, std::vector<Stmt>&)> materialize_expr;
+    materialize_expr = [&](mlil::MlilExpr& expr, std::vector<Stmt>& pre) {
+        if (is_pure_expr(expr)) {
+            const std::string key = expr_key(expr);
+            if (!key.empty()) {
+                auto it = available.find(key);
+                if (it != available.end()) {
+                    expr = it->second.temp;
+                    return;
+                }
+                if (should_materialize(key)) {
+                    auto rep_it = reps.find(key);
+                    if (rep_it != reps.end()) {
+                        const mlil::MlilExpr& rep = rep_it->second;
+                        std::string name = next_temp_name(state);
+                        VarDecl local;
+                        local.name = name;
+                        local.type = type_for_size(rep.size);
+                        function.locals.push_back(local);
+
+                        Stmt assign;
+                        assign.kind = StmtKind::kAssign;
+                        assign.var.name = name;
+                        assign.var.version = -1;
+                        assign.var.size = rep.size;
+                        assign.expr = rep;
+                        pre.push_back(assign);
+
+                        AvailableExpr entry;
+                        entry.temp = make_var_expr(name, rep.size);
+                        collect_var_names(rep, entry.deps);
+                        available.emplace(key, entry);
+
+                        expr = entry.temp;
+                        return;
+                    }
+                }
+            }
+        }
+        for (auto& arg : expr.args) {
+            materialize_expr(arg, pre);
+        }
+    };
+
+    for (auto& stmt : segment) {
+        std::vector<Stmt> pre;
+
+        switch (stmt.kind) {
+            case StmtKind::kAssign:
+                materialize_expr(stmt.expr, pre);
+                break;
+            case StmtKind::kStore:
+                materialize_expr(stmt.target, pre);
+                materialize_expr(stmt.expr, pre);
+                break;
+            case StmtKind::kCall:
+                materialize_expr(stmt.target, pre);
+                for (auto& arg : stmt.args) {
+                    materialize_expr(arg, pre);
+                }
+                break;
+            case StmtKind::kReturn:
+                materialize_expr(stmt.expr, pre);
+                break;
+            default:
+                materialize_expr(stmt.expr, pre);
+                materialize_expr(stmt.target, pre);
+                break;
+        }
+
+        for (auto& add : pre) {
+            out.push_back(std::move(add));
+        }
+        out.push_back(std::move(stmt));
+
+        std::unordered_set<std::string> modified;
+        if (out.back().kind == StmtKind::kAssign && !out.back().var.name.empty()) {
+            modified.insert(out.back().var.name);
+        } else if (out.back().kind == StmtKind::kCall) {
+            for (const auto& ret : out.back().returns) {
+                if (!ret.name.empty()) {
+                    modified.insert(ret.name);
+                }
+            }
+        }
+        invalidate_available(modified);
+    }
+}
+
+void materialize_block(std::vector<Stmt>& stmts, Function& function, TempState& state) {
+    std::vector<Stmt> out;
+    std::vector<Stmt> segment;
+
+    auto flush_segment = [&]() {
+        materialize_segment(segment, function, state, out);
+        segment.clear();
+    };
+
+    for (auto& stmt : stmts) {
+        if (stmt.kind == StmtKind::kIf) {
+            materialize_block(stmt.then_body, function, state);
+            materialize_block(stmt.else_body, function, state);
+        } else if (stmt.kind == StmtKind::kWhile || stmt.kind == StmtKind::kDoWhile || stmt.kind == StmtKind::kFor) {
+            materialize_block(stmt.body, function, state);
+            materialize_block(stmt.then_body, function, state);
+            materialize_block(stmt.else_body, function, state);
+        }
+
+        if (is_control_stmt(stmt)) {
+            flush_segment();
+            out.push_back(std::move(stmt));
+        } else {
+            segment.push_back(std::move(stmt));
+        }
+    }
+    flush_segment();
+    stmts = std::move(out);
+}
+
+bool expr_is_inlineable(const mlil::MlilExpr& expr) {
+    if (is_pure_expr(expr)) {
+        return true;
+    }
+    if (expr.kind == mlil::MlilExprKind::kLoad && !expr.args.empty()) {
+        return is_pure_expr(expr.args.front());
+    }
+    return false;
+}
+
+bool expr_has_load(const mlil::MlilExpr& expr) {
+    if (expr.kind == mlil::MlilExprKind::kLoad) {
+        return true;
+    }
+    for (const auto& arg : expr.args) {
+        if (expr_has_load(arg)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool stmt_modifies_any(const Stmt& stmt, const std::unordered_set<std::string>& deps) {
+    if (deps.empty()) {
+        return false;
+    }
+    if (stmt.kind == StmtKind::kAssign) {
+        return deps.find(stmt.var.name) != deps.end();
+    }
+    if (stmt.kind == StmtKind::kCall) {
+        for (const auto& ret : stmt.returns) {
+            if (deps.find(ret.name) != deps.end()) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+bool is_block_boundary(const Stmt& stmt) {
+    switch (stmt.kind) {
+        case StmtKind::kIf:
+        case StmtKind::kWhile:
+        case StmtKind::kDoWhile:
+        case StmtKind::kFor:
+        case StmtKind::kLabel:
+        case StmtKind::kGoto:
+        case StmtKind::kBreak:
+        case StmtKind::kContinue:
+        case StmtKind::kReturn:
+            return true;
+        default:
+            return false;
+    }
+}
+
+bool stmt_uses_var_in_condition(const Stmt& stmt, const std::string& name) {
+    switch (stmt.kind) {
+        case StmtKind::kIf:
+        case StmtKind::kWhile:
+        case StmtKind::kDoWhile:
+        case StmtKind::kFor:
+            return expr_uses_var(stmt.condition, name);
+        case StmtKind::kReturn:
+            return expr_uses_var(stmt.expr, name);
+        default:
+            return false;
+    }
+}
+
+bool stmt_uses_var_in_body(const Stmt& stmt, const std::string& name) {
+    if (stmt.kind == StmtKind::kIf) {
+        for (const auto& inner : stmt.then_body) {
+            if (stmt_uses_var(inner, name)) {
+                return true;
+            }
+        }
+        for (const auto& inner : stmt.else_body) {
+            if (stmt_uses_var(inner, name)) {
+                return true;
+            }
+        }
+    } else if (stmt.kind == StmtKind::kWhile || stmt.kind == StmtKind::kDoWhile || stmt.kind == StmtKind::kFor) {
+        for (const auto& inner : stmt.body) {
+            if (stmt_uses_var(inner, name)) {
+                return true;
+            }
+        }
+        for (const auto& inner : stmt.then_body) {
+            if (stmt_uses_var(inner, name)) {
+                return true;
+            }
+        }
+        for (const auto& inner : stmt.else_body) {
+            if (stmt_uses_var(inner, name)) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+void replace_var_in_expr(mlil::MlilExpr& expr, const std::string& name, const mlil::MlilExpr& replacement) {
+    if (expr.kind == mlil::MlilExprKind::kVar && expr.var.name == name) {
+        expr = replacement;
+        return;
+    }
+    for (auto& arg : expr.args) {
+        replace_var_in_expr(arg, name, replacement);
+    }
+}
+
+void replace_var_in_stmt(Stmt& stmt, const std::string& name, const mlil::MlilExpr& replacement) {
+    switch (stmt.kind) {
+        case StmtKind::kAssign:
+            replace_var_in_expr(stmt.expr, name, replacement);
+            break;
+        case StmtKind::kStore:
+            replace_var_in_expr(stmt.target, name, replacement);
+            replace_var_in_expr(stmt.expr, name, replacement);
+            break;
+        case StmtKind::kCall:
+            replace_var_in_expr(stmt.target, name, replacement);
+            for (auto& arg : stmt.args) {
+                replace_var_in_expr(arg, name, replacement);
+            }
+            break;
+        case StmtKind::kReturn:
+            replace_var_in_expr(stmt.expr, name, replacement);
+            break;
+        case StmtKind::kIf:
+        case StmtKind::kWhile:
+        case StmtKind::kDoWhile:
+        case StmtKind::kFor:
+            replace_var_in_expr(stmt.condition, name, replacement);
+            break;
+        default:
+            break;
+    }
+}
+
+void inline_temps_block(std::vector<Stmt>& stmts) {
+    for (auto& stmt : stmts) {
+        if (stmt.kind == StmtKind::kIf) {
+            inline_temps_block(stmt.then_body);
+            inline_temps_block(stmt.else_body);
+        } else if (stmt.kind == StmtKind::kWhile || stmt.kind == StmtKind::kDoWhile || stmt.kind == StmtKind::kFor) {
+            inline_temps_block(stmt.body);
+            inline_temps_block(stmt.then_body);
+            inline_temps_block(stmt.else_body);
+        }
+    }
+
+    bool changed = true;
+    while (changed) {
+        changed = false;
+        for (std::size_t i = 0; i < stmts.size(); ++i) {
+            Stmt& stmt = stmts[i];
+            if (stmt.kind != StmtKind::kAssign) {
+                continue;
+            }
+            if (stmt.var.name.empty()) {
+                continue;
+            }
+            if (!expr_is_inlineable(stmt.expr)) {
+                continue;
+            }
+            if (stmt.expr.kind == mlil::MlilExprKind::kVar && stmt.expr.var.name == stmt.var.name) {
+                continue;
+            }
+            if (expr_uses_var(stmt.expr, stmt.var.name)) {
+                continue;
+            }
+
+            std::unordered_set<std::string> deps;
+            collect_expr_vars(stmt.expr, deps);
+            const bool has_load = expr_has_load(stmt.expr);
+
+            int use_index = -1;
+            for (std::size_t j = i + 1; j < stmts.size(); ++j) {
+                Stmt& next = stmts[j];
+                if (stmt_defines_var(next, stmt.var.name)) {
+                    break;
+                }
+                if (stmt_modifies_any(next, deps)) {
+                    break;
+                }
+                if (has_load && (next.kind == StmtKind::kStore || next.kind == StmtKind::kCall)) {
+                    if (stmt_uses_var(next, stmt.var.name) && use_index == -1) {
+                        use_index = static_cast<int>(j);
+                    }
+                    break;
+                }
+                if (stmt_uses_var(next, stmt.var.name)) {
+                    if (use_index != -1) {
+                        use_index = -2;
+                        break;
+                    }
+                    use_index = static_cast<int>(j);
+                }
+                if (is_block_boundary(next)) {
+                    if (use_index == -1 && stmt_uses_var_in_condition(next, stmt.var.name) &&
+                        !stmt_uses_var_in_body(next, stmt.var.name)) {
+                        use_index = static_cast<int>(j);
+                    }
+                    break;
+                }
+            }
+
+            if (use_index >= 0) {
+                replace_var_in_stmt(stmts[static_cast<std::size_t>(use_index)], stmt.var.name, stmt.expr);
+                stmts.erase(stmts.begin() + static_cast<std::ptrdiff_t>(i));
+                changed = true;
+                break;
+            }
+        }
+    }
+}
+
+bool match_assign_var_expr(const Stmt& stmt, std::string& name, mlil::MlilExpr& expr) {
+    if (stmt.kind != StmtKind::kAssign) {
+        return false;
+    }
+    if (stmt.var.name.empty()) {
+        return false;
+    }
+    name = stmt.var.name;
+    expr = stmt.expr;
+    return true;
+}
+
+void fold_store_address_temps_block(std::vector<Stmt>& stmts) {
+    for (auto& stmt : stmts) {
+        if (stmt.kind == StmtKind::kIf) {
+            fold_store_address_temps_block(stmt.then_body);
+            fold_store_address_temps_block(stmt.else_body);
+        } else if (stmt.kind == StmtKind::kWhile || stmt.kind == StmtKind::kDoWhile || stmt.kind == StmtKind::kFor) {
+            fold_store_address_temps_block(stmt.body);
+            fold_store_address_temps_block(stmt.then_body);
+            fold_store_address_temps_block(stmt.else_body);
+        }
+    }
+
+    for (std::size_t i = 0; i + 1 < stmts.size(); ++i) {
+        std::string name;
+        mlil::MlilExpr expr;
+        if (!match_assign_var_expr(stmts[i], name, expr)) {
+            continue;
+        }
+        if (!expr_is_inlineable(expr)) {
+            continue;
+        }
+        if (expr_uses_var(expr, name)) {
+            continue;
+        }
+        Stmt& next = stmts[i + 1];
+        if (next.kind != StmtKind::kStore) {
+            continue;
+        }
+        if (!stmt_uses_var(next, name)) {
+            continue;
+        }
+        replace_var_in_stmt(next, name, expr);
+        stmts.erase(stmts.begin() + static_cast<std::ptrdiff_t>(i));
+        if (i > 0) {
+            --i;
+        }
+    }
+}
+
+void collect_expr_uses(const mlil::MlilExpr& expr, std::unordered_set<std::string>& used) {
+    if (expr.kind == mlil::MlilExprKind::kVar && !expr.var.name.empty()) {
+        used.insert(expr.var.name);
+    }
+    for (const auto& arg : expr.args) {
+        collect_expr_uses(arg, used);
+    }
+}
+
+void collect_stmt_def_counts(const Stmt& stmt, std::unordered_map<std::string, int>& counts) {
+    if (stmt.kind == StmtKind::kAssign) {
+        if (!stmt.var.name.empty()) {
+            counts[stmt.var.name]++;
+        }
+    } else if (stmt.kind == StmtKind::kCall) {
+        for (const auto& ret : stmt.returns) {
+            if (!ret.name.empty()) {
+                counts[ret.name]++;
+            }
+        }
+    }
+    if (stmt.kind == StmtKind::kIf || stmt.kind == StmtKind::kWhile ||
+        stmt.kind == StmtKind::kDoWhile || stmt.kind == StmtKind::kFor) {
+        for (const auto& inner : stmt.then_body) {
+            collect_stmt_def_counts(inner, counts);
+        }
+        for (const auto& inner : stmt.else_body) {
+            collect_stmt_def_counts(inner, counts);
+        }
+        for (const auto& inner : stmt.body) {
+            collect_stmt_def_counts(inner, counts);
+        }
+    }
+}
+
+void collect_modified_vars_pseudoc(const std::vector<Stmt>& stmts, std::unordered_set<std::string>& out) {
+    for (const auto& stmt : stmts) {
+        if (stmt.kind == StmtKind::kAssign && !stmt.var.name.empty()) {
+            out.insert(stmt.var.name);
+        } else if (stmt.kind == StmtKind::kCall) {
+            for (const auto& ret : stmt.returns) {
+                if (!ret.name.empty()) {
+                    out.insert(ret.name);
+                }
+            }
+        } else if (stmt.kind == StmtKind::kIf) {
+            collect_modified_vars_pseudoc(stmt.then_body, out);
+            collect_modified_vars_pseudoc(stmt.else_body, out);
+        } else if (stmt.kind == StmtKind::kWhile || stmt.kind == StmtKind::kDoWhile || stmt.kind == StmtKind::kFor) {
+            collect_modified_vars_pseudoc(stmt.body, out);
+            collect_modified_vars_pseudoc(stmt.then_body, out);
+            collect_modified_vars_pseudoc(stmt.else_body, out);
+        }
+    }
+}
+
+struct AvailExprInfo {
+    mlil::MlilExpr expr;
+    std::unordered_set<std::string> deps;
+    std::string key;
+};
+
+bool expr_depends_on(const std::unordered_set<std::string>& deps, const std::string& name) {
+    return deps.find(name) != deps.end();
+}
+
+void substitute_expr_with_avail(mlil::MlilExpr& expr,
+                                const std::unordered_map<std::string, AvailExprInfo>& avail,
+                                const std::unordered_map<std::string, int>& def_counts,
+                                int depth = 0) {
+    if (depth > 12) {
+        return;
+    }
+    if (expr.kind == mlil::MlilExprKind::kVar && !expr.var.name.empty()) {
+        auto def_it = def_counts.find(expr.var.name);
+        if (def_it != def_counts.end() && def_it->second > 1) {
+            return;
+        }
+        auto it = avail.find(expr.var.name);
+        if (it != avail.end()) {
+            expr = it->second.expr;
+            substitute_expr_with_avail(expr, avail, def_counts, depth + 1);
+            return;
+        }
+    }
+    for (auto& arg : expr.args) {
+        substitute_expr_with_avail(arg, avail, def_counts, depth + 1);
+    }
+}
+
+void substitute_stmt_with_avail(Stmt& stmt,
+                                const std::unordered_map<std::string, AvailExprInfo>& avail,
+                                const std::unordered_map<std::string, int>& def_counts) {
+    switch (stmt.kind) {
+        case StmtKind::kAssign:
+            substitute_expr_with_avail(stmt.expr, avail, def_counts);
+            break;
+        case StmtKind::kStore:
+            substitute_expr_with_avail(stmt.target, avail, def_counts);
+            substitute_expr_with_avail(stmt.expr, avail, def_counts);
+            break;
+        case StmtKind::kCall:
+            substitute_expr_with_avail(stmt.target, avail, def_counts);
+            for (auto& arg : stmt.args) {
+                substitute_expr_with_avail(arg, avail, def_counts);
+            }
+            break;
+        case StmtKind::kReturn:
+            substitute_expr_with_avail(stmt.expr, avail, def_counts);
+            break;
+        case StmtKind::kIf:
+        case StmtKind::kWhile:
+        case StmtKind::kDoWhile:
+        case StmtKind::kFor:
+            substitute_expr_with_avail(stmt.condition, avail, def_counts);
+            break;
+        default:
+            break;
+    }
+}
+
+bool avail_entry_equals(const AvailExprInfo& a, const AvailExprInfo& b) {
+    if (a.key.empty() || b.key.empty()) {
+        return false;
+    }
+    return a.key == b.key;
+}
+
+void avail_kill_on_defs(std::unordered_map<std::string, AvailExprInfo>& avail,
+                        const std::unordered_set<std::string>& defs) {
+    if (defs.empty()) {
+        return;
+    }
+    for (auto it = avail.begin(); it != avail.end();) {
+        bool kill = false;
+        for (const auto& name : defs) {
+            if (expr_depends_on(it->second.deps, name) || it->first == name) {
+                kill = true;
+                break;
+            }
+        }
+        if (kill) {
+            it = avail.erase(it);
+        } else {
+            ++it;
+        }
+    }
+}
+
+void propagate_pseudoc_block(std::vector<Stmt>& stmts,
+                             std::unordered_map<std::string, AvailExprInfo>& avail,
+                             const std::unordered_map<std::string, int>& def_counts) {
+    for (auto& stmt : stmts) {
+        if (stmt.kind == StmtKind::kIf) {
+            substitute_stmt_with_avail(stmt, avail, def_counts);
+            auto then_avail = avail;
+            auto else_avail = avail;
+            propagate_pseudoc_block(stmt.then_body, then_avail, def_counts);
+            propagate_pseudoc_block(stmt.else_body, else_avail, def_counts);
+            std::unordered_map<std::string, AvailExprInfo> merged;
+            for (const auto& entry : then_avail) {
+                auto it = else_avail.find(entry.first);
+                if (it != else_avail.end() && avail_entry_equals(entry.second, it->second)) {
+                    merged[entry.first] = entry.second;
+                }
+            }
+            avail = std::move(merged);
+            continue;
+        }
+
+        if (stmt.kind == StmtKind::kWhile || stmt.kind == StmtKind::kDoWhile || stmt.kind == StmtKind::kFor) {
+            std::unordered_set<std::string> loop_mod;
+            collect_modified_vars_pseudoc(stmt.body, loop_mod);
+            if (stmt.kind == StmtKind::kFor) {
+                collect_modified_vars_pseudoc(stmt.then_body, loop_mod);
+                collect_modified_vars_pseudoc(stmt.else_body, loop_mod);
+            }
+            auto cond_avail = avail;
+            avail_kill_on_defs(cond_avail, loop_mod);
+            simplify_expr(stmt.condition);
+
+            auto body_avail = cond_avail;
+            avail_kill_on_defs(body_avail, loop_mod);
+            propagate_pseudoc_block(stmt.body, body_avail, def_counts);
+            propagate_pseudoc_block(stmt.then_body, body_avail, def_counts);
+            propagate_pseudoc_block(stmt.else_body, body_avail, def_counts);
+
+            avail_kill_on_defs(avail, loop_mod);
+            continue;
+        }
+
+        substitute_stmt_with_avail(stmt, avail, def_counts);
+
+        if (stmt.kind == StmtKind::kAssign && !stmt.var.name.empty()) {
+            const std::string name = stmt.var.name;
+            std::unordered_set<std::string> defs;
+            defs.insert(name);
+            avail_kill_on_defs(avail, defs);
+
+            auto def_it = def_counts.find(name);
+            if (def_it == def_counts.end() || def_it->second <= 1) {
+                if (is_pure_expr(stmt.expr)) {
+                    std::unordered_set<std::string> deps;
+                    collect_expr_vars(stmt.expr, deps);
+                    if (!expr_depends_on(deps, name)) {
+                        AvailExprInfo entry;
+                        entry.expr = stmt.expr;
+                        entry.deps = std::move(deps);
+                        entry.key = expr_key(stmt.expr);
+                        avail[name] = std::move(entry);
+                    }
+                }
+            }
+        } else if (stmt.kind == StmtKind::kCall) {
+            std::unordered_set<std::string> defs;
+            for (const auto& ret : stmt.returns) {
+                if (!ret.name.empty()) {
+                    defs.insert(ret.name);
+                }
+            }
+            avail_kill_on_defs(avail, defs);
+        }
+    }
+}
+
+} // namespace
+
+void materialize_temporaries(Function& function) {
+    TempState state;
+    for (const auto& param : function.params) {
+        state.used_names.insert(param.name);
+    }
+    for (const auto& local : function.locals) {
+        state.used_names.insert(local.name);
+    }
+    materialize_block(function.stmts, function, state);
+}
+
+void inline_trivial_temps(Function& function) {
+    inline_temps_block(function.stmts);
+}
+
+void fold_store_address_temps(Function& function) {
+    fold_store_address_temps_block(function.stmts);
+}
+
+void propagate_pseudoc_exprs(Function& function) {
+    std::unordered_map<std::string, int> def_counts;
+    for (const auto& stmt : function.stmts) {
+        collect_stmt_def_counts(stmt, def_counts);
+    }
+    std::unordered_map<std::string, AvailExprInfo> avail;
+    propagate_pseudoc_block(function.stmts, avail, def_counts);
+}
+
+} // namespace engine::decompiler
