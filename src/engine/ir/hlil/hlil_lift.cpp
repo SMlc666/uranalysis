@@ -170,6 +170,9 @@ private:
             const BlockInfo* info = cfg_.get_info(current);
             if (!info) break;
 
+            // Track where statements start for this block (for self-loop handling)
+            std::size_t stmts_start_idx = stmts.size();
+
             // 1. Emit statements
             lift_block_stmts(info->block, stmts);
 
@@ -211,7 +214,7 @@ private:
                         // Both in (infinite or internal break)
                         loop_stmt.condition = make_imm(1, 1);
                         body_start = t_tgt;
-                        // Determine if one path eventually exits? 
+                        // Determine if one path eventually exits?
                         // For now treat as infinite.
                     }
                 } else {
@@ -219,11 +222,31 @@ private:
                      body_start = info->succs[0];
                 }
 
-                if (body_start != 0) {
+                // P1 Fix: Handle self-loops (body_start == current)
+                // In self-loops, the loop header IS the loop body
+                // We need to move statements from outer context into loop body
+                if (body_start == current) {
+                    // Self-loop: move previously extracted statements into loop body
+                    // These statements were added at stmts_start_idx by lift_block_stmts above
+                    for (std::size_t i = stmts_start_idx; i < stmts.size(); ++i) {
+                        loop_stmt.body.push_back(std::move(stmts[i]));
+                    }
+                    // Remove moved statements from outer list
+                    stmts.erase(stmts.begin() + static_cast<std::ptrdiff_t>(stmts_start_idx), stmts.end());
+                } else if (body_start != 0) {
                     // Recurse for body
                     // The 'stop_at' for the body is the header itself (current)
                     // We also pass current as loop_header and exit_target as loop_exit
                     loop_stmt.body = lift_region(body_start, current, path, current, exit_target);
+                }
+                
+                // Universal fallback for empty loop bodies
+                // Applies to both self-loops and regular loops
+                if (loop_stmt.body.empty() && body_start != 0) {
+                    const BlockInfo* body_info = cfg_.get_info(body_start);
+                    if (body_info) {
+                        lift_block_stmts(body_info->block, loop_stmt.body);
+                    }
                 }
                 
                 stmts.push_back(std::move(loop_stmt));

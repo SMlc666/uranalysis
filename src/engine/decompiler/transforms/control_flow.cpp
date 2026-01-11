@@ -209,7 +209,122 @@ void flatten_guard_clauses_block(std::vector<Stmt>& stmts) {
     }
 }
 
+bool extract_switch_case(const Stmt& stmt, mlil::MlilExpr& cond_expr, std::uint64_t& case_val) {
+    if (stmt.kind != StmtKind::kIf) {
+        return false;
+    }
+    // Match: if (x == c)
+    if (stmt.condition.kind == mlil::MlilExprKind::kOp && stmt.condition.op == mlil::MlilOp::kEq &&
+        stmt.condition.args.size() == 2) {
+        std::uint64_t imm = 0;
+        if (get_imm_value(stmt.condition.args[1], imm)) {
+            cond_expr = stmt.condition.args[0];
+            case_val = imm;
+            return true;
+        }
+        if (get_imm_value(stmt.condition.args[0], imm)) {
+            cond_expr = stmt.condition.args[1];
+            case_val = imm;
+            return true;
+        }
+    }
+    return false;
+}
+
+void normalize_switch_statements_block(std::vector<Stmt>& stmts) {
+    // First recurse into nested structures
+    for (auto& stmt : stmts) {
+        if (stmt.kind == StmtKind::kIf) {
+            normalize_switch_statements_block(stmt.then_body);
+            normalize_switch_statements_block(stmt.else_body);
+        } else if (stmt.kind == StmtKind::kWhile || stmt.kind == StmtKind::kDoWhile || stmt.kind == StmtKind::kFor) {
+            normalize_switch_statements_block(stmt.body);
+            normalize_switch_statements_block(stmt.then_body);
+            normalize_switch_statements_block(stmt.else_body);
+        } else if (stmt.kind == StmtKind::kSwitch) {
+            for (auto& case_body : stmt.case_bodies) {
+                normalize_switch_statements_block(case_body);
+            }
+            normalize_switch_statements_block(stmt.default_body);
+        }
+    }
+
+    // Look for if-else chains that can be converted to switch
+    for (std::size_t i = 0; i < stmts.size(); ++i) {
+        Stmt& stmt = stmts[i];
+        if (stmt.kind != StmtKind::kIf) {
+            continue;
+        }
+
+        // Try to form a switch
+        mlil::MlilExpr switch_cond;
+        std::uint64_t first_case_val = 0;
+        if (!extract_switch_case(stmt, switch_cond, first_case_val)) {
+            continue;
+        }
+
+        // Collect if-else chain
+        std::vector<std::uint64_t> case_values;
+        std::vector<std::vector<Stmt>> case_bodies;
+        std::vector<Stmt> default_body;
+        
+        Stmt* current = &stmt;
+        int chain_length = 0;
+        const int kMinCases = 3;  // Minimum cases to form a switch
+        
+        while (current && current->kind == StmtKind::kIf) {
+            mlil::MlilExpr cond;
+            std::uint64_t val = 0;
+            if (!extract_switch_case(*current, cond, val)) {
+                // This if doesn't match switch pattern, treat else_body as default
+                if (chain_length > 0 && !current->else_body.empty()) {
+                    // The else of this mismatched if becomes part of default
+                    for (auto& s : current->else_body) {
+                        default_body.push_back(std::move(s));
+                    }
+                }
+                break;
+            }
+            if (!expr_key_equal(cond, switch_cond)) {
+                // Different switch variable, stop here
+                break;
+            }
+            
+            case_values.push_back(val);
+            case_bodies.push_back(current->then_body);
+            chain_length++;
+            
+            // Move to else branch
+            if (current->else_body.size() == 1 && current->else_body[0].kind == StmtKind::kIf) {
+                current = &current->else_body[0];
+            } else if (!current->else_body.empty()) {
+                // else_body is the default case
+                default_body = current->else_body;
+                break;
+            } else {
+                break;
+            }
+        }
+        
+        // Only convert to switch if we have enough cases
+        if (chain_length >= kMinCases) {
+            Stmt switch_stmt;
+            switch_stmt.kind = StmtKind::kSwitch;
+            switch_stmt.condition = switch_cond;
+            switch_stmt.case_values = std::move(case_values);
+            switch_stmt.case_bodies = std::move(case_bodies);
+            switch_stmt.default_body = std::move(default_body);
+            
+            stmts[i] = std::move(switch_stmt);
+        }
+    }
+}
+
 } // namespace
+
+void recover_switch_statements(Function& function) {
+    normalize_switch_statements_block(function.stmts);
+}
 
 void merge_nested_ifs(Function& function) {
     merge_nested_ifs_block(function.stmts);

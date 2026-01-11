@@ -234,6 +234,86 @@ bool build_cfg_arm64(const LoadedImage& image,
         function.blocks.push_back(std::move(block));
     }
 
+    // Block splitting: split blocks when another block's start address falls in the middle
+    // This handles cases like loop headers that are jump targets from multiple sources
+    bool did_split = true;
+    while (did_split) {
+        did_split = false;
+        std::vector<std::uint64_t> block_starts;
+        block_starts.reserve(function.blocks.size());
+        for (const auto& block : function.blocks) {
+            block_starts.push_back(block.start);
+        }
+        std::sort(block_starts.begin(), block_starts.end());
+
+        for (std::size_t i = 0; i < function.blocks.size(); ++i) {
+            auto& block = function.blocks[i];
+            
+            // Find if any other block's start address is inside this block's range
+            for (std::uint64_t other_start : block_starts) {
+                if (other_start <= block.start || other_start >= block.end) {
+                    continue;
+                }
+                
+                // Found a block that needs to be split at 'other_start'
+                // Find the instruction index where we need to split
+                std::size_t split_idx = 0;
+                for (std::size_t j = 0; j < block.instructions.size(); ++j) {
+                    if (block.instructions[j].address >= other_start) {
+                        split_idx = j;
+                        break;
+                    }
+                }
+                
+                if (split_idx == 0) {
+                    continue;  // Can't split at the beginning
+                }
+                
+                // Create the latter part as a new block reference (we'll remove duplicated instructions)
+                // Actually, we just need to truncate the current block
+                BasicBlock first_half;
+                first_half.start = block.start;
+                first_half.instructions.assign(block.instructions.begin(),
+                                               block.instructions.begin() + static_cast<std::ptrdiff_t>(split_idx));
+                if (!first_half.instructions.empty()) {
+                    const auto& last = first_half.instructions.back();
+                    first_half.end = last.address + last.size;
+                } else {
+                    first_half.end = first_half.start;
+                }
+                
+                // The first half should now jump to other_start (the split point)
+                // We need to update successors based on the last instruction in the first half
+                const auto& last_inst_first = first_half.instructions.back();
+                if (last_inst_first.branch == BranchKind::kNone) {
+                    // Linear flow - successor is the split point
+                    first_half.successors.push_back(other_start);
+                } else {
+                    // Keep original branch behavior
+                    first_half.successors = last_inst_first.targets;
+                    if (last_inst_first.conditional) {
+                        first_half.successors.push_back(first_half.end);
+                    }
+                }
+                
+                block = std::move(first_half);
+                block_index[block.start] = i;
+                did_split = true;
+                break;  // Restart the outer loop to check for more splits
+            }
+            
+            if (did_split) {
+                break;
+            }
+        }
+    }
+    
+    // Rebuild block_index after splitting
+    block_index.clear();
+    for (std::size_t i = 0; i < function.blocks.size(); ++i) {
+        block_index[function.blocks[i].start] = i;
+    }
+
     for (auto& block : function.blocks) {
         block.predecessors.clear();
     }

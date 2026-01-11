@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <string>
+#include <functional>
 #include <unordered_map>
 #include <vector>
 
@@ -29,6 +30,7 @@ enum class StmtKind {
     kWhile,
     kDoWhile,
     kFor,
+    kSwitch,
 };
 
 struct Stmt {
@@ -54,6 +56,11 @@ struct Stmt {
     std::vector<Stmt> then_body;
     std::vector<Stmt> else_body;
     std::vector<Stmt> body;
+    
+    // kSwitch
+    std::vector<std::uint64_t> case_values;
+    std::vector<std::vector<Stmt>> case_bodies;
+    std::vector<Stmt> default_body;
 };
 
 struct Function {
@@ -70,20 +77,26 @@ struct FunctionHints {
     std::string name;
     std::string return_type;
     std::vector<VarDecl> params;
+    std::function<int(std::uint64_t)> param_count_provider;
 };
+
+using SymbolResolver = std::function<std::string(std::uint64_t)>;
 
 bool build_pseudoc_from_hlil(const hlil::Function& hlil_function,
                              Function& out,
-                             std::string& error);
+                             std::string& error,
+                             SymbolResolver resolver = nullptr);
 bool build_pseudoc_from_mlil_ssa(const mlil::Function& mlil_function,
                                  Function& out,
                                  std::string& error,
-                                 const FunctionHints* hints = nullptr);
+                                 const FunctionHints* hints = nullptr,
+                                 SymbolResolver resolver = nullptr);
 bool build_pseudoc_from_mlil_ssa_debug(const mlil::Function& mlil_function,
                                        Function& out,
                                        std::string& error,
                                        const FunctionHints* hints,
-                                       mlil::Function* mlil_lowered_out);
+                                       mlil::Function* mlil_lowered_out,
+                                       SymbolResolver resolver = nullptr);
 void emit_pseudoc(const Function& function, std::vector<std::string>& out_lines);
 
 }  // namespace engine::decompiler

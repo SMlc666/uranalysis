@@ -22,6 +22,7 @@ enum class MlilExprKind {
     kImm,
     kOp,
     kLoad,
+    kCall,
 };
 
 enum class MlilOp {

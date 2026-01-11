@@ -5,7 +5,7 @@
 #include <sstream>
 #include <unordered_map>
 
-#include "transforms.h"
+#include "engine/decompiler/transforms.h"
 
 namespace engine::decompiler {
 
@@ -327,6 +327,19 @@ std::string format_expr_raw(const mlil::MlilExpr& expr) {
             oss << ")";
             return oss.str();
         }
+        case mlil::MlilExprKind::kCall: {
+            std::ostringstream oss;
+            std::string call_target = format_expr_raw(expr.args.empty() ? mlil::MlilExpr{} : expr.args[0]);
+            oss << call_target << "(";
+            for (std::size_t i = 1; i < expr.args.size(); ++i) {
+                if (i > 1) {
+                    oss << ", ";
+                }
+                oss << format_expr_raw(expr.args[i]);
+            }
+            oss << ")";
+            return oss.str();
+        }
     }
     return "expr";
 }
@@ -363,7 +376,7 @@ std::string format_bool_expr(const mlil::MlilExpr& expr) {
 
 std::string format_condition(const mlil::MlilExpr& expr) {
     mlil::MlilExpr simplified = expr;
-    simplify_expr(simplified);
+    normalize_condition_expr(simplified);
     return format_bool_expr(simplified);
 }
 
@@ -511,7 +524,12 @@ void emit_stmt_to_lines(const Stmt& stmt,
             if (stmt.expr.kind == mlil::MlilExprKind::kInvalid) {
                 line += "return;";
             } else if (return_type == "void") {
-                line += "return;";
+                // If the function is void but returns a value, print it anyway for debugging/correctness
+                if (stmt.expr.kind != mlil::MlilExprKind::kInvalid) {
+                     line += "return " + format_expr(stmt.expr) + "; /* warning: void return */";
+                } else {
+                     line += "return;";
+                }
             } else {
                 line += "return " + format_expr(stmt.expr) + ";";
             }
@@ -604,8 +622,37 @@ void emit_stmt_to_lines(const Stmt& stmt,
             out_lines.push_back(pad + "} while (" + format_condition(stmt.condition) + ");");
             break;
         }
+        case StmtKind::kSwitch: {
+            std::string line = pad + "switch (" + format_condition(stmt.condition) + ") {";
+            out_lines.push_back(std::move(line));
+            for (std::size_t c = 0; c < stmt.case_values.size(); ++c) {
+                out_lines.push_back(pad + "    case " + format_hex(stmt.case_values[c]) + ":");
+                if (c < stmt.case_bodies.size()) {
+                    for (const auto& inner : stmt.case_bodies[c]) {
+                        emit_stmt_to_lines(inner, indent + 2, used, return_type, out_lines);
+                    }
+                    // Check if last statement is return/break, if not add break
+                    if (stmt.case_bodies[c].empty() ||
+                        (stmt.case_bodies[c].back().kind != StmtKind::kReturn &&
+                         stmt.case_bodies[c].back().kind != StmtKind::kBreak)) {
+                        out_lines.push_back(std::string((indent + 2) * 4, ' ') + "break;");
+                    }
+                }
+            }
+            if (!stmt.default_body.empty()) {
+                out_lines.push_back(pad + "    default:");
+                for (const auto& inner : stmt.default_body) {
+                    emit_stmt_to_lines(inner, indent + 2, used, return_type, out_lines);
+                }
+            }
+            out_lines.push_back(pad + "}");
+            break;
+        }
         case StmtKind::kNop:
-            if (!stmt.comment.empty()) {
+            // Filter out phi-related comments for cleaner output
+            if (!stmt.comment.empty() &&
+                stmt.comment.find("phi") == std::string::npos &&
+                stmt.comment.find("split edge") == std::string::npos) {
                 out_lines.push_back(pad + "// " + stmt.comment);
             }
             break;
@@ -810,9 +857,7 @@ void collect_stmt_uses(const Stmt& stmt,
             }
             break;
         case StmtKind::kReturn:
-            if (!ignore_return_expr) {
-                collect_expr_uses(stmt.expr, used);
-            }
+            collect_expr_uses(stmt.expr, used);
             break;
         case StmtKind::kIf:
             collect_expr_uses(stmt.condition, used);

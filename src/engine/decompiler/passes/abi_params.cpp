@@ -182,21 +182,29 @@ void collect_non_call_uses_stmt(const mlil::MlilStmt& stmt,
 }
 
 void collect_defs_stmt(const mlil::MlilStmt& stmt,
-                       std::unordered_map<SsaVarKey, bool, types::SsaVarKeyHash, types::SsaVarKeyEq>& defs) {
+                       std::unordered_map<SsaVarKey, bool, types::SsaVarKeyHash, types::SsaVarKeyEq>& strong_defs,
+                       std::unordered_map<SsaVarKey, bool, types::SsaVarKeyHash, types::SsaVarKeyEq>& phi_defs) {
     if (stmt.comment == "call clobber") {
         return;
     }
-    auto record_def = [&](const mlil::VarRef& var) {
+    auto record_def = [&](const mlil::VarRef& var, bool is_phi) {
         if (!var.name.empty() && var.version >= 0) {
-            defs[make_key(var)] = true;
+            if (is_phi) {
+                phi_defs[make_key(var)] = true;
+            } else {
+                strong_defs[make_key(var)] = true;
+            }
         }
     };
-    if (stmt.kind == mlil::MlilStmtKind::kAssign || stmt.kind == mlil::MlilStmtKind::kPhi) {
-        record_def(stmt.var);
+    if (stmt.kind == mlil::MlilStmtKind::kAssign) {
+        record_def(stmt.var, false);
+    }
+    if (stmt.kind == mlil::MlilStmtKind::kPhi) {
+        record_def(stmt.var, true);
     }
     if (stmt.kind == mlil::MlilStmtKind::kCall) {
         for (const auto& ret : stmt.returns) {
-            record_def(ret);
+            record_def(ret, false);
         }
     }
 }
@@ -284,14 +292,74 @@ void recover_call_arg_sources(mlil::Function& function) {
 
 std::vector<ParamInfo> collect_abi_params(const mlil::Function& function) {
     std::unordered_map<SsaVarKey, bool, types::SsaVarKeyHash, types::SsaVarKeyEq> uses;
+    
+    // Track which version 0 variables are only used in phi nodes
+    // These are likely not real parameters but loop-carried values
+    std::unordered_set<SsaVarKey, types::SsaVarKeyHash, types::SsaVarKeyEq> phi_only_uses;
+    std::unordered_set<SsaVarKey, types::SsaVarKeyHash, types::SsaVarKeyEq> non_phi_uses;
+    
+    // Track parameters that are saved to stack via phi (argument save pattern)
+    // e.g., stack.20 = phi(reg.x1#0, stack.20) - this is a parameter being saved
+    std::unordered_set<SsaVarKey, types::SsaVarKeyHash, types::SsaVarKeyEq> param_saved_to_stack;
+    
     for (const auto& block : function.blocks) {
+        // Collect uses from phi nodes separately
         for (const auto& phi : block.phis) {
-            collect_uses_stmt(phi, uses);
+            std::unordered_map<SsaVarKey, bool, types::SsaVarKeyHash, types::SsaVarKeyEq> phi_uses;
+            collect_uses_stmt(phi, phi_uses);
+            
+            // Check if this phi saves a parameter register to a stack variable
+            // Pattern: stack.XX = phi(reg.xN#0, ...)
+            if (phi.kind == mlil::MlilStmtKind::kPhi &&
+                !phi.var.name.empty() &&
+                phi.var.name.rfind("stack.", 0) == 0) {
+                // Phi target is a stack variable - check if any source is version 0 param register
+                for (const auto& [key, _] : phi_uses) {
+                    if (key.version == 0) {
+                        int index = -1;
+                        bool is_float = false;
+                        if (reg_arg_index(key.name, index, is_float)) {
+                            // This is a parameter register being saved to stack
+                            param_saved_to_stack.insert(key);
+                        }
+                    }
+                }
+            }
+            
+            for (const auto& [key, _] : phi_uses) {
+                if (key.version == 0) {
+                    phi_only_uses.insert(key);
+                }
+            }
+            // Still add to overall uses for completeness
+            for (const auto& [key, _] : phi_uses) {
+                uses[key] = true;
+            }
         }
+        
+        // Collect uses from non-phi statements
         for (const auto& inst : block.instructions) {
             for (const auto& stmt : inst.stmts) {
-                collect_uses_stmt(stmt, uses);
+                std::unordered_map<SsaVarKey, bool, types::SsaVarKeyHash, types::SsaVarKeyEq> stmt_uses;
+                collect_uses_stmt(stmt, stmt_uses);
+                for (const auto& [key, _] : stmt_uses) {
+                    uses[key] = true;
+                    if (key.version == 0) {
+                        non_phi_uses.insert(key);
+                    }
+                }
             }
+        }
+    }
+    
+    // Remove phi-only uses from consideration for parameters
+    // EXCEPT if they are saved to stack (parameter save pattern)
+    // A variable that is only used in phi nodes (not in actual statements)
+    // and not saved to stack is likely a call-clobber passthrough, not a real parameter
+    for (const auto& key : phi_only_uses) {
+        if (non_phi_uses.find(key) == non_phi_uses.end() &&
+            param_saved_to_stack.find(key) == param_saved_to_stack.end()) {
+            uses.erase(key);
         }
     }
 
@@ -381,25 +449,63 @@ std::vector<ParamInfo> collect_abi_params(const mlil::Function& function) {
 std::string infer_return_type(const mlil::Function& function) {
     bool returns_int = false;
     bool returns_float = false;
+    int int_size = 8;
 
     for (const auto& block : function.blocks) {
-        if (block.instructions.empty()) {
-            continue;
-        }
-        const auto& last_inst = block.instructions.back();
-        for (const auto& stmt : last_inst.stmts) {
-            if (stmt.kind == mlil::MlilStmtKind::kRet) {
-                if (stmt.expr.kind == mlil::MlilExprKind::kVar) {
-                    int index = -1;
-                    bool is_float = false;
-                    if (reg_arg_index(stmt.expr.var.name, index, is_float)) {
-                        if (index == 0) {
-                            if (is_float) {
-                                returns_float = true;
+        for (const auto& inst : block.instructions) {
+            for (const auto& stmt : inst.stmts) {
+                if (stmt.kind == mlil::MlilStmtKind::kRet) {
+                    // Check if return has a valid expression (not void return)
+                    if (stmt.expr.kind == mlil::MlilExprKind::kInvalid ||
+                        stmt.expr.kind == mlil::MlilExprKind::kUnknown) {
+                        // This is a void return, continue checking other returns
+                        continue;
+                    }
+                    
+                    // We have a return with a value - infer type from expression
+                    if (stmt.expr.kind == mlil::MlilExprKind::kVar) {
+                        int index = -1;
+                        bool is_float = false;
+                        if (reg_arg_index(stmt.expr.var.name, index, is_float)) {
+                            if (index == 0) {
+                                if (is_float) {
+                                    returns_float = true;
+                                } else {
+                                    returns_int = true;
+                                    if (stmt.expr.var.size > 0 && stmt.expr.var.size < 8) {
+                                        int_size = static_cast<int>(stmt.expr.var.size);
+                                    } else if (stmt.expr.var.name.find("w") != std::string::npos ||
+                                               stmt.expr.var.name.find("eax") != std::string::npos) {
+                                        int_size = 4;
+                                    }
+                                }
                             } else {
+                                // Non-x0 register but still returning a value
                                 returns_int = true;
                             }
+                        } else {
+                            // Non-register variable but has a return value
+                            returns_int = true;
+                            if (stmt.expr.var.size > 0 && stmt.expr.var.size < 8) {
+                                int_size = static_cast<int>(stmt.expr.var.size);
+                            }
                         }
+                    } else if (stmt.expr.kind == mlil::MlilExprKind::kImm) {
+                        // Returning an immediate value
+                        returns_int = true;
+                        if (stmt.expr.size > 0 && stmt.expr.size < 8) {
+                            int_size = std::min(int_size, static_cast<int>(stmt.expr.size));
+                        }
+                    } else if (stmt.expr.kind == mlil::MlilExprKind::kOp ||
+                               stmt.expr.kind == mlil::MlilExprKind::kLoad) {
+                        // Returning an expression or load result
+                        returns_int = true;
+                        if (stmt.expr.size > 0 && stmt.expr.size < 8) {
+                            int_size = std::min(int_size, static_cast<int>(stmt.expr.size));
+                        }
+                    } else {
+                        // Any other expression type - assume it's a value return
+                        returns_int = true;
                     }
                 }
             }
@@ -407,6 +513,9 @@ std::string infer_return_type(const mlil::Function& function) {
     }
 
     if (returns_int) {
+        if (int_size == 4) return "uint32_t";
+        if (int_size == 2) return "uint16_t";
+        if (int_size == 1) return "uint8_t";
         return "uint64_t";
     }
     if (returns_float) {
@@ -415,21 +524,24 @@ std::string infer_return_type(const mlil::Function& function) {
     return "void";
 }
 
-void prune_call_args(mlil::Function& function) {
+void prune_call_args(mlil::Function& function, ParamCountProvider provider) {
     recover_call_arg_sources(function);
 
     std::unordered_map<SsaVarKey, bool, types::SsaVarKeyHash, types::SsaVarKeyEq> non_call_uses;
-    std::unordered_map<SsaVarKey, bool, types::SsaVarKeyHash, types::SsaVarKeyEq> defs;
+    std::unordered_map<SsaVarKey, bool, types::SsaVarKeyHash, types::SsaVarKeyEq> computation_uses;
+    std::unordered_map<SsaVarKey, bool, types::SsaVarKeyHash, types::SsaVarKeyEq> strong_defs;
+    std::unordered_map<SsaVarKey, bool, types::SsaVarKeyHash, types::SsaVarKeyEq> phi_defs;
 
     for (const auto& block : function.blocks) {
         for (const auto& phi : block.phis) {
             collect_non_call_uses_stmt(phi, non_call_uses);
-            collect_defs_stmt(phi, defs);
+            collect_defs_stmt(phi, strong_defs, phi_defs);
         }
         for (const auto& inst : block.instructions) {
             for (const auto& stmt : inst.stmts) {
                 collect_non_call_uses_stmt(stmt, non_call_uses);
-                collect_defs_stmt(stmt, defs);
+                collect_non_call_uses_stmt(stmt, computation_uses);
+                collect_defs_stmt(stmt, strong_defs, phi_defs);
             }
         }
     }
@@ -440,13 +552,40 @@ void prune_call_args(mlil::Function& function) {
                 if (stmt.kind != mlil::MlilStmtKind::kCall || stmt.args.empty()) {
                     continue;
                 }
+
+                // If provider is available and gives a count, use it strictly.
+                if (provider && stmt.target.kind == mlil::MlilExprKind::kImm) {
+                    int count = provider(stmt.target.imm);
+                    if (count >= 0 && static_cast<std::size_t>(count) < stmt.args.size()) {
+                        stmt.args.resize(static_cast<std::size_t>(count));
+                        continue;
+                    }
+                }
+
                 int max_int = -1;
                 int max_float = -1;
+                int max_strong_int = -1;
+                int max_strong_float = -1;
+
                 std::vector<bool> keep(stmt.args.size(), false);
                 for (std::size_t i = 0; i < stmt.args.size(); ++i) {
                     const auto& arg = stmt.args[i];
+                    
+                    // Assume strict ABI ordering for first few arguments to infer index for expressions.
+                    // This is a heuristic.
+                    // For integers: x0-x7 (indices 0-7)
+                    // For floats: v0-v7 (indices 0-7)
+                    // We can't easily know if an expression is float or int without type analysis,
+                    // but usually expressions in MLIL are integers unless vector ops.
+                    // Let's conservatively assume integer for expressions unless we know otherwise.
+                    
                     if (arg.kind != mlil::MlilExprKind::kVar) {
                         keep[i] = true;
+                        // Assuming this is an integer argument at index 'i'.
+                        // Only valid if i < 8.
+                        if (i < 8) {
+                            max_strong_int = std::max(max_strong_int, static_cast<int>(i));
+                        }
                         continue;
                     }
                     int index = -1;
@@ -456,17 +595,53 @@ void prune_call_args(mlil::Function& function) {
                         continue;
                     }
                     SsaVarKey key = make_key(arg.var);
-                    const bool used_elsewhere = (non_call_uses.find(key) != non_call_uses.end());
-                    const bool defined_here = (arg.var.version > 0 && defs.find(key) != defs.end());
+                    // A variable is "strongly used" if it's used in computation (not just phis)
+                    // OR if it's a parameter register of the function itself
+                    // OR if it's defined locally (version > 0).
+                    const bool used_in_computation = (computation_uses.find(key) != computation_uses.end());
+                    const bool strongly_defined = (arg.var.version > 0 && strong_defs.find(key) != strong_defs.end());
+                    const bool phi_defined = (arg.var.version > 0 && phi_defs.find(key) != phi_defs.end());
                     const bool is_param_reg = (!is_float && arg.var.version == 0);
-                    if (defined_here || used_elsewhere || is_param_reg) {
-                        keep[i] = true;
-                        if (is_float) {
-                            max_float = std::max(max_float, index);
-                        } else {
-                            max_int = std::max(max_int, index);
+                    
+                    // A register is "strong" if it is:
+                    // 1. A parameter of the current function.
+                    // 2. Used in computation (not just calls/phis).
+                    // 3. Defined by a strong instruction (Assign/Call), not just a Phi.
+                    // 4. Defined by a Phi BUT is a low-index register (x0-x3) (heuristic: high registers x4-x7 are often weak).
+                    
+                    bool is_strong = is_param_reg || used_in_computation || strongly_defined;
+                    if (!is_strong && phi_defined) {
+                        // For phi-defined vars, only consider them strong if they are low index integers.
+                        // Float registers (v0-v31) defined only by Phis are almost always garbage/clobbers
+                        // unless they are parameters (covered by is_param_reg) or used in computation.
+                        if (!is_float && index <= 3) {
+                            is_strong = true;
                         }
                     }
+
+                    if (is_strong) {
+                        // Don't set keep[i] = true yet for register args,
+                        // as we might prune them based on max_int later.
+                        if (is_float) {
+                            max_float = std::max(max_float, index);
+                            if (is_strong) {
+                                max_strong_float = std::max(max_strong_float, index);
+                            }
+                        } else {
+                            max_int = std::max(max_int, index);
+                            if (is_strong) {
+                                max_strong_int = std::max(max_strong_int, index);
+                            }
+                        }
+                    }
+                }
+
+                // Heuristic: if we have strong integer parameters, discard trailing weak ones.
+                if (max_strong_int >= 0) {
+                    max_int = max_strong_int;
+                }
+                if (max_strong_float >= 0) {
+                    max_float = max_strong_float;
                 }
 
                 if (max_int >= 0 || max_float >= 0) {
@@ -490,6 +665,43 @@ void prune_call_args(mlil::Function& function) {
                 }
 
                 if (std::all_of(keep.begin(), keep.end(), [](bool v) { return v; })) {
+                    // P5 Enhancement: Even if all are marked 'keep', apply heuristic limits
+                    // Most functions take 0-4 arguments. Be aggressive about pruning.
+                    // ARM64 ABI: max 8 integer args (x0-x7) + 8 float args (v0-v7)
+                    // But in practice, functions with >4 args are rare in typical code.
+                    
+                    // Heuristic: Limit to 4 args by default unless we see strong evidence
+                    const std::size_t kDefaultMaxArgs = 4;
+                    
+                    if (stmt.args.size() > kDefaultMaxArgs) {
+                        // Find the last "meaningful" argument (non-register or computed expression)
+                        std::size_t last_meaningful = 0;
+                        for (std::size_t i = 0; i < stmt.args.size(); ++i) {
+                            const auto& arg = stmt.args[i];
+                            if (arg.kind != mlil::MlilExprKind::kVar) {
+                                // Non-variable (computed expression, immediate) is meaningful
+                                last_meaningful = i + 1;
+                            } else {
+                                int index = -1;
+                                bool is_float = false;
+                                if (!reg_arg_index(arg.var.name, index, is_float)) {
+                                    // Non-register variable (stack var, named var) is meaningful
+                                    last_meaningful = i + 1;
+                                } else if (index < 2) {
+                                    // Only first 2 register args (x0, x1) are very likely meaningful
+                                    // x2+ are often garbage for simple functions
+                                    last_meaningful = i + 1;
+                                }
+                                // Higher register indices (x2-x7, v0-v7) are likely spurious pass-throughs
+                            }
+                        }
+                        // Keep at least 1 arg if any exist, at most kDefaultMaxArgs
+                        std::size_t limit = std::max(last_meaningful, std::size_t{1});
+                        limit = std::min(limit, kDefaultMaxArgs);
+                        if (stmt.args.size() > limit) {
+                            stmt.args.resize(limit);
+                        }
+                    }
                     continue;
                 }
                 std::vector<mlil::MlilExpr> filtered;
@@ -500,6 +712,28 @@ void prune_call_args(mlil::Function& function) {
                     }
                 }
                 stmt.args = std::move(filtered);
+                
+                // P5: Additional limit after filtering - be more aggressive
+                // Most functions take <= 4 args
+                if (stmt.args.size() > 4) {
+                    // Check if trailing args are just register pass-throughs
+                    std::size_t meaningful_count = 0;
+                    for (std::size_t i = 0; i < stmt.args.size(); ++i) {
+                        const auto& arg = stmt.args[i];
+                        if (arg.kind != mlil::MlilExprKind::kVar) {
+                            meaningful_count = i + 1;
+                        } else {
+                            int index = -1;
+                            bool is_float = false;
+                            if (!reg_arg_index(arg.var.name, index, is_float) || index < 2) {
+                                meaningful_count = i + 1;
+                            }
+                        }
+                    }
+                    std::size_t limit = std::max(meaningful_count, std::size_t{1});
+                    limit = std::min(limit, std::size_t{4});
+                    stmt.args.resize(limit);
+                }
             }
         }
     }

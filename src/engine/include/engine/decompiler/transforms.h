@@ -30,6 +30,7 @@ bool stmt_defines_var(const Stmt& stmt, const std::string& name);
 
 // Simplification
 void simplify_expr(mlil::MlilExpr& expr);
+void normalize_condition_expr(mlil::MlilExpr& expr);
 
 // Optimization Passes
 void materialize_temporaries(Function& function);
@@ -44,5 +45,7 @@ void seed_uninit_loop_indices(Function& function);
 void normalize_string_copy_loops(Function& function);
 void repair_loop_bounds(Function& function);
 void merge_while_to_for(Function& function);
+void decompose_complex_return_exprs(Function& function);
+void recover_switch_statements(Function& function);
 
 } // namespace engine::decompiler

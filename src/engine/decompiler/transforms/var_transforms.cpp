@@ -282,11 +282,21 @@ bool expr_is_inlineable(const mlil::MlilExpr& expr) {
     if (expr.kind == mlil::MlilExprKind::kLoad && !expr.args.empty()) {
         return is_pure_expr(expr.args.front());
     }
+    if (expr.kind == mlil::MlilExprKind::kCall) {
+        // Calls can be inlined if their arguments are inlineable
+        // The call itself has side effects, which are handled by the caller checking dependencies
+        for (const auto& arg : expr.args) {
+            if (!expr_is_inlineable(arg)) {
+                return false;
+            }
+        }
+        return true;
+    }
     return false;
 }
 
 bool expr_has_load(const mlil::MlilExpr& expr) {
-    if (expr.kind == mlil::MlilExprKind::kLoad) {
+    if (expr.kind == mlil::MlilExprKind::kLoad || expr.kind == mlil::MlilExprKind::kCall) {
         return true;
     }
     for (const auto& arg : expr.args) {
@@ -433,42 +443,64 @@ void inline_temps_block(std::vector<Stmt>& stmts) {
         changed = false;
         for (std::size_t i = 0; i < stmts.size(); ++i) {
             Stmt& stmt = stmts[i];
-            if (stmt.kind != StmtKind::kAssign) {
+            std::string var_name;
+            mlil::MlilExpr expr_to_inline;
+
+            if (stmt.kind == StmtKind::kAssign) {
+                if (stmt.var.name.empty()) continue;
+                var_name = stmt.var.name;
+                expr_to_inline = stmt.expr;
+            } else if (stmt.kind == StmtKind::kCall) {
+                if (stmt.returns.size() != 1) continue;
+                if (stmt.returns[0].name.empty()) continue;
+                var_name = stmt.returns[0].name;
+                
+                // Construct call expression
+                expr_to_inline.kind = mlil::MlilExprKind::kCall;
+                expr_to_inline.args.push_back(stmt.target); // First arg is target
+                for (const auto& arg : stmt.args) {
+                    expr_to_inline.args.push_back(arg);
+                }
+                // Size of call expr is size of return value
+                expr_to_inline.size = stmt.returns[0].size;
+            } else {
                 continue;
             }
-            if (stmt.var.name.empty()) {
+
+            if (var_name.empty()) {
                 continue;
             }
-            if (!expr_is_inlineable(stmt.expr)) {
+            if (!expr_is_inlineable(expr_to_inline)) {
                 continue;
             }
-            if (stmt.expr.kind == mlil::MlilExprKind::kVar && stmt.expr.var.name == stmt.var.name) {
+            if (expr_to_inline.kind == mlil::MlilExprKind::kVar && expr_to_inline.var.name == var_name) {
                 continue;
             }
-            if (expr_uses_var(stmt.expr, stmt.var.name)) {
+            if (expr_uses_var(expr_to_inline, var_name)) {
                 continue;
             }
 
             std::unordered_set<std::string> deps;
-            collect_expr_vars(stmt.expr, deps);
-            const bool has_load = expr_has_load(stmt.expr);
+            collect_expr_vars(expr_to_inline, deps);
+            // Calls have side effects (memory load/store) so treat as load
+            const bool has_load = expr_has_load(expr_to_inline);
 
             int use_index = -1;
             for (std::size_t j = i + 1; j < stmts.size(); ++j) {
                 Stmt& next = stmts[j];
-                if (stmt_defines_var(next, stmt.var.name)) {
+                if (stmt_defines_var(next, var_name)) {
                     break;
                 }
                 if (stmt_modifies_any(next, deps)) {
                     break;
                 }
                 if (has_load && (next.kind == StmtKind::kStore || next.kind == StmtKind::kCall)) {
-                    if (stmt_uses_var(next, stmt.var.name) && use_index == -1) {
+                    if (stmt_uses_var(next, var_name) && use_index == -1) {
                         use_index = static_cast<int>(j);
                     }
                     break;
                 }
-                if (stmt_uses_var(next, stmt.var.name)) {
+                if (stmt_uses_var(next, var_name)) {
                     if (use_index != -1) {
                         use_index = -2;
                         break;
@@ -476,8 +508,8 @@ void inline_temps_block(std::vector<Stmt>& stmts) {
                     use_index = static_cast<int>(j);
                 }
                 if (is_block_boundary(next)) {
-                    if (use_index == -1 && stmt_uses_var_in_condition(next, stmt.var.name) &&
-                        !stmt_uses_var_in_body(next, stmt.var.name)) {
+                    if (use_index == -1 && stmt_uses_var_in_condition(next, var_name) &&
+                        !stmt_uses_var_in_body(next, var_name)) {
                         use_index = static_cast<int>(j);
                     }
                     break;
@@ -485,7 +517,7 @@ void inline_temps_block(std::vector<Stmt>& stmts) {
             }
 
             if (use_index >= 0) {
-                replace_var_in_stmt(stmts[static_cast<std::size_t>(use_index)], stmt.var.name, stmt.expr);
+                replace_var_in_stmt(stmts[static_cast<std::size_t>(use_index)], var_name, expr_to_inline);
                 stmts.erase(stmts.begin() + static_cast<std::ptrdiff_t>(i));
                 changed = true;
                 break;
@@ -798,6 +830,150 @@ void propagate_pseudoc_exprs(Function& function) {
     }
     std::unordered_map<std::string, AvailExprInfo> avail;
     propagate_pseudoc_block(function.stmts, avail, def_counts);
+}
+
+namespace {
+
+// P2: Decompose complex expressions in return statements
+// This helps with cases like xorshift32 where a single return contains
+// a massive nested expression that should be broken into steps
+
+int deep_expr_cost(const mlil::MlilExpr& expr) {
+    if (expr.kind == mlil::MlilExprKind::kImm || expr.kind == mlil::MlilExprKind::kVar) {
+        return 1;
+    }
+    int cost = 1;
+    for (const auto& arg : expr.args) {
+        cost += deep_expr_cost(arg);
+    }
+    return cost;
+}
+
+void find_repeated_subexprs(const mlil::MlilExpr& expr,
+                             std::unordered_map<std::string, int>& counts,
+                             std::unordered_map<std::string, mlil::MlilExpr>& reps,
+                             int min_cost = 4) {
+    if (expr.kind == mlil::MlilExprKind::kImm || expr.kind == mlil::MlilExprKind::kVar) {
+        return;
+    }
+    
+    // First recurse into children
+    for (const auto& arg : expr.args) {
+        find_repeated_subexprs(arg, counts, reps, min_cost);
+    }
+    
+    // Check this expression
+    if (is_pure_expr(expr) && deep_expr_cost(expr) >= min_cost) {
+        const std::string key = expr_key(expr);
+        if (!key.empty()) {
+            counts[key]++;
+            reps.emplace(key, expr);
+        }
+    }
+}
+
+void replace_subexpr_with_var(mlil::MlilExpr& expr,
+                               const std::string& key,
+                               const mlil::MlilExpr& replacement) {
+    if (is_pure_expr(expr)) {
+        const std::string this_key = expr_key(expr);
+        if (this_key == key) {
+            expr = replacement;
+            return;
+        }
+    }
+    for (auto& arg : expr.args) {
+        replace_subexpr_with_var(arg, key, replacement);
+    }
+}
+
+void decompose_complex_return_block(std::vector<Stmt>& stmts, Function& function, TempState& state) {
+    // Process nested structures first
+    for (auto& stmt : stmts) {
+        if (stmt.kind == StmtKind::kIf) {
+            decompose_complex_return_block(stmt.then_body, function, state);
+            decompose_complex_return_block(stmt.else_body, function, state);
+        } else if (stmt.kind == StmtKind::kWhile || stmt.kind == StmtKind::kDoWhile || stmt.kind == StmtKind::kFor) {
+            decompose_complex_return_block(stmt.body, function, state);
+        }
+    }
+    
+    std::vector<Stmt> new_stmts;
+    const int kComplexThreshold = 15;  // Expression cost threshold for decomposition
+    const int kSubexprMinCost = 4;     // Minimum cost for subexpression extraction
+    
+    for (auto& stmt : stmts) {
+        if (stmt.kind == StmtKind::kReturn && stmt.expr.kind != mlil::MlilExprKind::kInvalid) {
+            int cost = deep_expr_cost(stmt.expr);
+            if (cost >= kComplexThreshold) {
+                // Find repeated subexpressions
+                std::unordered_map<std::string, int> counts;
+                std::unordered_map<std::string, mlil::MlilExpr> reps;
+                find_repeated_subexprs(stmt.expr, counts, reps, kSubexprMinCost);
+                
+                // Extract subexpressions that appear more than once
+                std::vector<std::pair<std::string, mlil::MlilExpr>> to_extract;
+                for (const auto& [key, count] : counts) {
+                    if (count >= 2) {
+                        auto it = reps.find(key);
+                        if (it != reps.end()) {
+                            to_extract.push_back({key, it->second});
+                        }
+                    }
+                }
+                
+                // Sort by cost (extract most complex first)
+                std::sort(to_extract.begin(), to_extract.end(),
+                    [](const auto& a, const auto& b) {
+                        return deep_expr_cost(a.second) > deep_expr_cost(b.second);
+                    });
+                
+                // Extract up to 3 subexpressions to avoid too many temps
+                int extracted = 0;
+                for (const auto& [key, subexpr] : to_extract) {
+                    if (extracted >= 3) break;
+                    
+                    // Create temporary variable
+                    std::string temp_name = next_temp_name(state);
+                    VarDecl local;
+                    local.name = temp_name;
+                    local.type = type_for_size(subexpr.size);
+                    function.locals.push_back(local);
+                    
+                    // Create assignment
+                    Stmt assign;
+                    assign.kind = StmtKind::kAssign;
+                    assign.var.name = temp_name;
+                    assign.var.version = -1;
+                    assign.var.size = subexpr.size;
+                    assign.expr = subexpr;
+                    new_stmts.push_back(assign);
+                    
+                    // Replace in return expression
+                    mlil::MlilExpr var_expr = make_var_expr(temp_name, subexpr.size);
+                    replace_subexpr_with_var(stmt.expr, key, var_expr);
+                    
+                    extracted++;
+                }
+            }
+        }
+        new_stmts.push_back(std::move(stmt));
+    }
+    
+    stmts = std::move(new_stmts);
+}
+
+} // namespace
+
+void decompose_complex_return_exprs(Function& function) {
+    TempState state;
+    for (const auto& param : function.params) {
+        state.used_names.insert(param.name);
+    }
+    for (const auto& local : function.locals) {
+        state.used_names.insert(local.name);
+    }
+    decompose_complex_return_block(function.stmts, function, state);
 }
 
 } // namespace engine::decompiler

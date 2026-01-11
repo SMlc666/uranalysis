@@ -26,7 +26,7 @@ namespace engine::decompiler {
 
 namespace {
 
-Stmt convert_stmt(const hlil::HlilStmt& in) {
+Stmt convert_stmt(const hlil::HlilStmt& in, SymbolResolver resolver) {
     Stmt out;
     out.comment = in.comment;
     switch (in.kind) {
@@ -43,6 +43,13 @@ Stmt convert_stmt(const hlil::HlilStmt& in) {
         case hlil::HlilStmtKind::kCall:
             out.kind = StmtKind::kCall;
             out.target = in.target;
+            if (out.target.kind == mlil::MlilExprKind::kImm && resolver) {
+                std::string name = resolver(out.target.imm);
+                if (!name.empty()) {
+                    out.target.kind = mlil::MlilExprKind::kVar;
+                    out.target.var.name = name;
+                }
+            }
             out.args = in.args;
             out.returns = in.returns;
             break;
@@ -69,11 +76,13 @@ Stmt convert_stmt(const hlil::HlilStmt& in) {
             out.condition = in.condition;
             out.then_body.reserve(in.then_body.size());
             for (const auto& stmt : in.then_body) {
-                out.then_body.push_back(convert_stmt(stmt));
+                if (stmt.comment == "call clobber") continue;
+                out.then_body.push_back(convert_stmt(stmt, resolver));
             }
             out.else_body.reserve(in.else_body.size());
             for (const auto& stmt : in.else_body) {
-                out.else_body.push_back(convert_stmt(stmt));
+                if (stmt.comment == "call clobber") continue;
+                out.else_body.push_back(convert_stmt(stmt, resolver));
             }
             break;
         case hlil::HlilStmtKind::kWhile:
@@ -81,7 +90,8 @@ Stmt convert_stmt(const hlil::HlilStmt& in) {
             out.condition = in.condition;
             out.body.reserve(in.body.size());
             for (const auto& stmt : in.body) {
-                out.body.push_back(convert_stmt(stmt));
+                if (stmt.comment == "call clobber") continue;
+                out.body.push_back(convert_stmt(stmt, resolver));
             }
             break;
         case hlil::HlilStmtKind::kDoWhile:
@@ -89,7 +99,8 @@ Stmt convert_stmt(const hlil::HlilStmt& in) {
             out.condition = in.condition;
             out.body.reserve(in.body.size());
             for (const auto& stmt : in.body) {
-                out.body.push_back(convert_stmt(stmt));
+                if (stmt.comment == "call clobber") continue;
+                out.body.push_back(convert_stmt(stmt, resolver));
             }
             break;
         case hlil::HlilStmtKind::kFor:
@@ -97,15 +108,18 @@ Stmt convert_stmt(const hlil::HlilStmt& in) {
             out.condition = in.condition;
             out.then_body.reserve(in.then_body.size());
             for (const auto& stmt : in.then_body) {
-                out.then_body.push_back(convert_stmt(stmt));
+                if (stmt.comment == "call clobber") continue;
+                out.then_body.push_back(convert_stmt(stmt, resolver));
             }
             out.else_body.reserve(in.else_body.size());
             for (const auto& stmt : in.else_body) {
-                out.else_body.push_back(convert_stmt(stmt));
+                if (stmt.comment == "call clobber") continue;
+                out.else_body.push_back(convert_stmt(stmt, resolver));
             }
             out.body.reserve(in.body.size());
             for (const auto& stmt : in.body) {
-                out.body.push_back(convert_stmt(stmt));
+                if (stmt.comment == "call clobber") continue;
+                out.body.push_back(convert_stmt(stmt, resolver));
             }
             break;
         default:
@@ -119,7 +133,8 @@ Stmt convert_stmt(const hlil::HlilStmt& in) {
 
 bool build_pseudoc_from_hlil(const hlil::Function& hlil_function,
                              Function& out,
-                             std::string& error) {
+                             std::string& error,
+                             SymbolResolver resolver) {
     error.clear();
     out.entry = hlil_function.entry;
     if (out.name.empty()) {
@@ -135,7 +150,7 @@ bool build_pseudoc_from_hlil(const hlil::Function& hlil_function,
         if (stmt.comment == "call clobber") {
             continue;
         }
-        out.stmts.push_back(convert_stmt(stmt));
+        out.stmts.push_back(convert_stmt(stmt, resolver));
     }
     materialize_temporaries(out);
     propagate_pseudoc_exprs(out);
@@ -149,6 +164,8 @@ bool build_pseudoc_from_hlil(const hlil::Function& hlil_function,
     normalize_string_copy_loops(out);
     repair_loop_bounds(out);
     merge_while_to_for(out);
+    recover_switch_statements(out);
+    decompose_complex_return_exprs(out);
     return true;
 }
 
@@ -158,7 +175,8 @@ bool build_pseudoc_from_mlil_ssa_internal(const mlil::Function& mlil_function,
                                           Function& out,
                                           std::string& error,
                                           const FunctionHints* hints,
-                                          mlil::Function* mlil_lowered_out) {
+                                          mlil::Function* mlil_lowered_out,
+                                          SymbolResolver resolver) {
     error.clear();
 
     hlil::Function hlil_ssa;
@@ -168,7 +186,12 @@ bool build_pseudoc_from_mlil_ssa_internal(const mlil::Function& mlil_function,
 
     mlil::Function working = mlil_function;
     passes::rewrite_special_registers(working);
-    passes::prune_call_args(working);
+    
+    passes::ParamCountProvider provider = nullptr;
+    if (hints && hints->param_count_provider) {
+        provider = hints->param_count_provider;
+    }
+    passes::prune_call_args(working, provider);
 
     types::TypeSolver solver;
     types::collect_constraints_mlil(working, solver);
@@ -210,7 +233,7 @@ bool build_pseudoc_from_mlil_ssa_internal(const mlil::Function& mlil_function,
         return false;
     }
 
-    if (!build_pseudoc_from_hlil(hlil_lowered, out, error)) {
+    if (!build_pseudoc_from_hlil(hlil_lowered, out, error, resolver)) {
         return false;
     }
     out.params = std::move(naming.params);
@@ -233,16 +256,18 @@ bool build_pseudoc_from_mlil_ssa_internal(const mlil::Function& mlil_function,
 bool build_pseudoc_from_mlil_ssa(const mlil::Function& mlil_function,
                                  Function& out,
                                  std::string& error,
-                                 const FunctionHints* hints) {
-    return build_pseudoc_from_mlil_ssa_internal(mlil_function, out, error, hints, nullptr);
+                                 const FunctionHints* hints,
+                                 SymbolResolver resolver) {
+    return build_pseudoc_from_mlil_ssa_internal(mlil_function, out, error, hints, nullptr, resolver);
 }
 
 bool build_pseudoc_from_mlil_ssa_debug(const mlil::Function& mlil_function,
                                        Function& out,
                                        std::string& error,
                                        const FunctionHints* hints,
-                                       mlil::Function* mlil_lowered_out) {
-    return build_pseudoc_from_mlil_ssa_internal(mlil_function, out, error, hints, mlil_lowered_out);
+                                       mlil::Function* mlil_lowered_out,
+                                       SymbolResolver resolver) {
+    return build_pseudoc_from_mlil_ssa_internal(mlil_function, out, error, hints, mlil_lowered_out, resolver);
 }
 
 void emit_pseudoc(const Function& function, std::vector<std::string>& out_lines) {

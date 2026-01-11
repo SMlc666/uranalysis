@@ -1,3 +1,4 @@
+
 set_project("uranayzle")
 set_version("0.1.0")
 
@@ -11,7 +12,7 @@ add_requires("sqlite3")
 add_requires("raw_pdb")
 
 includes("third-party/llvm")
-
+set_encodings ("utf-8")
 option("build_shared")
     set_default(false)
     set_showmenu(true)
@@ -43,10 +44,6 @@ end
     add_packages("raw_pdb")
     add_deps("llvm_demangle")
 
-    -- Placeholder for future external deps
-    -- add_requires("capstone")
-    -- add_packages("capstone")
-
 target("cli")
     set_kind("binary")
     add_files("clients/cli/*.cpp")
@@ -58,6 +55,9 @@ target("client_common")
     set_kind("static")
     add_includedirs("clients/common/include", {public = true})
     add_files("clients/common/src/*.cpp")
+    add_files("clients/common/src/formatters/*.cpp")
+    add_files("clients/common/src/services/*.cpp")
+    add_files("clients/common/src/commands/*.cpp")
     add_deps("engine")
 
 target("engine_tests")
@@ -72,9 +72,12 @@ if is_plat("windows") and has_config("with_imgui_client") then
         set_kind("binary")
         add_deps("engine", "client_common")
         add_packages("imgui")
-        add_files("clients/imgui/main.cpp", "clients/imgui/imgui_app.cpp", "clients/imgui/imgui_ui.cpp",
-                  "clients/imgui/file_browser.cpp", "clients/imgui/functions_view.cpp", "clients/imgui/names_view.cpp",
-                  "clients/imgui/view_window.cpp", "clients/imgui/strings_view.cpp")
-        add_files("clients/imgui/win32_dx11.cpp", "clients/imgui/win32_dx12.cpp")
+        
+        -- Include directories
+        add_includedirs("clients/imgui")
+        add_includedirs("clients/imgui/views")
+        
+
+        add_files("clients/imgui/**.cpp")
         add_links("d3d11", "d3d12", "dxgi")
 end
