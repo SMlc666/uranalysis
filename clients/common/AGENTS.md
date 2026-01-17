@@ -17,17 +17,17 @@ common/
 │   │   ├── ir_service.h
 │   │   └── disasm_service.h
 │   ├── formatters/        # String formatting utilities
-│   │   ├── ir.h
-│   │   ├── xrefs.h
-│   │   ├── symbols.h
-│   │   └── address.h
-│   └── commands/          # Command definitions
-│       └── commands.h
-└── src/
-    ├── services/          # Service implementations
-    ├── formatters/        # Formatter implementations
-    │   └── ir.cpp         # IR formatting (651 lines)
-    └── commands/          # Command implementations
+│   │   ├── ir.h, xrefs.h, symbols.h, address.h
+│   └── commands/
+│       └── commands.h     # Command declarations
+├── src/
+│   ├── command.cpp        # Registry implementation
+│   ├── tokenizer.cpp      # Command line tokenization
+│   ├── args/              # Argument parsing
+│   ├── services/          # Service implementations
+│   ├── formatters/        # Formatter implementations (ir.cpp: 651 lines)
+│   ├── commands/          # Command implementations
+│   └── util/              # Address resolver, etc.
 ```
 
 ## Where to Look
@@ -44,13 +44,12 @@ common/
 | Service | Purpose |
 |---------|---------|
 | `AnalysisService` | Function discovery, xref analysis |
-| `IRService` | IR building, lifting, pseudocode generation |
+| `IRService` | IR building, lifting, pseudocode |
 | `DisasmService` | Disassembly operations |
 
 ## Command Pattern
 
 ```cpp
-// Adding a command
 class MyCommand : public Command {
     std::string name() const override { return "mycmd"; }
     std::string help() const override { return "Does something"; }
@@ -58,11 +57,23 @@ class MyCommand : public Command {
         // Implementation
     }
 };
-// Register in CommandRegistry
+// Register in default_commands.cpp
+```
+
+## Argument Parsing
+
+```cpp
+// In command execute():
+ArgSpec spec;
+spec.add_positional("address", ArgType::Address);
+spec.add_flag("verbose", 'v');
+auto matches = spec.parse(args);
+uint64_t addr = matches.get_address("address");
 ```
 
 ## Notes
 
 - Services wrap engine APIs for easier client use
 - Formatters convert engine types to display strings
-- Both CLI and ImGui clients link this library
+- Both CLI and ImGui link this library
+- Command registry shared with ImGui command palette

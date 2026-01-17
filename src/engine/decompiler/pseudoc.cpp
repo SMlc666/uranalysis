@@ -7,12 +7,18 @@
 #include <unordered_map>
 #include <unordered_set>
 
+#include <spdlog/spdlog.h>
+
 #include "engine/decompiler/passes/abi_params.h"
 #include "engine/decompiler/passes/de_ssa.h"
 #include "engine/decompiler/passes/naming.h"
 #include "engine/decompiler/passes/rename_vars.h"
 #include "engine/decompiler/passes/special_regs.h"
 #include "engine/decompiler/passes/ssa_groups.h"
+#include "engine/decompiler/passes/dce.h"
+#include "engine/decompiler/passes/constant_propagation.h"
+#include "engine/decompiler/passes/range_analysis.h"
+#include "engine/decompiler/transforms/condition_flattening.h"
 #include "engine/decompiler/types/type_constraints.h"
 #include "engine/decompiler/types/signature_db.h"
 #include "engine/decompiler/types/type_solver.h"
@@ -25,6 +31,28 @@
 namespace engine::decompiler {
 
 namespace {
+
+// Debug helper: count all statements recursively including loop bodies
+std::size_t count_stmts_recursive(const std::vector<Stmt>& stmts) {
+    std::size_t count = 0;
+    for (const auto& s : stmts) {
+        ++count;
+        if (s.kind == StmtKind::kIf) {
+            count += count_stmts_recursive(s.then_body);
+            count += count_stmts_recursive(s.else_body);
+        } else if (s.kind == StmtKind::kWhile || s.kind == StmtKind::kDoWhile || s.kind == StmtKind::kFor) {
+            count += count_stmts_recursive(s.body);
+            count += count_stmts_recursive(s.then_body);
+            count += count_stmts_recursive(s.else_body);
+        } else if (s.kind == StmtKind::kSwitch) {
+            for (const auto& cb : s.case_bodies) {
+                count += count_stmts_recursive(cb);
+            }
+            count += count_stmts_recursive(s.default_body);
+        }
+    }
+    return count;
+}
 
 Stmt convert_stmt(const hlil::HlilStmt& in, SymbolResolver resolver) {
     Stmt out;
@@ -131,8 +159,6 @@ Stmt convert_stmt(const hlil::HlilStmt& in, SymbolResolver resolver) {
 
 } // namespace
 
-
-
 bool build_pseudoc_from_hlil(const hlil::Function& hlil_function,
                              Function& out,
                              std::string& error,
@@ -149,7 +175,6 @@ bool build_pseudoc_from_hlil(const hlil::Function& hlil_function,
     out.stmts.clear();
 
     // Collect initial values from HLIL statements before conversion
-    // Look for assignments like: stack.28 = 0x811c9dc5 (before any control flow)
     for (const auto& stmt : hlil_function.stmts) {
         if (stmt.kind == hlil::HlilStmtKind::kIf ||
             stmt.kind == hlil::HlilStmtKind::kWhile ||
@@ -175,11 +200,19 @@ bool build_pseudoc_from_hlil(const hlil::Function& hlil_function,
         out.stmts.push_back(convert_stmt(stmt, resolver));
     }
     
+    SPDLOG_DEBUG("[pseudoc] after convert_stmt: {} stmts (recursive: {})", 
+                 out.stmts.size(), count_stmts_recursive(out.stmts));
+    
     materialize_temporaries(out);
     propagate_pseudoc_exprs(out);
     inline_trivial_temps(out);
     fold_store_address_temps(out);
+    
+    passes::propagate_constants(out);
+    passes::analyze_ranges(out);
+    
     merge_nested_ifs(out);
+    transforms::flatten_conditions(out);
     flatten_guard_clauses(out);
     merge_tail_returns(out);
     normalize_post_increments(out);
@@ -191,14 +224,16 @@ bool build_pseudoc_from_hlil(const hlil::Function& hlil_function,
     analyze_stack_variables(out);
     decompose_complex_return_exprs(out);
     remove_redundant_assignments(out);  // Clean up x = x patterns
+    passes::eliminate_dead_code(out);
     eliminate_dead_loops(out);          // Remove while(0), for(;0;) dead loops
+    
+    SPDLOG_DEBUG("[pseudoc] final: {} stmts (recursive: {})",
+                 out.stmts.size(), count_stmts_recursive(out.stmts));
     
     return true;
 }
 
 namespace {
-
-
 
 bool build_pseudoc_from_mlil_ssa_internal(const mlil::Function& mlil_function,
                                           Function& out,

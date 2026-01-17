@@ -96,31 +96,82 @@ bool is_binary_symbol(mlil::MlilOp op) {
     }
 }
 
-// Check if a string segment looks like a version suffix (e.g., "v0", "v123")
-bool is_version_suffix(const std::string& s, std::size_t pos) {
+// Check if a string segment looks like a version suffix (e.g., "v0", "v123", or just digits "0", "123")
+// The 'allow_plain_digits' parameter controls whether to accept just digits without 'v' prefix
+bool is_version_suffix(const std::string& s, std::size_t pos, bool allow_plain_digits = false) {
     if (pos >= s.size()) return false;
-    if (s[pos] != 'v' && s[pos] != 'V') return false;
-    if (pos + 1 >= s.size()) return false;
-    // Must be followed by digits
-    for (std::size_t i = pos + 1; i < s.size(); ++i) {
+    
+    // Check for "v<digits>" pattern
+    if (s[pos] == 'v' || s[pos] == 'V') {
+        if (pos + 1 >= s.size()) return false;
+        // Must be followed by digits
+        for (std::size_t i = pos + 1; i < s.size(); ++i) {
+            if (!std::isdigit(static_cast<unsigned char>(s[i]))) {
+                return false;
+            }
+        }
+        return true;
+    }
+    
+    // Check for plain "<digits>" pattern (when allow_plain_digits is true)
+    if (allow_plain_digits && std::isdigit(static_cast<unsigned char>(s[pos]))) {
+        // Must be all digits
+        for (std::size_t i = pos; i < s.size(); ++i) {
+            if (!std::isdigit(static_cast<unsigned char>(s[i]))) {
+                return false;
+            }
+        }
+        return true;
+    }
+    
+    return false;
+}
+
+// Check if a string ends with "_ver_<digits>" pattern (from de_ssa.cpp)
+bool ends_with_ver_suffix(const std::string& s, std::size_t& suffix_start) {
+    // Look for "_ver_" followed by digits
+    const std::string ver_marker = "_ver_";
+    std::size_t pos = s.rfind(ver_marker);
+    if (pos == std::string::npos || pos + ver_marker.size() >= s.size()) {
+        return false;
+    }
+    // Check that everything after "_ver_" is digits
+    for (std::size_t i = pos + ver_marker.size(); i < s.size(); ++i) {
         if (!std::isdigit(static_cast<unsigned char>(s[i]))) {
             return false;
         }
     }
+    suffix_start = pos;
     return true;
 }
 
 // Clean up SSA version suffixes from variable names
 // e.g., "arg0_v0" -> "arg0", "v28_2_v32" -> "v28_2", "sp_v2421" -> "sp"
+// Also handles "_ver_<digits>" pattern from de_ssa.cpp: "x1_ver_17" -> "x1"
+// Also handles "_<digits>" pattern: "x0_9" -> "x0"
 std::string clean_ssa_suffix(const std::string& name) {
     if (name.empty()) return name;
     
-    // Look for patterns like "_v<digits>" at the end
+    // First check for "_ver_<digits>" pattern (from de_ssa.cpp)
+    std::size_t ver_pos = 0;
+    if (ends_with_ver_suffix(name, ver_pos)) {
+        std::string cleaned = name.substr(0, ver_pos);
+        // Recursively clean in case of multiple suffixes
+        return clean_ssa_suffix(cleaned);
+    }
+    
+    // Look for patterns like "_v<digits>" or "_<digits>" at the end
     std::size_t last_underscore = name.rfind('_');
     if (last_underscore != std::string::npos && last_underscore + 1 < name.size()) {
-        if (is_version_suffix(name, last_underscore + 1)) {
+        // First check for "_v<digits>" pattern (traditional SSA)
+        if (is_version_suffix(name, last_underscore + 1, false)) {
             std::string cleaned = name.substr(0, last_underscore);
             // Recursively clean in case of multiple suffixes (e.g., "v28_2_v32")
+            return clean_ssa_suffix(cleaned);
+        }
+        // Then check for "_<digits>" pattern (plain numeric suffix like x0_9)
+        if (is_version_suffix(name, last_underscore + 1, true)) {
+            std::string cleaned = name.substr(0, last_underscore);
             return clean_ssa_suffix(cleaned);
         }
     }

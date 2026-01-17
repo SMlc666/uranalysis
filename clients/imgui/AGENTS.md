@@ -11,13 +11,16 @@ imgui/
 ├── main.cpp           # WinMain entry point
 ├── app/               # Application lifecycle
 │   ├── application.cpp    # Init backend, ImGui, main loop
-│   └── main_window.cpp    # View orchestration, menu, toolbar, dockspace
+│   ├── main_window.cpp    # View orchestration, menu, toolbar
+│   └── theme.cpp          # Color/style configuration
 ├── backends/          # DirectX rendering backends
-│   ├── backend.cpp        # Backend selection (DX12 preferred, DX11 fallback)
-│   ├── dx11_backend.cpp   # DX11 implementation
-│   └── dx12_backend.cpp   # DX12 implementation
+│   ├── backend.cpp        # Backend selection (DX12 → DX11 fallback)
+│   ├── dx11_backend.cpp
+│   └── dx12_backend.cpp
 ├── core/              # Shared state
-│   └── state.h            # AppState with per-view state structs
+│   ├── state.h            # AppState with per-view state structs
+│   ├── context.h          # AppContext for dependency injection
+│   └── event_bus.h        # Type-safe event system
 ├── views/             # UI panels
 │   ├── view_base.cpp      # Base class for all views
 │   ├── code_view/         # Disassembly + IR tabs
@@ -27,9 +30,13 @@ imgui/
 │   ├── binary_info/       # Binary metadata
 │   ├── output/            # Output/log panels
 │   └── file_browser/      # File open dialog
-└── widgets/           # Reusable UI components
-    ├── widget_base.h      # Templated widget base
-    └── toolbar_widget.h   # Toolbar implementation
+├── widgets/           # Reusable UI components
+│   ├── widget_base.h      # Templated widget base
+│   ├── toolbar_widget.h
+│   └── command_palette.cpp
+└── utils/
+    ├── imgui_helpers.cpp
+    └── log_sink.h         # spdlog sink for Log View
 ```
 
 ## Where to Look
@@ -41,21 +48,29 @@ imgui/
 | Change menu/toolbar | `app/main_window.cpp` |
 | Fix backend rendering | `backends/dx{11,12}_backend.cpp` |
 | Add app state | `core/state.h` |
+| Add event type | `core/event_bus.h` |
 
 ## Architecture
 
-**Backend Selection**: `backend.cpp` tries DX12 first (creates D3D12 device), falls back to DX11.
+**Backend Selection**: `backend.cpp` tries DX12 first, falls back to DX11.
 
-**View Lifecycle**: `ViewBase::on_render()` called each frame. Views access `AppState` through `AppContext`.
+**View Lifecycle**: `ViewBase::on_render()` called each frame.
 
-**State Management**: Centralized in `AppState` with dedicated structs per view. Navigation state supports history.
+**State Management**: Centralized in `AppState`. Navigation supports history.
 
-**View-Widget Pattern**: Views compose widgets. Widgets are templated on state type, provide encapsulated rendering.
+**Event Bus**: Decoupled pub/sub for cross-view communication:
+```cpp
+// Publish
+event_bus.publish(FunctionSelectedEvent{func_addr});
+// Subscribe
+event_bus.subscribe<FunctionSelectedEvent>([](auto& e) { ... });
+```
 
-## Key Patterns
+**View-Widget Pattern**: Views compose widgets. Widgets templated on state type.
+
+## Adding a View
 
 ```cpp
-// Adding a new view
 class MyView : public ViewBase {
     void on_render() override {
         if (ImGui::Begin("My View", &visible_)) {
@@ -70,5 +85,6 @@ class MyView : public ViewBase {
 ## Notes
 
 - Windows-only: links d3d11, d3d12, dxgi
-- Enable with `xmake f --plat=windows --with-imgui_client=y`
+- Build: `xmake f --plat=windows --with-imgui_client=y && xmake`
 - ImGui docking enabled for flexible layouts
+- Log View captures engine logs via custom spdlog sink

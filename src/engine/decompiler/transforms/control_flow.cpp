@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <functional>
 #include <unordered_set>
+#include <spdlog/spdlog.h>
 
 namespace engine::decompiler {
 
@@ -862,9 +863,185 @@ void normalize_switch_statements_block(std::vector<Stmt>& stmts) {
     }
 }
 
+// ============================================================================
+// State Machine Loop Detection
+// ============================================================================
+// Detects patterns like:
+//   while (guard < N) {
+//       switch (state) {
+//           case 0: ...; state = X; break;
+//           case 1: ...; state = Y; break;
+//           ...
+//       }
+//   }
+// This is common in control-flow flattened code (obfuscation) or state machine implementations.
+
+// Check if a variable is assigned in a statement list
+bool is_var_assigned_in_block(const std::vector<Stmt>& stmts, const std::string& var_name) {
+    for (const auto& stmt : stmts) {
+        if (stmt.kind == StmtKind::kAssign && stmt.var.name == var_name) {
+            return true;
+        }
+        // Recurse into control structures
+        if (stmt.kind == StmtKind::kIf) {
+            if (is_var_assigned_in_block(stmt.then_body, var_name) ||
+                is_var_assigned_in_block(stmt.else_body, var_name)) {
+                return true;
+            }
+        }
+        if (stmt.kind == StmtKind::kWhile || stmt.kind == StmtKind::kDoWhile || stmt.kind == StmtKind::kFor) {
+            if (is_var_assigned_in_block(stmt.body, var_name)) {
+                return true;
+            }
+        }
+        if (stmt.kind == StmtKind::kSwitch) {
+            for (const auto& case_body : stmt.case_bodies) {
+                if (is_var_assigned_in_block(case_body, var_name)) {
+                    return true;
+                }
+            }
+            if (is_var_assigned_in_block(stmt.default_body, var_name)) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+// Count how many times a variable is compared in conditions
+int count_var_comparisons_in_block(const std::vector<Stmt>& stmts, const std::string& var_name) {
+    int count = 0;
+    for (const auto& stmt : stmts) {
+        if (stmt.kind == StmtKind::kIf) {
+            // Check condition
+            if (expr_uses_var(stmt.condition, var_name)) {
+                ++count;
+            }
+            count += count_var_comparisons_in_block(stmt.then_body, var_name);
+            count += count_var_comparisons_in_block(stmt.else_body, var_name);
+        }
+        if (stmt.kind == StmtKind::kWhile || stmt.kind == StmtKind::kDoWhile || stmt.kind == StmtKind::kFor) {
+            if (expr_uses_var(stmt.condition, var_name)) {
+                ++count;
+            }
+            count += count_var_comparisons_in_block(stmt.body, var_name);
+        }
+        if (stmt.kind == StmtKind::kSwitch) {
+            if (expr_uses_var(stmt.condition, var_name)) {
+                ++count;
+            }
+            for (const auto& case_body : stmt.case_bodies) {
+                count += count_var_comparisons_in_block(case_body, var_name);
+            }
+            count += count_var_comparisons_in_block(stmt.default_body, var_name);
+        }
+    }
+    return count;
+}
+
+// Extract variable name from a condition expression (for state machine detection)
+bool extract_condition_var(const mlil::MlilExpr& cond, std::string& var_name) {
+    if (cond.kind == mlil::MlilExprKind::kVar && !cond.var.name.empty()) {
+        var_name = cond.var.name;
+        return true;
+    }
+    // Check for comparisons like (state == X)
+    if (cond.kind == mlil::MlilExprKind::kOp && cond.args.size() >= 2) {
+        if (is_compare_op(cond.op)) {
+            if (cond.args[0].kind == mlil::MlilExprKind::kVar && !cond.args[0].var.name.empty()) {
+                var_name = cond.args[0].var.name;
+                return true;
+            }
+            if (cond.args[1].kind == mlil::MlilExprKind::kVar && !cond.args[1].var.name.empty()) {
+                var_name = cond.args[1].var.name;
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+// Identify if a while loop body contains a state machine pattern
+// Returns the state variable name if found
+bool detect_state_machine_in_loop(const Stmt& loop_stmt, std::string& state_var_out) {
+    if (loop_stmt.kind != StmtKind::kWhile && loop_stmt.kind != StmtKind::kDoWhile) {
+        return false;
+    }
+    
+    const auto& body = loop_stmt.body;
+    if (body.empty()) {
+        return false;
+    }
+    
+    // Look for the primary control structure in the loop body
+    // It should be a switch or if-else chain on a "state" variable
+    const Stmt* control_stmt = nullptr;
+    for (const auto& stmt : body) {
+        if (stmt.kind == StmtKind::kSwitch || stmt.kind == StmtKind::kIf) {
+            control_stmt = &stmt;
+            break;
+        }
+    }
+    
+    if (!control_stmt) {
+        return false;
+    }
+    
+    // Extract the condition variable
+    std::string potential_state_var;
+    if (!extract_condition_var(control_stmt->condition, potential_state_var)) {
+        return false;
+    }
+    
+    // Check if this variable is:
+    // 1. Compared multiple times (in switch cases or if-else branches)
+    // 2. Assigned within the loop body (state transitions)
+    int comparison_count = count_var_comparisons_in_block(body, potential_state_var);
+    bool is_assigned = is_var_assigned_in_block(body, potential_state_var);
+    
+    // Heuristic: A state machine has at least 3 comparisons and assigns the state variable
+    if (comparison_count >= 3 && is_assigned) {
+        state_var_out = potential_state_var;
+        return true;
+    }
+    
+    return false;
+}
+
+// Add comment annotation to state machine loops for better output
+void annotate_state_machine_loops(std::vector<Stmt>& stmts) {
+    for (auto& stmt : stmts) {
+        if (stmt.kind == StmtKind::kWhile || stmt.kind == StmtKind::kDoWhile) {
+            std::string state_var;
+            if (detect_state_machine_in_loop(stmt, state_var)) {
+                // Mark this as a state machine loop (we can use a comment or flag)
+                // For now, we'll try to improve the switch detection within
+                // First, ensure any if-else chains inside become switches
+                normalize_switch_statements_block(stmt.body);
+            }
+        }
+        
+        // Recurse
+        if (stmt.kind == StmtKind::kIf) {
+            annotate_state_machine_loops(stmt.then_body);
+            annotate_state_machine_loops(stmt.else_body);
+        } else if (stmt.kind == StmtKind::kWhile || stmt.kind == StmtKind::kDoWhile || stmt.kind == StmtKind::kFor) {
+            annotate_state_machine_loops(stmt.body);
+        } else if (stmt.kind == StmtKind::kSwitch) {
+            for (auto& case_body : stmt.case_bodies) {
+                annotate_state_machine_loops(case_body);
+            }
+            annotate_state_machine_loops(stmt.default_body);
+        }
+    }
+}
+
 } // namespace
 
 void recover_switch_statements(Function& function) {
+    // First, detect and annotate state machine loops
+    annotate_state_machine_loops(function.stmts);
+    // Then run standard switch recovery
     normalize_switch_statements_block(function.stmts);
 }
 
@@ -884,18 +1061,30 @@ namespace {
 
 // Check if a loop condition is constant false (0)
 bool is_dead_loop_condition(const mlil::MlilExpr& cond) {
-    if (cond.kind == mlil::MlilExprKind::kImm && cond.imm == 0) return true;
+    if (cond.kind == mlil::MlilExprKind::kImm && cond.imm == 0) {
+        SPDLOG_INFO("[dead_loops] Loop condition is immediate 0");
+        return true;
+    }
     
     // Handle degenerate operations (e.g. kNe with no args) which can occur from
     // inverted conditions on invalid/empty expressions
     if (cond.kind == mlil::MlilExprKind::kOp && cond.args.empty()) {
+        SPDLOG_INFO("[dead_loops] Loop condition is degenerate op with no args");
         return true;
     }
     
-    // Try simplifying
-    mlil::MlilExpr temp = cond;
-    simplify_expr(temp);
-    return (temp.kind == mlil::MlilExprKind::kImm && temp.imm == 0);
+    // CRITICAL FIX: Do NOT simplify and check for 0.
+    // The simplify_expr function may incorrectly reduce expressions with
+    // undefined/unknown variables to 0. This caused valid loops to be eliminated.
+    // Only eliminate loops with truly constant 0 condition (already checked above).
+    
+    // The original code tried to simplify, but this is dangerous:
+    // mlil::MlilExpr temp = cond;
+    // simplify_expr(temp);
+    // return (temp.kind == mlil::MlilExprKind::kImm && temp.imm == 0);
+    
+    // Instead, only return true for actually constant 0 conditions
+    return false;
 }
 
 // Eliminate dead loops: while(0), for(;0;)

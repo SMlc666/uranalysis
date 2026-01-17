@@ -28,6 +28,9 @@ bool MappedFile::open(const std::string& path, std::string& error) {
         error = "failed to open file";
         return false;
     }
+
+
+
     LARGE_INTEGER size = {};
     if (!GetFileSizeEx(file_handle, &size) || size.QuadPart <= 0) {
         CloseHandle(file_handle);

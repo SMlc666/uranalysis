@@ -7,6 +7,8 @@
 #include "engine/llir_passes.h"
 #include "engine/llir_opt.h"
 #include "engine/mlil_lift.h"
+#include "engine/debug/log_channels.h"
+#include "engine/debug/ir_dump.h"
 
 #include <algorithm>
 
@@ -304,13 +306,23 @@ bool Session::build_mlil_ssa_arm64(std::uint64_t entry,
                                    std::size_t max_instructions,
                                    mlil::Function& function,
                                    std::string& error) const {
+    LOG_CH_DEBUG(log::Channel::kMlil, "build_mlil_ssa_arm64: entry=0x{:x}", entry);
+    
     llir::Function llir_function;
     if (!build_llir_ssa_arm64(entry, max_instructions, llir_function, error)) {
         return false;
     }
+    
+    LOG_CH_TRACE(log::Channel::kMlil, "LLIR complete: {} blocks, {} stmts", 
+                 llir_function.blocks.size(), debug::count_stmts(llir_function));
+    
     if (!mlil::build_mlil_from_llil_ssa(llir_function, function, error)) {
         return false;
     }
+    
+    LOG_CH_TRACE(log::Channel::kMlil, "MLIL lift complete: {} blocks, {} stmts",
+                 function.blocks.size(), debug::count_stmts(function));
+    
     // Note: We skip mlil::build_ssa_with_call_clobbers here because LLIR already
     // has correct SSA information. Rebuilding SSA in MLIL would overwrite the
     // correct version numbers from LLIR, causing issues like xor(a, b) becoming
@@ -320,13 +332,18 @@ bool Session::build_mlil_ssa_arm64(std::uint64_t entry,
     mlil::MlilOptOptions options;
     // Disable copy propagation to prevent incorrect variable merging
     options.copy_propagation = false;
-    return mlil::optimize_mlil_ssa(function, options, error);
+    bool result = mlil::optimize_mlil_ssa(function, options, error);
+    
+    LOG_CH_DEBUG(log::Channel::kMlil, "MLIL opt complete: {} stmts", debug::count_stmts(function));
+    return result;
 }
 
 bool Session::build_hlil_arm64(std::uint64_t entry,
                                std::size_t max_instructions,
                                hlil::Function& function,
                                std::string& error) const {
+    LOG_CH_DEBUG(log::Channel::kHlil, "build_hlil_arm64: entry=0x{:x}", entry);
+    
     mlil::Function mlil_function;
     if (!build_mlil_ssa_arm64(entry, max_instructions, mlil_function, error)) {
         return false;
@@ -334,8 +351,14 @@ bool Session::build_hlil_arm64(std::uint64_t entry,
     if (!hlil::build_hlil_from_mlil(mlil_function, function, error)) {
         return false;
     }
+    
+    LOG_CH_TRACE(log::Channel::kHlil, "HLIL structure complete: {} stmts", debug::count_stmts(function));
+    
     hlil::HlilOptOptions options;
-    return hlil::optimize_hlil(function, options, error);
+    bool result = hlil::optimize_hlil(function, options, error);
+    
+    LOG_CH_DEBUG(log::Channel::kHlil, "HLIL complete: {} stmts", debug::count_stmts(function));
+    return result;
 }
 
 bool Session::build_llir_ssa_x86_64(std::uint64_t entry,

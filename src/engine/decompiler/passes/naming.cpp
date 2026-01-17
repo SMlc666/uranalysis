@@ -64,6 +64,105 @@ std::string normalize_name(const std::string& raw,
     return base;
 }
 
+// Heuristic patterns for common variable roles
+struct VarRoleHint {
+    std::string prefix;      // Suggested name prefix
+    int priority;            // Higher = prefer this hint
+};
+
+// Detect variable role based on usage patterns and naming conventions
+VarRoleHint detect_var_role(const std::string& name, const types::Type& type, 
+                            bool is_loop_var, bool is_state_var, bool is_accumulator) {
+    VarRoleHint hint{"v", 0};
+    
+    // State machine variable: commonly compared in switch/if conditions
+    if (is_state_var) {
+        hint = {"state", 10};
+        return hint;
+    }
+    
+    // Loop induction variable: integer, used in loop conditions
+    if (is_loop_var) {
+        if (type.kind == types::TypeKind::kInt || type.kind == types::TypeKind::kUInt) {
+            hint = {"i", 8};  // Classic loop counter name
+        } else {
+            hint = {"idx", 7};
+        }
+        return hint;
+    }
+    
+    // Accumulator: integer used in XOR/ADD chains
+    if (is_accumulator) {
+        hint = {"acc", 6};
+        return hint;
+    }
+    
+    // Pointer types get 'p' prefix
+    if (type.kind == types::TypeKind::kPtr) {
+        hint = {"p", 4};
+        return hint;
+    }
+    
+    // Counter/guard patterns based on name fragments
+    if (name.find("guard") != std::string::npos || 
+        name.find("cnt") != std::string::npos ||
+        name.find("count") != std::string::npos) {
+        hint = {"guard", 5};
+        return hint;
+    }
+    
+    // Seed/hash patterns
+    if (name.find("seed") != std::string::npos ||
+        name.find("hash") != std::string::npos) {
+        hint = {"seed", 5};
+        return hint;
+    }
+    
+    return hint;
+}
+
+// Analyze SSA groups to identify special variable roles
+struct VarRoleAnalysis {
+    std::unordered_set<std::size_t> loop_vars;       // Used in loop conditions
+    std::unordered_set<std::size_t> state_vars;      // Used in switch/if chains
+    std::unordered_set<std::size_t> accumulators;    // XOR/ADD accumulation patterns
+};
+
+VarRoleAnalysis analyze_var_roles(const SsaGroups& groups, 
+                                  const std::unordered_map<std::size_t, types::Type>& group_types) {
+    VarRoleAnalysis result;
+    
+    // Simple heuristics based on group member count and type
+    for (const auto& [group, members] : groups.members) {
+        if (members.empty()) continue;
+        
+        // Groups with many versions might be loop variables or accumulators
+        if (members.size() >= 5) {
+            auto type_it = group_types.find(group);
+            if (type_it != group_types.end() && 
+                (type_it->second.kind == types::TypeKind::kInt || 
+                 type_it->second.kind == types::TypeKind::kUInt)) {
+                // Likely a loop counter or accumulator
+                result.accumulators.insert(group);
+            }
+        }
+        
+        // Groups with version 0 and few updates might be state variables
+        bool has_version_zero = false;
+        for (const auto& key : members) {
+            if (key.version == 0) {
+                has_version_zero = true;
+                break;
+            }
+        }
+        if (has_version_zero && members.size() >= 3 && members.size() <= 10) {
+            result.state_vars.insert(group);
+        }
+    }
+    
+    return result;
+}
+
 bool is_special_implicit(const std::string& name) {
     return name == "sp";
 }
@@ -154,6 +253,9 @@ NamingResult build_naming(const mlil::Function& function,
         group_types[group] = merged;
     }
 
+    // Analyze variable roles for better naming
+    VarRoleAnalysis role_analysis = analyze_var_roles(groups, group_types);
+
     std::unordered_set<int> abi_indices;
     abi_indices.reserve(params.size());
     for (const auto& param : params) {
@@ -232,6 +334,16 @@ NamingResult build_naming(const mlil::Function& function,
                 }
             }
         } else {
+            // Apply role-based naming for non-parameter variables
+            bool is_state = role_analysis.state_vars.count(group) > 0;
+            bool is_acc = role_analysis.accumulators.count(group) > 0;
+            bool is_loop = role_analysis.loop_vars.count(group) > 0;
+            
+            VarRoleHint hint = detect_var_role(base, group_types[group], is_loop, is_state, is_acc);
+            if (hint.priority > 0) {
+                base = hint.prefix;
+            }
+            
             for (const auto& key : members) {
                 if (key.name.rfind("stack.", 0) == 0) {
                     base = normalize_name(key.name, hlil_ssa.var_renames);

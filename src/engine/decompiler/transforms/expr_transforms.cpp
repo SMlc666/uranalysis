@@ -374,6 +374,77 @@ bool simplify_and(mlil::MlilExpr& expr) {
     return false;
 }
 
+// Simplify rotate patterns: (x << n) | (x >> (size - n)) -> ror(x, size - n)
+// Also: (x >> n) | (x << (size - n)) -> ror(x, n)
+bool simplify_rotate(mlil::MlilExpr& expr) {
+    if (expr.kind != mlil::MlilExprKind::kOp || expr.op != mlil::MlilOp::kOr || expr.args.size() != 2) {
+        return false;
+    }
+    
+    // Skip boolean expressions
+    if (expr.size <= 1) {
+        return false;
+    }
+    
+    auto& lhs = expr.args[0];
+    auto& rhs = expr.args[1];
+    
+    // Both sides must be shift operations
+    if (lhs.kind != mlil::MlilExprKind::kOp || rhs.kind != mlil::MlilExprKind::kOp) {
+        return false;
+    }
+    if (lhs.args.size() != 2 || rhs.args.size() != 2) {
+        return false;
+    }
+    
+    // Identify which is Shl and which is Shr
+    const mlil::MlilExpr* shl_expr = nullptr;
+    const mlil::MlilExpr* shr_expr = nullptr;
+    
+    if (lhs.op == mlil::MlilOp::kShl && (rhs.op == mlil::MlilOp::kShr || rhs.op == mlil::MlilOp::kSar)) {
+        shl_expr = &lhs;
+        shr_expr = &rhs;
+    } else if (rhs.op == mlil::MlilOp::kShl && (lhs.op == mlil::MlilOp::kShr || lhs.op == mlil::MlilOp::kSar)) {
+        shl_expr = &rhs;
+        shr_expr = &lhs;
+    } else {
+        return false;
+    }
+    
+    // The base operand (x) must be the same in both shifts
+    const std::string shl_base_key = expr_key(shl_expr->args[0]);
+    const std::string shr_base_key = expr_key(shr_expr->args[0]);
+    if (shl_base_key.empty() || shl_base_key != shr_base_key) {
+        return false;
+    }
+    
+    // Get shift amounts - both must be immediates
+    std::uint64_t shl_amt = 0;
+    std::uint64_t shr_amt = 0;
+    if (!get_imm_value(shl_expr->args[1], shl_amt) || !get_imm_value(shr_expr->args[1], shr_amt)) {
+        return false;
+    }
+    
+    // Calculate bit width from expression size (size is in bytes)
+    const std::uint64_t bit_width = expr.size * 8;
+    
+    // Validate: shl_amt + shr_amt == bit_width
+    if (shl_amt + shr_amt != bit_width) {
+        return false;
+    }
+    
+    // Validate shift amounts are within range
+    if (shl_amt == 0 || shr_amt == 0 || shl_amt >= bit_width || shr_amt >= bit_width) {
+        return false;
+    }
+    
+    // (x << n) | (x >> (size - n)) == ROL(x, n) == ROR(x, size - n)
+    // We have kRor in MlilOp, so: ROR amount = shr_amt
+    mlil::MlilExpr base = shl_expr->args[0];
+    expr = make_binary_expr(mlil::MlilOp::kRor, expr.size, std::move(base), make_imm_expr(expr.size, shr_amt));
+    return true;
+}
+
 // Simplify OR patterns (non-logical)
 bool simplify_or(mlil::MlilExpr& expr) {
     if (expr.kind != mlil::MlilExprKind::kOp || expr.op != mlil::MlilOp::kOr || expr.args.size() != 2) {
@@ -383,6 +454,11 @@ bool simplify_or(mlil::MlilExpr& expr) {
     // Skip if this looks like a boolean expression (size 1)
     if (expr.size == 1) {
         return false;
+    }
+    
+    // Try rotate pattern first
+    if (simplify_rotate(expr)) {
+        return true;
     }
     
     auto& lhs = expr.args[0];

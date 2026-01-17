@@ -14,7 +14,10 @@ add_requires("spdlog", {configs = {header_only = true}})
 
 
 includes("third-party/llvm")
+
+
 set_encodings ("utf-8")
+
 option("build_shared")
     set_default(false)
     set_showmenu(true)
@@ -42,6 +45,7 @@ end
     add_includedirs("src/engine/include", {public = true})
     add_includedirs("src/engine/pass/include", {public = true})
     add_includedirs("src/engine/ir", {public = true})
+    add_includedirs("src/engine/debug/include", {public = true})
     add_files("src/engine/**/*.cpp")
     add_packages("capstone")
     add_packages("sqlite3")
@@ -49,7 +53,10 @@ end
     add_packages("spdlog")
     add_deps("llvm_demangle")
 
+
+
 target("cli")
+
     set_kind("binary")
     add_files("clients/cli/*.cpp")
     add_deps("engine")
@@ -63,7 +70,10 @@ target("client_common")
     add_files("clients/common/src/formatters/*.cpp")
     add_files("clients/common/src/services/*.cpp")
     add_files("clients/common/src/commands/*.cpp")
+    add_files("clients/common/src/args/*.cpp")
+    add_files("clients/common/src/util/*.cpp")
     add_deps("engine")
+    add_packages("spdlog")
 
 target("engine_tests")
     set_kind("binary")

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "client/command.h"
+#include "client/args.h"
 
 namespace client::commands {
 

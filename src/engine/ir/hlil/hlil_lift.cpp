@@ -77,6 +77,78 @@ private:
     const mlil::Function& function_;
     ControlFlowGraph cfg_;
 
+    // Check if a target block is a "trampoline" that leads to the loop header.
+    // A trampoline is a simple block (no calls, no branches except unconditional jump)
+    // that eventually reaches the loop header. Returns the inlined statements if so.
+    struct TrampolineResult {
+        bool is_trampoline = false;
+        std::vector<HlilStmt> inline_stmts;
+    };
+
+    TrampolineResult check_continue_trampoline(std::uint64_t target, std::uint64_t loop_header, 
+                                                std::uint64_t loop_exit, int max_depth = 5) {
+        TrampolineResult result;
+        if (target == 0 || loop_header == 0 || max_depth <= 0) return result;
+        
+        std::uint64_t current = target;
+        std::unordered_set<std::uint64_t> visited;
+        
+        while (current != 0 && max_depth-- > 0) {
+            if (current == loop_header) {
+                result.is_trampoline = true;
+                return result;
+            }
+            if (current == loop_exit) {
+                // Leads to exit, not a continue trampoline
+                return result;
+            }
+            if (visited.count(current)) {
+                // Cycle detected, not a simple trampoline
+                return result;
+            }
+            visited.insert(current);
+            
+            const BlockInfo* info = cfg_.get_info(current);
+            if (!info || !info->block) return result;
+            
+            // Check if this block has calls - if so, it's too complex to inline
+            bool has_call = false;
+            for (const auto& inst : info->block->instructions) {
+                for (const auto& stmt : inst.stmts) {
+                    if (stmt.kind == mlil::MlilStmtKind::kCall) {
+                        has_call = true;
+                        break;
+                    }
+                }
+                if (has_call) break;
+            }
+            if (has_call) return result;
+            
+            // Must have exactly one unconditional successor
+            if (info->succs.size() != 1) return result;
+            
+            // Check block doesn't have conditional jumps
+            bool has_cjump = false;
+            for (const auto& inst : info->block->instructions) {
+                for (const auto& stmt : inst.stmts) {
+                    if (stmt.kind == mlil::MlilStmtKind::kCJump) {
+                        has_cjump = true;
+                        break;
+                    }
+                }
+                if (has_cjump) break;
+            }
+            if (has_cjump) return result;
+            
+            // Collect statements from this block
+            lift_block_stmts(info->block, result.inline_stmts);
+            
+            current = info->succs[0];
+        }
+        
+        return result;
+    }
+
     // Helper to extract the condition and true/false targets from a block
     bool get_branch_info(const mlil::BasicBlock* block, Expr& cond, std::uint64_t& true_tgt, std::uint64_t& false_tgt) {
         if (block->instructions.empty()) return false;
@@ -160,6 +232,23 @@ private:
                     HlilStmt s; s.kind = HlilStmtKind::kBreak;
                     stmts.push_back(std::move(s));
                 } else {
+                    // Before emitting goto, check if target is a trampoline to loop header
+                    // This handles cases like: switch case jumps to a block that does
+                    // some assignments then continues the loop
+                    if (loop_header != 0) {
+                        auto trampoline = check_continue_trampoline(current, loop_header, loop_exit);
+                        if (trampoline.is_trampoline) {
+                            SPDLOG_DEBUG("HLIL: Converting goto 0x{:x} to inline+continue (trampoline to 0x{:x})", 
+                                current, loop_header);
+                            // Inline the trampoline statements
+                            for (auto& s : trampoline.inline_stmts) {
+                                stmts.push_back(std::move(s));
+                            }
+                            HlilStmt s; s.kind = HlilStmtKind::kContinue;
+                            stmts.push_back(std::move(s));
+                            break;
+                        }
+                    }
                     HlilStmt s; s.kind = HlilStmtKind::kGoto; s.address = current;
                     stmts.push_back(std::move(s));
                 }

@@ -20,7 +20,7 @@ Expr invert_condition(Expr cond) {
         cond.imm = (cond.imm & 1) ? 0 : 1;
         return cond;
     }
-    if (cond.kind == mlil::MlilExprKind::kOp && cond.size == 1) {
+    if (cond.kind == mlil::MlilExprKind::kOp) {
         switch (cond.op) {
             case mlil::MlilOp::kEq: cond.op = mlil::MlilOp::kNe; return cond;
             case mlil::MlilOp::kNe: cond.op = mlil::MlilOp::kEq; return cond;
@@ -96,16 +96,16 @@ bool LoopReconstructor::process_stmts(std::vector<HlilStmt>& stmts) {
         // 2. Try to match For: Init; While (DoWhile is rare for 'for')
         if (i + 1 < stmts.size() && s.kind == HlilStmtKind::kAssign && stmts[i+1].kind == HlilStmtKind::kWhile) {
             auto& next = stmts[i+1];
-            if (!next.body.empty() && next.body.back().kind == HlilStmtKind::kAssign) {
-                auto& step = next.body.back();
+            if (!next.body.empty()) {
+                auto& last = next.body.back();
                 // Check if step modifies the same variable as init
-                if (step.var.name == s.var.name) {
+                if (last.kind == HlilStmtKind::kAssign && last.var.name == s.var.name) {
                     // Success: Create For loop
                     HlilStmt for_stmt;
                     for_stmt.kind = HlilStmtKind::kFor;
                     for_stmt.condition = std::move(next.condition);
                     for_stmt.then_body.push_back(std::move(s)); // Init
-                    for_stmt.else_body.push_back(std::move(step)); // Step
+                    for_stmt.else_body.push_back(std::move(last)); // Step
                     
                     next.body.pop_back(); // Remove step from body
                     for_stmt.body = std::move(next.body);
