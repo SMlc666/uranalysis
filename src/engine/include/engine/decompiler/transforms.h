@@ -47,5 +47,8 @@ void repair_loop_bounds(Function& function);
 void merge_while_to_for(Function& function);
 void decompose_complex_return_exprs(Function& function);
 void recover_switch_statements(Function& function);
+void analyze_stack_variables(Function& function);
+void remove_redundant_assignments(Function& function);
+void eliminate_dead_loops(Function& function);
 
 } // namespace engine::decompiler

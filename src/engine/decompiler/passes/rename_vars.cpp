@@ -6,6 +6,11 @@ namespace {
 
 using types::SsaVarKey;
 
+// Check if a variable name is a stack or argument slot (unversioned)
+bool is_unversioned_slot_var(const std::string& name) {
+    return name.rfind("stack.", 0) == 0 || name.rfind("arg.", 0) == 0;
+}
+
 void rename_var(mlil::VarRef& var,
                 const std::unordered_map<SsaVarKey, std::string, types::SsaVarKeyHash, types::SsaVarKeyEq>& names) {
     if (var.name.empty()) {
@@ -15,6 +20,19 @@ void rename_var(mlil::VarRef& var,
     auto it = names.find(key);
     if (it != names.end()) {
         var.name = it->second;
+        return;
+    }
+    
+    // Fallback for unversioned stack/arg slot variables:
+    // If exact match failed and this is a stack.X or arg.X variable,
+    // try to find any version of this variable in the names map.
+    if (is_unversioned_slot_var(var.name)) {
+        for (const auto& [k, v] : names) {
+            if (k.name == var.name) {
+                var.name = v;
+                return;
+            }
+        }
     }
 }
 

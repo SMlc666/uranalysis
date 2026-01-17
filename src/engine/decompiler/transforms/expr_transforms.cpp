@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <functional>
+#include <limits>
 #include <sstream>
 
 namespace engine::decompiler {
@@ -208,6 +209,12 @@ bool simplify_add_sub(mlil::MlilExpr& expr) {
         expr = std::move(tmp);
         return true;
     }
+    
+    // x - x -> 0
+    if (expr.op == mlil::MlilOp::kSub && expr_key(lhs) == expr_key(rhs) && !expr_key(lhs).empty()) {
+        expr = make_imm_expr(expr.size, 0);
+        return true;
+    }
 
     if (rhs_imm) {
         mlil::MlilExpr base;
@@ -221,6 +228,195 @@ bool simplify_add_sub(mlil::MlilExpr& expr) {
         }
     }
 
+    return false;
+}
+
+// Simplify multiplication patterns
+bool simplify_mul(mlil::MlilExpr& expr) {
+    if (expr.kind != mlil::MlilExprKind::kOp || expr.op != mlil::MlilOp::kMul || expr.args.size() != 2) {
+        return false;
+    }
+    
+    auto& lhs = expr.args[0];
+    auto& rhs = expr.args[1];
+    std::uint64_t imm_lhs = 0;
+    std::uint64_t imm_rhs = 0;
+    const bool lhs_imm = get_imm_value(lhs, imm_lhs);
+    const bool rhs_imm = get_imm_value(rhs, imm_rhs);
+    
+    // Constant fold
+    if (lhs_imm && rhs_imm) {
+        expr = make_imm_expr(expr.size, imm_lhs * imm_rhs);
+        return true;
+    }
+    
+    // x * 0 -> 0
+    if (rhs_imm && imm_rhs == 0) {
+        expr = make_imm_expr(expr.size, 0);
+        return true;
+    }
+    if (lhs_imm && imm_lhs == 0) {
+        expr = make_imm_expr(expr.size, 0);
+        return true;
+    }
+    
+    // x * 1 -> x
+    if (rhs_imm && imm_rhs == 1) {
+        mlil::MlilExpr tmp = std::move(lhs);
+        expr = std::move(tmp);
+        return true;
+    }
+    if (lhs_imm && imm_lhs == 1) {
+        mlil::MlilExpr tmp = std::move(rhs);
+        expr = std::move(tmp);
+        return true;
+    }
+    
+    // Strength reduction: x * 2^n -> x << n (for small powers of 2)
+    if (rhs_imm && imm_rhs > 1 && (imm_rhs & (imm_rhs - 1)) == 0) {
+        // imm_rhs is a power of 2
+        unsigned shift = 0;
+        std::uint64_t v = imm_rhs;
+        while (v > 1) { v >>= 1; ++shift; }
+        expr = make_binary_expr(mlil::MlilOp::kShl, expr.size, std::move(lhs), make_imm_expr(expr.size, shift));
+        return true;
+    }
+    
+    return false;
+}
+
+// Simplify XOR patterns
+bool simplify_xor(mlil::MlilExpr& expr) {
+    if (expr.kind != mlil::MlilExprKind::kOp || expr.op != mlil::MlilOp::kXor || expr.args.size() != 2) {
+        return false;
+    }
+    
+    auto& lhs = expr.args[0];
+    auto& rhs = expr.args[1];
+    std::uint64_t imm_lhs = 0;
+    std::uint64_t imm_rhs = 0;
+    const bool lhs_imm = get_imm_value(lhs, imm_lhs);
+    const bool rhs_imm = get_imm_value(rhs, imm_rhs);
+    
+    // Constant fold
+    if (lhs_imm && rhs_imm) {
+        expr = make_imm_expr(expr.size, imm_lhs ^ imm_rhs);
+        return true;
+    }
+    
+    // x ^ 0 -> x
+    if (rhs_imm && imm_rhs == 0) {
+        mlil::MlilExpr tmp = std::move(lhs);
+        expr = std::move(tmp);
+        return true;
+    }
+    if (lhs_imm && imm_lhs == 0) {
+        mlil::MlilExpr tmp = std::move(rhs);
+        expr = std::move(tmp);
+        return true;
+    }
+    
+    // x ^ x -> 0
+    if (expr_key(lhs) == expr_key(rhs) && !expr_key(lhs).empty()) {
+        expr = make_imm_expr(expr.size, 0);
+        return true;
+    }
+    
+    return false;
+}
+
+// Simplify AND patterns
+bool simplify_and(mlil::MlilExpr& expr) {
+    if (expr.kind != mlil::MlilExprKind::kOp || expr.op != mlil::MlilOp::kAnd || expr.args.size() != 2) {
+        return false;
+    }
+    
+    auto& lhs = expr.args[0];
+    auto& rhs = expr.args[1];
+    std::uint64_t imm_lhs = 0;
+    std::uint64_t imm_rhs = 0;
+    const bool lhs_imm = get_imm_value(lhs, imm_lhs);
+    const bool rhs_imm = get_imm_value(rhs, imm_rhs);
+    
+    // Constant fold
+    if (lhs_imm && rhs_imm) {
+        expr = make_imm_expr(expr.size, imm_lhs & imm_rhs);
+        return true;
+    }
+    
+    // x & 0 -> 0
+    if (rhs_imm && imm_rhs == 0) {
+        expr = make_imm_expr(expr.size, 0);
+        return true;
+    }
+    if (lhs_imm && imm_lhs == 0) {
+        expr = make_imm_expr(expr.size, 0);
+        return true;
+    }
+    
+    // x & all-ones -> x (based on size)
+    std::uint64_t full_mask = (expr.size > 0 && expr.size < 8) 
+        ? ((static_cast<std::uint64_t>(1) << (expr.size * 8)) - 1) 
+        : ~static_cast<std::uint64_t>(0);
+    if (rhs_imm && imm_rhs == full_mask) {
+        mlil::MlilExpr tmp = std::move(lhs);
+        expr = std::move(tmp);
+        return true;
+    }
+    
+    // x & x -> x
+    if (expr_key(lhs) == expr_key(rhs) && !expr_key(lhs).empty()) {
+        mlil::MlilExpr tmp = std::move(lhs);
+        expr = std::move(tmp);
+        return true;
+    }
+    
+    return false;
+}
+
+// Simplify OR patterns (non-logical)
+bool simplify_or(mlil::MlilExpr& expr) {
+    if (expr.kind != mlil::MlilExprKind::kOp || expr.op != mlil::MlilOp::kOr || expr.args.size() != 2) {
+        return false;
+    }
+    
+    // Skip if this looks like a boolean expression (size 1)
+    if (expr.size == 1) {
+        return false;
+    }
+    
+    auto& lhs = expr.args[0];
+    auto& rhs = expr.args[1];
+    std::uint64_t imm_lhs = 0;
+    std::uint64_t imm_rhs = 0;
+    const bool lhs_imm = get_imm_value(lhs, imm_lhs);
+    const bool rhs_imm = get_imm_value(rhs, imm_rhs);
+    
+    // Constant fold
+    if (lhs_imm && rhs_imm) {
+        expr = make_imm_expr(expr.size, imm_lhs | imm_rhs);
+        return true;
+    }
+    
+    // x | 0 -> x
+    if (rhs_imm && imm_rhs == 0) {
+        mlil::MlilExpr tmp = std::move(lhs);
+        expr = std::move(tmp);
+        return true;
+    }
+    if (lhs_imm && imm_lhs == 0) {
+        mlil::MlilExpr tmp = std::move(rhs);
+        expr = std::move(tmp);
+        return true;
+    }
+    
+    // x | x -> x
+    if (expr_key(lhs) == expr_key(rhs) && !expr_key(lhs).empty()) {
+        mlil::MlilExpr tmp = std::move(lhs);
+        expr = std::move(tmp);
+        return true;
+    }
+    
     return false;
 }
 
@@ -414,11 +610,68 @@ bool simplify_signed_compare_pattern(mlil::MlilExpr& expr) {
         return false;
     }
     
-    // Pattern 1: (x == c) || (overflow_check)
-    // This often appears as: (x == c) | (complex signed overflow expression)
-    // Simplify to just: (x == c) when the OR'd part is a signed overflow check
+    // Pattern 1: or(eq(sub(x, c), 0), complex_overflow_check)
+    // This is a signed comparison pattern that represents (x <= c)
+    // ARM64 compilers generate this for (i < c+1) where i is the loop counter
     if (expr.op == mlil::MlilOp::kOr && expr.args.size() == 2) {
-        // Check if one operand is a simple equality and the other is complex
+        // Check for pattern: eq(sub(x, c), 0) || complex_expression
+        // First argument might be the equality check
+        for (int side = 0; side < 2; ++side) {
+            const mlil::MlilExpr& eq_side = (side == 0) ? expr.args[0] : expr.args[1];
+            const mlil::MlilExpr& other_side = (side == 0) ? expr.args[1] : expr.args[0];
+            
+            // Check if eq_side is eq(sub(x, c), 0)
+            if (eq_side.kind == mlil::MlilExprKind::kOp &&
+                eq_side.op == mlil::MlilOp::kEq &&
+                eq_side.args.size() == 2) {
+                
+                const mlil::MlilExpr* sub_expr = nullptr;
+                if (is_zero_imm(eq_side.args[1]) &&
+                    eq_side.args[0].kind == mlil::MlilExprKind::kOp &&
+                    eq_side.args[0].op == mlil::MlilOp::kSub) {
+                    sub_expr = &eq_side.args[0];
+                } else if (is_zero_imm(eq_side.args[0]) &&
+                           eq_side.args[1].kind == mlil::MlilExprKind::kOp &&
+                           eq_side.args[1].op == mlil::MlilOp::kSub) {
+                    sub_expr = &eq_side.args[1];
+                }
+                
+                if (sub_expr && sub_expr->args.size() == 2) {
+                    std::uint64_t c = 0;
+                    if (get_imm_value(sub_expr->args[1], c)) {
+                        // Check if other_side is complex (likely overflow check)
+                        if (expr_cost(other_side) > 5) {
+                            // Check for sign extraction pattern in the complex expression
+                            mlil::MlilExpr inner;
+                            bool has_sign_extract = false;
+                            std::function<void(const mlil::MlilExpr&)> find_sign = [&](const mlil::MlilExpr& e) {
+                                if (is_sign_extraction(e, inner)) {
+                                    has_sign_extract = true;
+                                }
+                                for (const auto& arg : e.args) {
+                                    find_sign(arg);
+                                }
+                            };
+                            find_sign(other_side);
+                            
+                            if (has_sign_extract) {
+                                // This is a signed loop condition: i <= c (which means i < c+1)
+                                // Convert to x < c+1 for cleaner loop bounds
+                                // Ensure c+1 doesn't overflow
+                                if (c < std::numeric_limits<uint64_t>::max()) {
+                                    mlil::MlilExpr x = sub_expr->args[0];
+                                    expr = make_binary_expr(mlil::MlilOp::kLt, expr.size,
+                                                           std::move(x), make_imm_expr(sub_expr->size, c + 1));
+                                    return true;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        
+        // Fallback: Check if one operand is a simple equality and the other is complex
         mlil::MlilExpr* simple = nullptr;
         mlil::MlilExpr* complex = nullptr;
         
@@ -486,7 +739,24 @@ bool simplify_signed_compare_pattern(mlil::MlilExpr& expr) {
 }
 
 void normalize_condition_expr(mlil::MlilExpr& expr) {
-    // First simplify any sub-expressions
+    // CRITICAL: For complex OR expressions that might be signed loop conditions,
+    // try signed compare pattern FIRST before any simplification or recursion.
+    // This preserves the original structure: or(eq(sub(x, c), 0), overflow_check)
+    // If we simplify children first, eq(sub(x, c), 0) becomes eq(x, c), breaking the pattern.
+    if (expr.kind == mlil::MlilExprKind::kOp && expr.op == mlil::MlilOp::kOr && expr.args.size() == 2) {
+        int total_cost = expr_cost(expr);
+        if (total_cost > 10) {
+            // Try signed compare pattern before any other transformation
+            if (simplify_signed_compare_pattern(expr)) {
+                // After successful pattern match, the result is simple (e.g., x < 9)
+                // Optionally simplify the result
+                simplify_expr(expr);
+                return;
+            }
+        }
+    }
+    
+    // Now recursively process sub-expressions
     for (auto& arg : expr.args) {
         // Don't recurse into comparison operands - only transform top-level conditions
         if (expr.kind == mlil::MlilExprKind::kOp) {
@@ -510,7 +780,7 @@ void normalize_condition_expr(mlil::MlilExpr& expr) {
     // Apply simplifications
     simplify_expr(expr);
     
-    // Try to simplify verbose signed comparison patterns
+    // Try to simplify verbose signed comparison patterns (after standard simplification)
     if (simplify_signed_compare_pattern(expr)) {
         return;
     }
@@ -550,8 +820,8 @@ bool simplify_not(mlil::MlilExpr& expr) {
 bool simplify_logical_or(mlil::MlilExpr& expr) {
     // false || x -> x
     // x || false -> x
-    // true || x -> true
-    // x || true -> true
+    // true || x -> true (only if x is simple)
+    // x || true -> true (only if x is simple)
     if (expr.kind != mlil::MlilExprKind::kOp || expr.op != mlil::MlilOp::kOr) {
         return false;
     }
@@ -575,15 +845,27 @@ bool simplify_logical_or(mlil::MlilExpr& expr) {
         expr = std::move(tmp);
         return true;
     }
+    
+    // Only simplify x || true -> true if x is also simple (not a complex condition)
+    // This prevents over-simplification of loop conditions like (i <= 8) || overflow_check
+    // where the overflow check part gets simplified to true
     if (lhs_is_imm && lhs_imm != 0) {
-        // true || x -> true
-        expr = make_imm_expr(expr.size, 1);
-        return true;
+        // true || x -> true, but only if x is also simple or constant
+        if (rhs_is_imm || expr_cost(expr.args[1]) < 3) {
+            expr = make_imm_expr(expr.size, 1);
+            return true;
+        }
+        // Keep the OR if the other side is complex (might be a loop condition)
+        return false;
     }
     if (rhs_is_imm && rhs_imm != 0) {
-        // x || true -> true
-        expr = make_imm_expr(expr.size, 1);
-        return true;
+        // x || true -> true, but only if x is also simple or constant
+        if (lhs_is_imm || expr_cost(expr.args[0]) < 3) {
+            expr = make_imm_expr(expr.size, 1);
+            return true;
+        }
+        // Keep the OR if the other side is complex (might be a loop condition)
+        return false;
     }
     
     // Pattern: (A == B) | (A < B) -> A <= B
@@ -625,6 +907,92 @@ bool simplify_logical_or(mlil::MlilExpr& expr) {
         }
     }
 
+    return false;
+}
+
+// Simplify redundant cast expressions
+// cast(cast(x)) -> cast(x) (nested casts)
+// cast(x) where x.size == expr.size -> x (identity cast)
+// cast(imm) -> imm with adjusted size
+bool simplify_cast(mlil::MlilExpr& expr) {
+    if (expr.kind != mlil::MlilExprKind::kOp || expr.op != mlil::MlilOp::kCast) {
+        return false;
+    }
+    if (expr.args.empty()) {
+        return false;
+    }
+    
+    auto& inner = expr.args[0];
+    
+    // Fold nested casts: cast(cast(x)) -> cast(x)
+    if (inner.kind == mlil::MlilExprKind::kOp && inner.op == mlil::MlilOp::kCast && !inner.args.empty()) {
+        // Take the innermost value and apply the outermost size
+        mlil::MlilExpr innermost = std::move(inner.args[0]);
+        innermost.size = expr.size;
+        expr = std::move(innermost);
+        return true;
+    }
+    
+    // Identity cast: cast(x) where sizes match or outer is 0
+    if (expr.size == 0 || (inner.size > 0 && inner.size == expr.size)) {
+        mlil::MlilExpr tmp = std::move(inner);
+        expr = std::move(tmp);
+        return true;
+    }
+    
+    // Fold constant casts: cast(imm) -> imm with mask
+    std::uint64_t imm = 0;
+    if (get_imm_value(inner, imm)) {
+        std::uint64_t mask = (expr.size > 0 && expr.size < 8) 
+            ? ((static_cast<std::uint64_t>(1) << (expr.size * 8)) - 1) 
+            : ~static_cast<std::uint64_t>(0);
+        expr = make_imm_expr(expr.size, imm & mask);
+        return true;
+    }
+    
+    // For variables and other expressions, remove cast ONLY if sizes match
+    // This prevents losing narrowing/widening semantics
+    if (inner.kind == mlil::MlilExprKind::kVar || 
+        inner.kind == mlil::MlilExprKind::kLoad) {
+        if (inner.size == expr.size) {
+            mlil::MlilExpr tmp = std::move(inner);
+            expr = std::move(tmp);
+            return true;
+        }
+    }
+    
+    // For binary operations, also remove casts (comparison results, arithmetic, etc.)
+    if (inner.kind == mlil::MlilExprKind::kOp) {
+        switch (inner.op) {
+            case mlil::MlilOp::kAdd:
+            case mlil::MlilOp::kSub:
+            case mlil::MlilOp::kMul:
+            case mlil::MlilOp::kDiv:
+            case mlil::MlilOp::kMod:
+            case mlil::MlilOp::kAnd:
+            case mlil::MlilOp::kOr:
+            case mlil::MlilOp::kXor:
+            case mlil::MlilOp::kShl:
+            case mlil::MlilOp::kShr:
+            case mlil::MlilOp::kSar:
+            case mlil::MlilOp::kEq:
+            case mlil::MlilOp::kNe:
+            case mlil::MlilOp::kLt:
+            case mlil::MlilOp::kLe:
+            case mlil::MlilOp::kGt:
+            case mlil::MlilOp::kGe: {
+                mlil::MlilExpr tmp = std::move(inner);
+                if (tmp.size == 0) {
+                    tmp.size = expr.size;
+                }
+                expr = std::move(tmp);
+                return true;
+            }
+            default:
+                break;
+        }
+    }
+    
     return false;
 }
 
@@ -768,6 +1136,22 @@ bool simplify_compare_constants(mlil::MlilExpr& expr) {
 }
 
 void simplify_expr(mlil::MlilExpr& expr) {
+    // For OR expressions with complex operands, try signed compare pattern FIRST
+    // before simplifying children, to preserve the original structure
+    if (expr.kind == mlil::MlilExprKind::kOp && expr.op == mlil::MlilOp::kOr && expr.args.size() == 2) {
+        // Check if this looks like a signed loop condition pattern
+        // Pattern: or(eq(sub(x, c), 0), complex_overflow_check)
+        int total_cost = expr_cost(expr);
+        if (total_cost > 10) {
+            // Try to simplify signed compare pattern before any other simplification
+            if (simplify_signed_compare_pattern(expr)) {
+                // After simplification, continue to simplify the result
+                simplify_expr(expr);
+                return;
+            }
+        }
+    }
+    
     // First simplify children (bottom-up)
     for (std::size_t i = 0; i < expr.args.size(); ++i) {
         simplify_expr(expr.args[i]);
@@ -778,6 +1162,13 @@ void simplify_expr(mlil::MlilExpr& expr) {
     }
 
     // Apply simplifications - only one pass, no recursive re-simplify
+    // For OR expressions, try signed compare pattern first (after children are simplified)
+    if (expr.op == mlil::MlilOp::kOr) {
+        if (simplify_signed_compare_pattern(expr)) {
+            return;
+        }
+    }
+    
     // Constant folding for NOT
     if (simplify_not(expr)) {
         return;
@@ -817,10 +1208,8 @@ void simplify_expr(mlil::MlilExpr& expr) {
         return;
     }
 
-    if (expr.kind == mlil::MlilExprKind::kOp &&
-        expr.op == mlil::MlilOp::kCast && !expr.args.empty()) {
-        mlil::MlilExpr inner = std::move(expr.args[0]);
-        expr = std::move(inner);
+    // Enhanced cast simplification
+    if (simplify_cast(expr)) {
         return;
     }
     

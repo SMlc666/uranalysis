@@ -1,4 +1,6 @@
 #include "engine/elf_loader.h"
+#include "engine/log.h"
+
 
 #include <fstream>
 #include <unordered_map>
@@ -186,7 +188,10 @@ bool load_elf_image_with_symbols_and_relocations(const std::string& path,
     image.segments.clear();
     error.clear();
 
+    engine::log::info("Loading ELF file: {}", path);
+
     std::ifstream file(path, std::ios::binary);
+
     if (!file) {
         error = "failed to open file";
         return false;
@@ -221,8 +226,10 @@ bool load_elf_image_with_symbols_and_relocations(const std::string& path,
     info.ph_num = header.e_phnum;
     info.sh_num = header.e_shnum;
     if (header.e_machine == kElfMachineAarch64) {
+        engine::log::info("Detected AArch64 architecture");
         info.machine = BinaryMachine::kAarch64;
     }
+
 
     if (header.e_phoff != 0 && header.e_phnum != 0) {
         if (header.e_phentsize != sizeof(Elf64_Phdr)) {

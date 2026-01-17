@@ -293,6 +293,10 @@ bool Session::build_llir_ssa_arm64(std::uint64_t entry,
     if (!llir::resolve_indirect_branches(function, error)) {
         return false;
     }
+    // Resolve jump tables for switch statement recovery
+    if (!llir::resolve_jump_tables(function, image_, segments_, error)) {
+        return false;
+    }
     return true;
 }
 
@@ -307,19 +311,15 @@ bool Session::build_mlil_ssa_arm64(std::uint64_t entry,
     if (!mlil::build_mlil_from_llil_ssa(llir_function, function, error)) {
         return false;
     }
-    std::vector<mlil::VarRef> clobbers;
-    const auto& llir_clobbers = arch::arm64::call_clobbers();
-    clobbers.reserve(llir_clobbers.size());
-    for (const auto& reg : llir_clobbers) {
-        mlil::VarRef var;
-        var.name = "reg." + reg.name;
-        var.version = -1;
-        clobbers.push_back(std::move(var));
-    }
-    if (!mlil::build_ssa_with_call_clobbers(function, clobbers, error)) {
-        return false;
-    }
+    // Note: We skip mlil::build_ssa_with_call_clobbers here because LLIR already
+    // has correct SSA information. Rebuilding SSA in MLIL would overwrite the
+    // correct version numbers from LLIR, causing issues like xor(a, b) becoming
+    // xor(a, a) when both operands are different versions of the same register.
+    // The call clobbers are already handled in LLIR SSA construction.
+    
     mlil::MlilOptOptions options;
+    // Disable copy propagation to prevent incorrect variable merging
+    options.copy_propagation = false;
     return mlil::optimize_mlil_ssa(function, options, error);
 }
 

@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <cassert>
 #include <unordered_set>
+#include <spdlog/spdlog.h>
 
 namespace engine::hlil {
 
@@ -195,6 +196,9 @@ private:
                 std::uint64_t t_tgt = 0, f_tgt = 0;
                 bool is_cjump = get_branch_info(info->block, loop_cond, t_tgt, f_tgt);
 
+                SPDLOG_DEBUG("HLIL Loop detected at 0x{:x}: is_cjump={} t_tgt=0x{:x} f_tgt=0x{:x}", 
+                    current, is_cjump, t_tgt, f_tgt);
+
                 HlilStmt loop_stmt;
                 loop_stmt.kind = HlilStmtKind::kWhile;
                 
@@ -210,12 +214,58 @@ private:
                         loop_stmt.condition = invert_condition(loop_cond);
                         body_start = f_tgt;
                         exit_target = t_tgt;
+                    } else if (t_in && f_in) {
+                        // Both branches in loop - try to find which leads to eventual exit
+                        // Look for a branch that has a path to outside the loop
+                        const BlockInfo* t_info = cfg_.get_info(t_tgt);
+                        const BlockInfo* f_info = cfg_.get_info(f_tgt);
+                        
+                        bool t_has_exit_path = false;
+                        bool f_has_exit_path = false;
+                        
+                        // Check if t_tgt eventually exits the loop
+                        if (t_info) {
+                            for (auto succ : t_info->succs) {
+                                if (!cfg_.is_in_loop(succ, current)) {
+                                    t_has_exit_path = true;
+                                    exit_target = succ;
+                                    break;
+                                }
+                            }
+                        }
+                        
+                        // Check if f_tgt eventually exits the loop
+                        if (f_info) {
+                            for (auto succ : f_info->succs) {
+                                if (!cfg_.is_in_loop(succ, current)) {
+                                    f_has_exit_path = true;
+                                    if (exit_target == 0) {
+                                        exit_target = succ;
+                                    }
+                                    break;
+                                }
+                            }
+                        }
+                        
+                        // Use the condition if one path has an exit
+                        if (t_has_exit_path && !f_has_exit_path) {
+                            // t_tgt leads to exit, so loop continues while NOT condition
+                            loop_stmt.condition = invert_condition(loop_cond);
+                            body_start = f_tgt;
+                        } else if (f_has_exit_path && !t_has_exit_path) {
+                            // f_tgt leads to exit, so loop continues while condition
+                            loop_stmt.condition = loop_cond;
+                            body_start = t_tgt;
+                        } else {
+                            // Both or neither have exit paths - use condition as-is
+                            // The condition likely represents something meaningful
+                            loop_stmt.condition = loop_cond;
+                            body_start = t_tgt;
+                        }
                     } else {
-                        // Both in (infinite or internal break)
+                        // Neither in loop - shouldn't happen for back-edge block
                         loop_stmt.condition = make_imm(1, 1);
                         body_start = t_tgt;
-                        // Determine if one path eventually exits?
-                        // For now treat as infinite.
                     }
                 } else {
                      loop_stmt.condition = make_imm(1, 1);
@@ -225,7 +275,42 @@ private:
                 // P1 Fix: Handle self-loops (body_start == current)
                 // In self-loops, the loop header IS the loop body
                 // We need to move statements from outer context into loop body
-                if (body_start == current) {
+                //
+                // P2 Fix: Handle edge-split self-loops
+                // After critical edge splitting, a self-loop like 0x1c68 -> 0x1c68
+                // becomes 0x1c68 -> 0x1c82 -> 0x1c68 where 0x1c82 is a synthetic block
+                // containing only phi copies. We detect this by checking if body_start
+                // is a trampoline block that jumps directly back to the header.
+                
+                bool is_trampoline_body = false;
+                if (body_start != current && body_start != 0) {
+                    const BlockInfo* body_info = cfg_.get_info(body_start);
+                    if (body_info && body_info->succs.size() == 1 && body_info->succs[0] == current) {
+                        // body_start jumps directly back to current - it's a trampoline
+                        // Check if it only contains phi copies (comment contains "phi" or "split edge")
+                        bool only_phi_copies = true;
+                        if (body_info->block) {
+                            for (const auto& inst : body_info->block->instructions) {
+                                for (const auto& stmt : inst.stmts) {
+                                    if (stmt.kind == mlil::MlilStmtKind::kJump) continue;
+                                    if (stmt.comment.find("phi") == std::string::npos &&
+                                        stmt.comment.find("split edge") == std::string::npos) {
+                                        only_phi_copies = false;
+                                        break;
+                                    }
+                                }
+                                if (!only_phi_copies) break;
+                            }
+                        }
+                        is_trampoline_body = only_phi_copies;
+                        if (is_trampoline_body) {
+                            SPDLOG_DEBUG("  Detected trampoline block 0x{:x} -> 0x{:x}, treating as self-loop", body_start, current);
+                        }
+                    }
+                }
+                
+                if (body_start == current || is_trampoline_body) {
+                    SPDLOG_DEBUG("  Self-loop at 0x{:x}, moving {} stmts from index {}", current, stmts.size() - stmts_start_idx, stmts_start_idx);
                     // Self-loop: move previously extracted statements into loop body
                     // These statements were added at stmts_start_idx by lift_block_stmts above
                     for (std::size_t i = stmts_start_idx; i < stmts.size(); ++i) {
@@ -233,19 +318,31 @@ private:
                     }
                     // Remove moved statements from outer list
                     stmts.erase(stmts.begin() + static_cast<std::ptrdiff_t>(stmts_start_idx), stmts.end());
+                    
+                    // If it's a trampoline, also lift the trampoline block's statements
+                    if (is_trampoline_body) {
+                        const BlockInfo* body_info = cfg_.get_info(body_start);
+                        if (body_info) {
+                            lift_block_stmts(body_info->block, loop_stmt.body);
+                        }
+                    }
                 } else if (body_start != 0) {
+                    SPDLOG_DEBUG("  Loop body_start=0x{:x}, recursing with stop_at=0x{:x}", body_start, current);
                     // Recurse for body
                     // The 'stop_at' for the body is the header itself (current)
                     // We also pass current as loop_header and exit_target as loop_exit
                     loop_stmt.body = lift_region(body_start, current, path, current, exit_target);
+                    SPDLOG_DEBUG("  Loop body has {} statements after recursion", loop_stmt.body.size());
                 }
                 
                 // Universal fallback for empty loop bodies
                 // Applies to both self-loops and regular loops
                 if (loop_stmt.body.empty() && body_start != 0) {
+                    SPDLOG_DEBUG("  Empty body fallback for body_start=0x{:x}", body_start);
                     const BlockInfo* body_info = cfg_.get_info(body_start);
                     if (body_info) {
                         lift_block_stmts(body_info->block, loop_stmt.body);
+                        SPDLOG_DEBUG("  Fallback lifted {} statements", loop_stmt.body.size());
                     }
                 }
                 

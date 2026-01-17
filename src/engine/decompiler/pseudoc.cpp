@@ -131,6 +131,8 @@ Stmt convert_stmt(const hlil::HlilStmt& in, SymbolResolver resolver) {
 
 } // namespace
 
+
+
 bool build_pseudoc_from_hlil(const hlil::Function& hlil_function,
                              Function& out,
                              std::string& error,
@@ -143,7 +145,27 @@ bool build_pseudoc_from_hlil(const hlil::Function& hlil_function,
     out.params.clear();
     out.locals.clear();
     out.var_map.clear();
+    out.initial_values.clear();
     out.stmts.clear();
+
+    // Collect initial values from HLIL statements before conversion
+    // Look for assignments like: stack.28 = 0x811c9dc5 (before any control flow)
+    for (const auto& stmt : hlil_function.stmts) {
+        if (stmt.kind == hlil::HlilStmtKind::kIf ||
+            stmt.kind == hlil::HlilStmtKind::kWhile ||
+            stmt.kind == hlil::HlilStmtKind::kDoWhile ||
+            stmt.kind == hlil::HlilStmtKind::kFor) {
+            break;  // Stop at first control flow
+        }
+        if (stmt.kind == hlil::HlilStmtKind::kAssign && !stmt.var.name.empty()) {
+            if (stmt.expr.kind == mlil::MlilExprKind::kImm) {
+                // Only record first assignment to each variable
+                if (out.initial_values.find(stmt.var.name) == out.initial_values.end()) {
+                    out.initial_values[stmt.var.name] = stmt.expr.imm;
+                }
+            }
+        }
+    }
 
     out.stmts.reserve(hlil_function.stmts.size());
     for (const auto& stmt : hlil_function.stmts) {
@@ -152,6 +174,7 @@ bool build_pseudoc_from_hlil(const hlil::Function& hlil_function,
         }
         out.stmts.push_back(convert_stmt(stmt, resolver));
     }
+    
     materialize_temporaries(out);
     propagate_pseudoc_exprs(out);
     inline_trivial_temps(out);
@@ -165,11 +188,17 @@ bool build_pseudoc_from_hlil(const hlil::Function& hlil_function,
     repair_loop_bounds(out);
     merge_while_to_for(out);
     recover_switch_statements(out);
+    analyze_stack_variables(out);
     decompose_complex_return_exprs(out);
+    remove_redundant_assignments(out);  // Clean up x = x patterns
+    eliminate_dead_loops(out);          // Remove while(0), for(;0;) dead loops
+    
     return true;
 }
 
 namespace {
+
+
 
 bool build_pseudoc_from_mlil_ssa_internal(const mlil::Function& mlil_function,
                                           Function& out,

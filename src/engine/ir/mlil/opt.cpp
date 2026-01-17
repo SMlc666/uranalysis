@@ -1,10 +1,17 @@
 #include "engine/mlil_opt.h"
+#include "engine/mlil_opt_internal.h"
 
 #include <cstdint>
 
 #include "engine/mlil_ssa.h"
 
 namespace engine::mlil {
+
+namespace detail {
+
+// ============================================================================
+// Helper functions (private to this translation unit)
+// ============================================================================
 
 namespace {
 
@@ -382,6 +389,12 @@ bool fold_unary(const MlilExpr& expr, std::uint64_t value, std::uint64_t& out) {
     }
 }
 
+}  // anonymous namespace
+
+// ============================================================================
+// Exported optimization functions (in detail namespace)
+// ============================================================================
+
 bool simplify_op(MlilExpr& expr) {
     if (expr.kind != MlilExprKind::kOp || expr.args.empty()) {
         return false;
@@ -490,6 +503,8 @@ bool simplify_op(MlilExpr& expr) {
     return changed;
 }
 
+namespace {
+
 bool replace_var_in_expr(MlilExpr& expr, const VarRef& target, const MlilExpr& replacement) {
     bool changed = false;
     if (expr.kind == MlilExprKind::kVar) {
@@ -518,6 +533,8 @@ bool replace_var_in_stmt(MlilStmt& stmt, const VarRef& target, const MlilExpr& r
     }
     return changed;
 }
+
+}  // anonymous namespace
 
 bool propagate_copies(Function& function, const MlilSsaDefUse& defuse) {
     bool changed = false;
@@ -658,11 +675,11 @@ bool has_ssa(const Function& function) {
     return false;
 }
 
-}  // namespace
+}  // namespace detail
 
 bool optimize_mlil_ssa(Function& function, const MlilOptOptions& options, std::string& error) {
     error.clear();
-    if (!has_ssa(function)) {
+    if (!detail::has_ssa(function)) {
         error = "mlil is empty; build_ssa must run first";
         return false;
     }
@@ -675,17 +692,17 @@ bool optimize_mlil_ssa(Function& function, const MlilOptOptions& options, std::s
             if (!build_ssa_def_use(function, defuse, error)) {
                 return false;
             }
-            iter_changed |= propagate_copies(function, defuse);
+            iter_changed |= detail::propagate_copies(function, defuse);
         }
         if (options.fold_constants) {
-            iter_changed |= fold_constants(function);
+            iter_changed |= detail::fold_constants(function);
         }
         if (options.dead_code_elim) {
             MlilSsaDefUse defuse;
             if (!build_ssa_def_use(function, defuse, error)) {
                 return false;
             }
-            iter_changed |= eliminate_dead_defs(function, defuse);
+            iter_changed |= detail::eliminate_dead_defs(function, defuse);
         }
         changed |= iter_changed;
         if (!iter_changed) {

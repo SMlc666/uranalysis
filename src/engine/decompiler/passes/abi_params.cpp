@@ -390,26 +390,32 @@ std::vector<ParamInfo> collect_abi_params(const mlil::Function& function) {
         }
     }
 
-    // Enforce ABI continuity: Parameters must be contiguous from index 0.
-    // If there's a gap, only keep parameters before the gap.
-    // For example: if x0 and x3 are detected but x1 is not, we only keep x0.
+    // Enforce ABI continuity with tolerance for small gaps.
+    // Parameters should generally be contiguous, but we allow a gap of 1 register
+    // to handle cases where a parameter is passed by value and not directly used.
+    // For example: if x0, x1, x3 are detected but x2 is not, we still include x3
+    // as long as the gap is small.
     int valid_int_max = -1;
-    for (int i = 0; i <= max_int_index; ++i) {
+    int consecutive_gaps = 0;
+    const int kMaxAllowedGap = 1;  // Allow at most 1 missing register in sequence
+    
+    for (int i = 0; i <= max_int_index && consecutive_gaps <= kMaxAllowedGap; ++i) {
         if (found_int_params.find(i) != found_int_params.end()) {
             valid_int_max = i;
+            consecutive_gaps = 0;  // Reset gap counter on finding a param
         } else {
-            // Found a gap - stop here, parameters beyond this are likely not real params.
-            break;
+            consecutive_gaps++;
         }
     }
 
     int valid_float_max = -1;
-    for (int i = 0; i <= max_float_index; ++i) {
+    consecutive_gaps = 0;
+    for (int i = 0; i <= max_float_index && consecutive_gaps <= kMaxAllowedGap; ++i) {
         if (found_float_params.find(i) != found_float_params.end()) {
             valid_float_max = i;
+            consecutive_gaps = 0;
         } else {
-            // Found a gap - stop here.
-            break;
+            consecutive_gaps++;
         }
     }
 

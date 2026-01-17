@@ -131,6 +131,17 @@ void ControlFlowSimplifier::visit(HlilStmt& stmt, bool& modified) {
 
     } else if (stmt.kind == HlilStmtKind::kWhile) {
         if (process_stmts(stmt.body)) modified = true;
+        
+        // Eliminate dead loops: while(0), while(false)
+        // Condition is constant 0 - loop never executes
+        if (stmt.condition.kind == mlil::MlilExprKind::kImm && stmt.condition.imm == 0) {
+            stmt.kind = HlilStmtKind::kNop;
+            stmt.body.clear();
+            stmt.condition = {};
+            modified = true;
+        }
+    } else if (stmt.kind == HlilStmtKind::kDoWhile) {
+        if (process_stmts(stmt.body)) modified = true;
     }
 }
 

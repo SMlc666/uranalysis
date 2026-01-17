@@ -158,29 +158,131 @@ void DisasmTab::render_disasm_list(CodeViewState& state) {
         return;
     }
 
-    ImGuiListClipper clipper;
-    clipper.Begin(static_cast<int>(state.disasm_cache.size()));
-    while (clipper.Step()) {
-        for (int i = clipper.DisplayStart; i < clipper.DisplayEnd; ++i) {
-            const auto& line = state.disasm_cache[static_cast<std::size_t>(i)];
-            ImGui::Text("0x%llx: %s", static_cast<unsigned long long>(line.address), line.text.c_str());
+    // Set up table for aligned rendering
+    ImGuiTableFlags flags = ImGuiTableFlags_SizingFixedFit | ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersOuter | ImGuiTableFlags_Resizable | ImGuiTableFlags_ScrollY;
+    
+    // Calculate approximate height to fill, leaving space for "Load more" button
+    float avail_h = ImGui::GetContentRegionAvail().y;
+    // If not reached end, reserve space for button
+    if (!state.disasm_reached_end) avail_h -= 30.0f;
+    if (avail_h < 100.0f) avail_h = 100.0f;
+
+    if (ImGui::BeginTable("DisasmTable", 2, flags, ImVec2(0.0f, avail_h))) {
+        ImGui::TableSetupScrollFreeze(0, 1); // Make header row always visible
+        ImGui::TableSetupColumn("Address", ImGuiTableColumnFlags_WidthFixed, 100.0f);
+        ImGui::TableSetupColumn("Instruction", ImGuiTableColumnFlags_WidthStretch);
+        // ImGui::TableHeadersRow(); // Optional: show headers
+
+        ImGuiListClipper clipper;
+        clipper.Begin(static_cast<int>(state.disasm_cache.size()));
+        while (clipper.Step()) {
+            for (int i = clipper.DisplayStart; i < clipper.DisplayEnd; ++i) {
+                const auto& line = state.disasm_cache[static_cast<std::size_t>(i)];
+                
+                ImGui::TableNextRow();
+                ImGui::TableNextColumn();
+                
+                // Address Column (Yellow-ish)
+                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.8f, 0.8f, 0.4f, 1.0f));
+                ImGui::Text("0x%llx", static_cast<unsigned long long>(line.address));
+                ImGui::PopStyleColor();
+
+                ImGui::TableNextColumn();
+                
+                // Render instruction with simple syntax highlighting
+                // For now, we manually parse the string. 
+                // Ideally, engine should return structured tokens.
+                // Format: "mnemonic  op1, op2"
+                
+                std::string text = line.text;
+                size_t first_space = text.find(' ');
+                
+                if (first_space != std::string::npos) {
+                    // Mnemonic (Blue)
+                    std::string mnemonic = text.substr(0, first_space);
+                    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.3f, 0.7f, 1.0f, 1.0f));
+                    ImGui::TextUnformatted(mnemonic.c_str());
+                    ImGui::PopStyleColor();
+                    
+                    ImGui::SameLine();
+                    ImGui::TextUnformatted(" "); 
+                    ImGui::SameLine();
+                    
+                    // Simple regex-like parsing for operands
+                    std::string operands = text.substr(first_space + 1);
+                    // Trim leading spaces
+                    size_t op_start = operands.find_first_not_of(" ");
+                    if (op_start != std::string::npos) {
+                        operands = operands.substr(op_start);
+                    }
+                    
+                    // Naive tokenization: split by delimiters
+                    // We color registers (r.., e.., x..) in Purple
+                    // Immediates (0x.., numbers) in Green
+                    
+                    // For now, just print it. 
+                    // TODO: Implement a proper token loop if we want better highlighting.
+                    // Let's try a very simple highlight for commas
+                    
+                    const char* p = operands.c_str();
+                    const char* start = p;
+                    while (*p) {
+                        if (*p == ',' || *p == '[' || *p == ']' || *p == '+' || *p == '-' || *p == '*') {
+                            if (p > start) {
+                                std::string token(start, p);
+                                // Check if token looks like register or number
+                                bool is_reg = (token.size() >= 2 && (token[0] == 'r' || token[0] == 'e' || token[0] == 'x' || token[0] == 'w' || token[0] == 's'));
+                                bool is_num = (std::isdigit(token[0]));
+                                
+                                if (is_reg) ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.8f, 0.4f, 1.0f, 1.0f)); // Purple
+                                else if (is_num) ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.4f, 1.0f, 0.4f, 1.0f)); // Green
+                                else ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.85f, 0.85f, 0.85f, 1.0f));
+                                
+                                ImGui::TextUnformatted(token.c_str());
+                                ImGui::PopStyleColor();
+                                ImGui::SameLine(0, 0);
+                            }
+                            // Punctuation
+                            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.6f, 0.6f, 0.6f, 1.0f));
+                            ImGui::Text("%c", *p);
+                            ImGui::PopStyleColor();
+                            ImGui::SameLine(0, 0);
+                            start = p + 1;
+                        }
+                        p++;
+                    }
+                    if (p > start) {
+                         std::string token(start, p);
+                         bool is_reg = (token.size() >= 2 && (token[0] == 'r' || token[0] == 'e' || token[0] == 'x' || token[0] == 'w' || token[0] == 's'));
+                         bool is_num = (std::isdigit(token[0]));
+                         if (is_reg) ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.8f, 0.4f, 1.0f, 1.0f));
+                         else if (is_num) ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.4f, 1.0f, 0.4f, 1.0f));
+                         else ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.85f, 0.85f, 0.85f, 1.0f));
+                         
+                         ImGui::TextUnformatted(token.c_str());
+                         ImGui::PopStyleColor();
+                    }
+                } else {
+                    // Just mnemonic?
+                    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.3f, 0.7f, 1.0f, 1.0f));
+                    ImGui::TextUnformatted(text.c_str());
+                    ImGui::PopStyleColor();
+                }
+            }
         }
+        ImGui::EndTable();
     }
 
     // Infinite scroll logic (simplified)
     bool request_more = false;
-    float scroll_y = ImGui::GetScrollY();
-    float scroll_max = ImGui::GetScrollMaxY();
-    float win_h = ImGui::GetWindowHeight();
+    // Note: Scroll logic is tricky with Tables. 
+    // We check if we are near the end of the item list using the clipper/index logic if possible,
+    // or rely on a manual "Load More" button for stability first.
     
-    if (!state.disasm_reached_end && scroll_max > 0.0f && scroll_y + win_h >= scroll_max - 80.0f) {
-        request_more = true;
-    }
-
     if (state.disasm_reached_end) {
         ImGui::TextDisabled("Reached end of readable bytes.");
     } else {
-        if (ImGui::Button("Load more")) {
+        if (ImGui::Button("Load more...")) {
             request_more = true;
         }
     }

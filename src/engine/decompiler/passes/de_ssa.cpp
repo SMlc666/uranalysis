@@ -235,25 +235,115 @@ std::vector<mlil::MlilStmt> order_phi_copies(std::vector<mlil::MlilStmt> copies,
     return ordered;
 }
 
-void rewrite_mlil_expr(mlil::MlilExpr& expr) {
-    if (expr.kind == mlil::MlilExprKind::kVar) {
-        expr.var.version = -1;
+// Struct to track SSA variable usage
+struct VarVersionKey {
+    std::string name;
+    int version;
+    
+    bool operator==(const VarVersionKey& other) const {
+        return name == other.name && version == other.version;
     }
-    for (auto& arg : expr.args) {
-        rewrite_mlil_expr(arg);
+};
+
+struct VarVersionKeyHash {
+    std::size_t operator()(const VarVersionKey& key) const {
+        std::size_t h = std::hash<std::string>{}(key.name);
+        h ^= static_cast<std::size_t>(std::hash<int>{}(key.version)) + 0x9e3779b9 + (h << 6) + (h >> 2);
+        return h;
+    }
+};
+
+// Collect all variable versions used in an expression
+void collect_var_versions(const mlil::MlilExpr& expr,
+                          std::unordered_map<std::string, std::unordered_set<int>>& var_versions) {
+    if (expr.kind == mlil::MlilExprKind::kVar && !expr.var.name.empty() && expr.var.version >= 0) {
+        var_versions[expr.var.name].insert(expr.var.version);
+    }
+    for (const auto& arg : expr.args) {
+        collect_var_versions(arg, var_versions);
     }
 }
 
-void rewrite_mlil_stmt(mlil::MlilStmt& stmt) {
-    stmt.var.version = -1;
-    for (auto& ret : stmt.returns) {
-        ret.version = -1;
+void collect_var_versions_stmt(const mlil::MlilStmt& stmt,
+                               std::unordered_map<std::string, std::unordered_set<int>>& var_versions) {
+    if (!stmt.var.name.empty() && stmt.var.version >= 0) {
+        var_versions[stmt.var.name].insert(stmt.var.version);
     }
-    rewrite_mlil_expr(stmt.expr);
-    rewrite_mlil_expr(stmt.target);
-    rewrite_mlil_expr(stmt.condition);
+    for (const auto& ret : stmt.returns) {
+        if (!ret.name.empty() && ret.version >= 0) {
+            var_versions[ret.name].insert(ret.version);
+        }
+    }
+    collect_var_versions(stmt.expr, var_versions);
+    collect_var_versions(stmt.target, var_versions);
+    collect_var_versions(stmt.condition, var_versions);
+    for (const auto& arg : stmt.args) {
+        collect_var_versions(arg, var_versions);
+    }
+}
+
+// Build rename map for variables with multiple versions
+void build_rename_map(const std::unordered_map<std::string, std::unordered_set<int>>& var_versions,
+                      std::unordered_map<VarVersionKey, std::string, VarVersionKeyHash>& rename_map) {
+    for (const auto& [name, versions] : var_versions) {
+        if (versions.size() <= 1) {
+            // Only one version, no need to rename
+            continue;
+        }
+        // Multiple versions - need to rename each
+        for (int ver : versions) {
+            VarVersionKey key{name, ver};
+            // Create unique name by appending version
+            // Use _ver_ separator to minimize collisions with source variable names
+            std::string new_name = name + "_ver_" + std::to_string(ver);
+            rename_map[key] = new_name;
+        }
+    }
+}
+
+void rewrite_mlil_expr(mlil::MlilExpr& expr,
+                       const std::unordered_map<VarVersionKey, std::string, VarVersionKeyHash>& rename_map) {
+    if (expr.kind == mlil::MlilExprKind::kVar && !expr.var.name.empty()) {
+        // Check if this variable needs renaming
+        VarVersionKey key{expr.var.name, expr.var.version};
+        auto it = rename_map.find(key);
+        if (it != rename_map.end()) {
+            expr.var.name = it->second;
+        }
+        expr.var.version = -1;
+    }
+    for (auto& arg : expr.args) {
+        rewrite_mlil_expr(arg, rename_map);
+    }
+}
+
+void rewrite_mlil_stmt(mlil::MlilStmt& stmt,
+                       const std::unordered_map<VarVersionKey, std::string, VarVersionKeyHash>& rename_map) {
+    // Rename the defined variable
+    if (!stmt.var.name.empty()) {
+        VarVersionKey key{stmt.var.name, stmt.var.version};
+        auto it = rename_map.find(key);
+        if (it != rename_map.end()) {
+            stmt.var.name = it->second;
+        }
+        stmt.var.version = -1;
+    }
+    
+    for (auto& ret : stmt.returns) {
+        if (!ret.name.empty()) {
+            VarVersionKey key{ret.name, ret.version};
+            auto it = rename_map.find(key);
+            if (it != rename_map.end()) {
+                ret.name = it->second;
+            }
+            ret.version = -1;
+        }
+    }
+    rewrite_mlil_expr(stmt.expr, rename_map);
+    rewrite_mlil_expr(stmt.target, rename_map);
+    rewrite_mlil_expr(stmt.condition, rename_map);
     for (auto& arg : stmt.args) {
-        rewrite_mlil_expr(arg);
+        rewrite_mlil_expr(arg, rename_map);
     }
 }
 
@@ -372,6 +462,9 @@ bool lower_mlil_ssa(mlil::Function& function, std::string& error) {
                 if (it == block_index.end()) {
                     continue;
                 }
+                // Only skip if name matches (same variable)
+                // Note: In SSA, incoming version will always differ from phi version,
+                // so we only check the name to detect self-copies of the underlying variable.
                 if (incoming.kind == mlil::MlilExprKind::kVar &&
                     incoming.var.name == phi.var.name) {
                     continue;
@@ -393,10 +486,28 @@ bool lower_mlil_ssa(mlil::Function& function, std::string& error) {
         block.phis.clear();
     }
 
+    // Phase 1: Collect all variable versions used in the function
+    std::unordered_map<std::string, std::unordered_set<int>> var_versions;
+    for (const auto& block : function.blocks) {
+        for (const auto& phi : block.phis) {
+            collect_var_versions_stmt(phi, var_versions);
+        }
+        for (const auto& inst : block.instructions) {
+            for (const auto& stmt : inst.stmts) {
+                collect_var_versions_stmt(stmt, var_versions);
+            }
+        }
+    }
+
+    // Phase 2: Build rename map for variables with multiple versions
+    std::unordered_map<VarVersionKey, std::string, VarVersionKeyHash> rename_map;
+    build_rename_map(var_versions, rename_map);
+
+    // Phase 3: Apply renaming and clear version numbers
     for (auto& block : function.blocks) {
         for (auto& inst : block.instructions) {
             for (auto& stmt : inst.stmts) {
-                rewrite_mlil_stmt(stmt);
+                rewrite_mlil_stmt(stmt, rename_map);
             }
         }
     }

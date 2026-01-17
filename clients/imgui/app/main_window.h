@@ -12,6 +12,7 @@
 #include "views/output/output_view.h"
 #include "views/strings/strings_view.h"
 #include "views/file_browser/file_browser.h"
+#include "widgets/command_palette.h"
 #include "imgui.h"
 
 namespace client {
@@ -26,6 +27,7 @@ public:
 private:
     void render_menu_bar();
     void render_toolbar();
+    void render_status_bar();
     void render_dockspace();
     void render_views();
     void render_popups();
@@ -37,6 +39,7 @@ private:
     AppContext& context_;
     std::vector<std::unique_ptr<ViewBase>> views_;
     std::unique_ptr<FileBrowser> file_browser_;
+    std::unique_ptr<CommandPalette> command_palette_;
     
     ImGuiID dockspace_id_ = 0;
     bool dock_initialized_ = false;

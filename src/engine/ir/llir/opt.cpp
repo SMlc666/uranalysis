@@ -1,10 +1,17 @@
 #include "engine/llir_opt.h"
+#include "engine/llir_opt_internal.h"
 
 #include <cstdint>
 
 #include "engine/llir_ssa.h"
 
 namespace engine::llir {
+
+namespace detail {
+
+// ============================================================================
+// Helper functions (private to this translation unit)
+// ============================================================================
 
 namespace {
 
@@ -144,6 +151,12 @@ bool fold_unary(const LlilExpr& expr, std::uint64_t value, std::uint64_t& out) {
     }
 }
 
+}  // anonymous namespace
+
+// ============================================================================
+// Exported optimization functions (in detail namespace)
+// ============================================================================
+
 bool simplify_op(LlilExpr& expr) {
     if (expr.kind != LlilExprKind::kOp || expr.args.empty()) {
         return false;
@@ -259,6 +272,8 @@ bool simplify_op(LlilExpr& expr) {
     return changed;
 }
 
+namespace {
+
 bool replace_reg_in_expr(LlilExpr& expr, const RegRef& target, const LlilExpr& replacement) {
     bool changed = false;
     if (expr.kind == LlilExprKind::kReg) {
@@ -287,6 +302,8 @@ bool replace_reg_in_stmt(LlilStmt& stmt, const RegRef& target, const LlilExpr& r
     }
     return changed;
 }
+
+}  // anonymous namespace
 
 bool propagate_copies(Function& function, const LlilSsaDefUse& defuse) {
     bool changed = false;
@@ -490,11 +507,11 @@ bool has_ssa(const Function& function) {
     return false;
 }
 
-}  // namespace
+}  // namespace detail
 
 bool optimize_llil_ssa(Function& function, const LlilOptOptions& options, std::string& error) {
     error.clear();
-    if (!has_ssa(function)) {
+    if (!detail::has_ssa(function)) {
         error = "llil_ssa is empty; build_ssa must run first";
         return false;
     }
@@ -507,24 +524,24 @@ bool optimize_llil_ssa(Function& function, const LlilOptOptions& options, std::s
             if (!build_ssa_def_use(function, defuse, error)) {
                 return false;
             }
-            iter_changed |= propagate_copies(function, defuse);
+            iter_changed |= detail::propagate_copies(function, defuse);
         }
         if (options.fold_constants) {
-            iter_changed |= fold_constants(function);
+            iter_changed |= detail::fold_constants(function);
         }
         if (options.inline_flag_exprs) {
             LlilSsaDefUse defuse;
             if (!build_ssa_def_use(function, defuse, error)) {
                 return false;
             }
-            iter_changed |= propagate_flag_exprs(function, defuse);
+            iter_changed |= detail::propagate_flag_exprs(function, defuse);
         }
         if (options.dead_code_elim) {
             LlilSsaDefUse defuse;
             if (!build_ssa_def_use(function, defuse, error)) {
                 return false;
             }
-            iter_changed |= eliminate_dead_defs(function, defuse);
+            iter_changed |= detail::eliminate_dead_defs(function, defuse);
         }
         changed |= iter_changed;
         if (!iter_changed) {

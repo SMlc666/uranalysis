@@ -10,6 +10,8 @@ add_requires("catch2")
 add_requires("replxx")
 add_requires("sqlite3")
 add_requires("raw_pdb")
+add_requires("spdlog", {configs = {header_only = true}})
+
 
 includes("third-party/llvm")
 set_encodings ("utf-8")
@@ -38,17 +40,20 @@ else
 end
 
     add_includedirs("src/engine/include", {public = true})
+    add_includedirs("src/engine/pass/include", {public = true})
+    add_includedirs("src/engine/ir", {public = true})
     add_files("src/engine/**/*.cpp")
     add_packages("capstone")
     add_packages("sqlite3")
     add_packages("raw_pdb")
+    add_packages("spdlog")
     add_deps("llvm_demangle")
 
 target("cli")
     set_kind("binary")
     add_files("clients/cli/*.cpp")
     add_deps("engine")
-    add_packages("replxx")
+    add_packages("replxx","spdlog")
     add_deps("client_common")
 
 target("client_common")
@@ -65,19 +70,18 @@ target("engine_tests")
     add_files("tests/*.cpp")
     add_deps("engine", "client_common")
     add_includedirs("tests")
-    add_packages("catch2", "sqlite3")
+    add_packages("catch2", "sqlite3", "spdlog")
 
 if is_plat("windows") and has_config("with_imgui_client") then
     target("imgui_client")
         set_kind("binary")
         add_deps("engine", "client_common")
-        add_packages("imgui")
+        add_packages("imgui","spdlog")
         
         -- Include directories
         add_includedirs("clients/imgui")
         add_includedirs("clients/imgui/views")
         
-
         add_files("clients/imgui/**.cpp")
         add_links("d3d11", "d3d12", "dxgi")
 end

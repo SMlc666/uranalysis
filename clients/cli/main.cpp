@@ -16,7 +16,10 @@
 #include "client/output.h"
 #include "client/session.h"
 #include "engine/api.h"
+#include "engine/log.h"
 #include "replxx.hxx"
+#include <spdlog/sinks/stdout_color_sinks.h>
+
 
 namespace {
 
@@ -146,6 +149,12 @@ int main(int argc, char* argv[]) {
     std::vector<std::string> execute_commands;
     std::string script_path;
     bool quiet = false;
+
+    // Initialize engine logging
+    engine::log::init();
+    auto console_sink = std::make_shared<spdlog::sinks::stdout_color_sink_mt>();
+    engine::log::add_sink(console_sink);
+
 
     // Parse command line arguments
     for (int i = 1; i < argc; ++i) {

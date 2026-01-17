@@ -116,6 +116,11 @@ struct Instruction {
     std::vector<std::uint64_t> targets;
     std::vector<LlilStmt> llil;
     std::vector<LlilStmt> llil_ssa;
+    
+    // Jump table info (populated by resolve_jump_tables pass)
+    std::uint64_t jump_table_base = 0;
+    std::size_t jump_table_size = 0;
+    bool is_switch = false;
 };
 
 struct BasicBlock {

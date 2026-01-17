@@ -96,15 +96,73 @@ bool is_binary_symbol(mlil::MlilOp op) {
     }
 }
 
+// Check if a string segment looks like a version suffix (e.g., "v0", "v123")
+bool is_version_suffix(const std::string& s, std::size_t pos) {
+    if (pos >= s.size()) return false;
+    if (s[pos] != 'v' && s[pos] != 'V') return false;
+    if (pos + 1 >= s.size()) return false;
+    // Must be followed by digits
+    for (std::size_t i = pos + 1; i < s.size(); ++i) {
+        if (!std::isdigit(static_cast<unsigned char>(s[i]))) {
+            return false;
+        }
+    }
+    return true;
+}
+
+// Clean up SSA version suffixes from variable names
+// e.g., "arg0_v0" -> "arg0", "v28_2_v32" -> "v28_2", "sp_v2421" -> "sp"
+std::string clean_ssa_suffix(const std::string& name) {
+    if (name.empty()) return name;
+    
+    // Look for patterns like "_v<digits>" at the end
+    std::size_t last_underscore = name.rfind('_');
+    if (last_underscore != std::string::npos && last_underscore + 1 < name.size()) {
+        if (is_version_suffix(name, last_underscore + 1)) {
+            std::string cleaned = name.substr(0, last_underscore);
+            // Recursively clean in case of multiple suffixes (e.g., "v28_2_v32")
+            return clean_ssa_suffix(cleaned);
+        }
+    }
+    
+    return name;
+}
+
 std::string display_name(const std::string& name) {
-    if (!g_name_remap || name.empty()) {
+    if (name.empty()) {
         return name;
     }
-    auto it = g_name_remap->find(name);
-    if (it != g_name_remap->end()) {
-        return it->second;
+    
+    // First check if there's a remap
+    if (g_name_remap) {
+        auto it = g_name_remap->find(name);
+        if (it != g_name_remap->end()) {
+            return it->second;
+        }
     }
-    return name;
+    
+    // Clean up SSA version suffixes
+    std::string cleaned = clean_ssa_suffix(name);
+    
+    // Check if cleaned name has a remap
+    if (g_name_remap && cleaned != name) {
+        auto it = g_name_remap->find(cleaned);
+        if (it != g_name_remap->end()) {
+            return it->second;
+        }
+    }
+    
+    // Normalize stack variable names: "stack.28" -> "v28"
+    if (cleaned.rfind("stack.", 0) == 0 && cleaned.size() > 6) {
+        return "v" + cleaned.substr(6);
+    }
+    
+    // Normalize arg slot names: "arg.0" -> "a0"
+    if (cleaned.rfind("arg.", 0) == 0 && cleaned.size() > 4) {
+        return "a" + cleaned.substr(4);
+    }
+    
+    return cleaned;
 }
 
 bool is_boolish_expr(const mlil::MlilExpr& expr) {
@@ -301,6 +359,29 @@ std::string format_expr_raw(const mlil::MlilExpr& expr) {
             return "*(" + addr + ")";
         }
         case mlil::MlilExprKind::kOp: {
+            // Guard against malformed expressions with missing operands
+            if (expr.args.empty()) {
+                // Binary/comparison ops with no args - try to provide meaningful output
+                if (is_binary_symbol(expr.op)) {
+                    // For comparison operators with no args, this is likely a boolean result
+                    // Return a constant that makes sense in context
+                    switch (expr.op) {
+                        case mlil::MlilOp::kEq:
+                        case mlil::MlilOp::kNe:
+                        case mlil::MlilOp::kLt:
+                        case mlil::MlilOp::kLe:
+                        case mlil::MlilOp::kGt:
+                        case mlil::MlilOp::kGe:
+                            // Boolean result - return false as default
+                            return "0";
+                        default:
+                            // For arithmetic ops, return 0
+                            return "0";
+                    }
+                }
+                // For unary ops with no args, return 0
+                return "0";
+            }
             if (expr.op == mlil::MlilOp::kSelect && expr.args.size() == 3) {
                 return "(" + format_expr_raw(expr.args[0]) + " ? " + format_expr_raw(expr.args[1]) + " : " +
                        format_expr_raw(expr.args[2]) + ")";
@@ -312,9 +393,14 @@ std::string format_expr_raw(const mlil::MlilExpr& expr) {
             if (is_unary_symbol(expr.op) && expr.args.size() == 1) {
                 return "(" + op_name(expr.op) + format_expr_raw(expr.args[0]) + ")";
             }
-            if (is_binary_symbol(expr.op) && expr.args.size() == 2) {
-                return "(" + format_expr_raw(expr.args[0]) + " " + op_name(expr.op) + " " +
-                       format_expr_raw(expr.args[1]) + ")";
+            if (is_binary_symbol(expr.op)) {
+                if (expr.args.size() == 2) {
+                    return "(" + format_expr_raw(expr.args[0]) + " " + op_name(expr.op) + " " +
+                           format_expr_raw(expr.args[1]) + ")";
+                } else if (expr.args.size() == 1) {
+                    // Binary op with only one arg - treat as comparison with 0
+                    return "(" + format_expr_raw(expr.args[0]) + " " + op_name(expr.op) + " 0)";
+                }
             }
             std::ostringstream oss;
             oss << op_name(expr.op) << "(";
@@ -874,6 +960,35 @@ void collect_stmt_uses(const Stmt& stmt,
                 collect_stmt_uses(inner, used, ignore_return_expr);
             }
             break;
+        case StmtKind::kDoWhile:
+            collect_expr_uses(stmt.condition, used);
+            for (const auto& inner : stmt.body) {
+                collect_stmt_uses(inner, used, ignore_return_expr);
+            }
+            break;
+        case StmtKind::kFor:
+            collect_expr_uses(stmt.condition, used);
+            for (const auto& inner : stmt.then_body) {
+                collect_stmt_uses(inner, used, ignore_return_expr);
+            }
+            for (const auto& inner : stmt.else_body) {
+                collect_stmt_uses(inner, used, ignore_return_expr);
+            }
+            for (const auto& inner : stmt.body) {
+                collect_stmt_uses(inner, used, ignore_return_expr);
+            }
+            break;
+        case StmtKind::kSwitch:
+            collect_expr_uses(stmt.condition, used);
+            for (const auto& case_body : stmt.case_bodies) {
+                for (const auto& inner : case_body) {
+                    collect_stmt_uses(inner, used, ignore_return_expr);
+                }
+            }
+            for (const auto& inner : stmt.default_body) {
+                collect_stmt_uses(inner, used, ignore_return_expr);
+            }
+            break;
         default:
             break;
     }
@@ -907,17 +1022,63 @@ void emit_function_pseudoc(const Function& function, std::vector<std::string>& o
     }
     signature << ") {";
     out_lines.push_back(signature.str());
+    // Collect initial constant assignments for local variables
+    // We need to look for assignments BEFORE any control flow structures
+    std::unordered_map<std::string, std::uint64_t> initial_values;
+    
+    // Use the initial_values from the function struct (collected during pseudoc construction)
+    for (const auto& [var_name, init_val] : function.initial_values) {
+        std::string norm_name = display_name(var_name);
+        initial_values[norm_name] = init_val;
+    }
+    
+    for (std::size_t idx = 0; idx < function.stmts.size(); ++idx) {
+        const auto& stmt = function.stmts[idx];
+        
+        if (stmt.kind == StmtKind::kAssign && !stmt.var.name.empty()) {
+            std::uint64_t imm = 0;
+            if (get_imm_value(stmt.expr, imm)) {
+                // Use display_name to normalize the variable name
+                std::string norm_name = display_name(stmt.var.name);
+                // Only record if we haven't seen this variable yet (first assignment)
+                if (initial_values.find(norm_name) == initial_values.end()) {
+                    initial_values[norm_name] = imm;
+                }
+            }
+        }
+        // Stop at first control structure to avoid false positives
+        if (stmt.kind == StmtKind::kIf || stmt.kind == StmtKind::kWhile ||
+            stmt.kind == StmtKind::kDoWhile || stmt.kind == StmtKind::kFor ||
+            stmt.kind == StmtKind::kSwitch) {
+            break;
+        }
+    }
+
+    // Build a set of normalized used names
+    std::unordered_set<std::string> used_normalized;
+    for (const auto& name : used) {
+        used_normalized.insert(display_name(name));
+    }
+    
     if (!function.locals.empty()) {
         std::vector<VarDecl> locals;
         locals.reserve(function.locals.size());
         for (const auto& local : function.locals) {
-            if (used.find(local.name) != used.end()) {
+            std::string disp = display_name(local.name);
+            if (used_normalized.find(disp) != used_normalized.end()) {
                 locals.push_back(local);
             }
         }
         if (!locals.empty()) {
             for (const auto& local : locals) {
-                out_lines.push_back("    " + local.type + " " + display_name(local.name) + ";");
+                std::string disp_name = display_name(local.name);
+                std::string decl = "    " + local.type + " " + disp_name;
+                auto init_it = initial_values.find(disp_name);
+                if (init_it != initial_values.end()) {
+                    decl += " = " + format_hex(init_it->second);
+                }
+                decl += ";";
+                out_lines.push_back(decl);
             }
             out_lines.push_back("");
         }

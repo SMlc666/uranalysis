@@ -68,6 +68,7 @@ struct Function {
     std::string return_type;
     std::uint64_t entry = 0;
     std::unordered_map<std::string, std::string> var_map;
+    std::unordered_map<std::string, std::uint64_t> initial_values;  // var name -> initial constant value
     std::vector<VarDecl> params;
     std::vector<VarDecl> locals;
     std::vector<Stmt> stmts;

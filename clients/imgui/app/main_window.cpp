@@ -4,7 +4,10 @@
 #include "imgui.h"
 #include "imgui_internal.h"
 #include "core/events.h"
-#include "theme.h"
+#include "views/output/log_view.h"
+#include "engine/log.h"
+#include "utils/log_sink.h"
+
 
 namespace client {
 
@@ -19,7 +22,17 @@ MainWindow::MainWindow(AppContext& context)
     views_.push_back(std::make_unique<BinaryInfoView>(context));
     views_.push_back(std::make_unique<OutputView>(context));
     
+    // Setup logging
+    auto log_sink = std::make_shared<ImGuiLogSinkMt>();
+    engine::log::add_sink(log_sink);
+    
+    auto log_view = std::make_unique<LogView>(context);
+    log_view->set_sink(log_sink);
+    views_.push_back(std::move(log_view));
+
+    
     file_browser_ = std::make_unique<FileBrowser>(context);
+    command_palette_ = std::make_unique<CommandPalette>(context);
 
     // Subscribe to events
     open_file_sub_ = context_.event_bus().subscribe<events::RequestOpenFile>([this](const events::RequestOpenFile&) {
@@ -60,10 +73,26 @@ void MainWindow::render() {
     ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
     ImGui::Begin("MainHost", nullptr, host_flags);
     ImGui::PopStyleVar(2);
+    
+    // Global keyboard shortcuts
+    if (ImGui::GetIO().KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_P)) {
+        command_palette_->open();
+    }
 
     render_menu_bar();
     render_toolbar();
+    
+    // Status bar needs to be rendered last or reserved
+    // But for layout purposes we need to know its height
+    const float status_bar_height = ImGui::GetFrameHeight();
+    const float avail_h = ImGui::GetContentRegionAvail().y - status_bar_height;
+    
+    // Create a child for the dockspace to reserve space for status bar
+    ImGui::BeginChild("DockspaceHost", ImVec2(0, avail_h), false, ImGuiWindowFlags_NoScrollbar);
     render_dockspace();
+    ImGui::EndChild();
+
+    render_status_bar();
     render_views();
     render_popups();
 
@@ -118,25 +147,67 @@ void MainWindow::render_menu_bar() {
 
 void MainWindow::render_toolbar() {
     float toolbar_height = ImGui::GetFrameHeight() + ImGui::GetStyle().FramePadding.y * 2.0f + 2.0f;
+    ImGui::PushStyleColor(ImGuiCol_ChildBg, ImGui::GetStyle().Colors[ImGuiCol_FrameBg]);
     ImGui::BeginChild("MainToolbar", ImVec2(0.0f, toolbar_height), false,
                       ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
+    ImGui::PopStyleColor();
     
-    if (ImGui::Button("Open...")) {
+    // Simple toolbar icons (text for now)
+    ImGui::SameLine();
+    if (ImGui::Button("Open")) {
         context_.event_bus().publish(events::RequestOpenFile{});
     }
     ImGui::SameLine();
-    if (ImGui::Button("Reload") && context_.state().is_session_loaded()) {
+    bool loaded = context_.state().is_session_loaded();
+    
+    ImGui::BeginDisabled(!loaded);
+    if (ImGui::Button("Back")) {
+        if (context_.state().navigation().can_go_back()) {
+             context_.state().navigation().go_back();
+             context_.event_bus().publish(events::NavigateToAddress{context_.state().navigation().current_address});
+        }
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Forward")) {
+        if (context_.state().navigation().can_go_forward()) {
+             context_.state().navigation().go_forward();
+             context_.event_bus().publish(events::NavigateToAddress{context_.state().navigation().current_address});
+        }
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Refresh")) {
+        context_.event_bus().publish(events::SessionReloaded{});
         open_session(context_.state().session().path());
     }
-    
-    // Engine info
-    ImGui::SameLine();
-    ImGui::TextDisabled("|");
-    ImGui::SameLine();
-    const auto& info = context_.engine_info();
-    ImGui::TextDisabled("%s %s", info.name.c_str(), info.version.c_str());
+    ImGui::EndDisabled();
 
     ImGui::EndChild();
+}
+
+void MainWindow::render_status_bar() {
+    float height = ImGui::GetFrameHeight();
+    ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.00f, 0.48f, 0.80f, 1.00f)); // Accent color
+    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 1.0f, 1.0f, 1.0f));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(10.0f, 2.0f));
+    
+    ImGui::BeginChild("StatusBar", ImVec2(0.0f, height), false, 
+        ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
+    
+    // Status message
+    ImGui::TextUnformatted(context_.state().status_message.c_str());
+    
+    // Right aligned info
+    const auto& info = context_.engine_info();
+    std::string version = info.name + " " + info.version;
+    float width = ImGui::CalcTextSize(version.c_str()).x;
+    
+    ImGui::SameLine();
+    ImGui::SetCursorPosX(ImGui::GetWindowWidth() - width - 20.0f);
+    ImGui::TextUnformatted(version.c_str());
+
+    ImGui::EndChild();
+    ImGui::PopStyleVar();
+    ImGui::PopStyleColor(2);
 }
 
 void MainWindow::render_dockspace() {
@@ -156,6 +227,9 @@ void MainWindow::render_views() {
 }
 
 void MainWindow::render_popups() {
+    // Command Palette
+    command_palette_->render();
+
     // About popup
     if (context_.state().show_about) {
         ImGui::OpenPopup("About");
@@ -199,7 +273,9 @@ void MainWindow::build_default_layout(ImGuiID dockspace_id, const ImVec2& size) 
     ImGui::DockBuilderDockWindow("IDA View-A", dock_main);
     ImGui::DockBuilderDockWindow("Binary Info", dock_right);
     ImGui::DockBuilderDockWindow("Output", dock_bottom);
+    ImGui::DockBuilderDockWindow("Logs", dock_bottom);
     ImGui::DockBuilderFinish(dockspace_id);
+
 }
 
 void MainWindow::open_session(const std::string& path) {

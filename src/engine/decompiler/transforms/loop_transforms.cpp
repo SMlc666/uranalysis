@@ -671,6 +671,164 @@ void repair_loop_bounds_block(std::vector<Stmt>& stmts) {
     }
 }
 
+// Check if condition is a constant true (while(1))
+bool is_constant_true_condition(const mlil::MlilExpr& cond) {
+    if (cond.kind == mlil::MlilExprKind::kImm) {
+        return cond.imm != 0;
+    }
+    return false;
+}
+
+// Invert a comparison operator
+mlil::MlilOp invert_compare_op(mlil::MlilOp op) {
+    switch (op) {
+        case mlil::MlilOp::kLt: return mlil::MlilOp::kGe;
+        case mlil::MlilOp::kLe: return mlil::MlilOp::kGt;
+        case mlil::MlilOp::kGt: return mlil::MlilOp::kLe;
+        case mlil::MlilOp::kGe: return mlil::MlilOp::kLt;
+        case mlil::MlilOp::kEq: return mlil::MlilOp::kNe;
+        case mlil::MlilOp::kNe: return mlil::MlilOp::kEq;
+        default: return op;
+    }
+}
+
+// Create an inverted condition expression
+mlil::MlilExpr invert_loop_condition(const mlil::MlilExpr& cond) {
+    mlil::MlilExpr out = cond;
+    
+    if (out.kind == mlil::MlilExprKind::kOp) {
+        // Handle comparison operators directly
+        if (is_compare_op(out.op)) {
+            out.op = invert_compare_op(out.op);
+            return out;
+        }
+        
+        // Handle NOT - double negation elimination
+        if (out.op == mlil::MlilOp::kNot && out.args.size() == 1) {
+            return out.args[0];
+        }
+    }
+    
+    // Wrap in NOT for other cases
+    mlil::MlilExpr not_expr;
+    not_expr.kind = mlil::MlilExprKind::kOp;
+    not_expr.op = mlil::MlilOp::kNot;
+    not_expr.size = 1;
+    not_expr.args.push_back(std::move(out));
+    return not_expr;
+}
+
+// Try to extract a loop condition from a guard if-break pattern in the loop body
+// Pattern: if (cond) break; -> loop condition is !cond
+// Returns true if a guard was found and extracted
+bool extract_guard_condition(std::vector<Stmt>& body, mlil::MlilExpr& out_cond) {
+    if (body.empty()) {
+        return false;
+    }
+    
+    // Check first statement for pattern: if (!cond) break;
+    // or: if (i >= limit) break;
+    // This is common for for-loops compiled to while(1)
+    Stmt& first = body[0];
+    if (first.kind != StmtKind::kIf) {
+        return false;
+    }
+    
+    // Check if then_body contains only break
+    if (first.then_body.size() != 1 || first.then_body[0].kind != StmtKind::kBreak) {
+        return false;
+    }
+    
+    // The loop condition is the inverse of the guard condition
+    // if (i >= limit) break; -> loop while (i < limit)
+    out_cond = invert_loop_condition(first.condition);
+    
+    // Remove the guard if from the body
+    body.erase(body.begin());
+    return true;
+}
+
+// Try to extract a loop condition from the last if statement that leads to continue/break
+// Pattern: if (cond) { body; continue; } else { break; }
+// -> while (cond) { body; }
+bool extract_trailing_guard_condition(std::vector<Stmt>& body, mlil::MlilExpr& out_cond) {
+    if (body.empty()) {
+        return false;
+    }
+    
+    // Check last statement
+    Stmt& last = body.back();
+    if (last.kind != StmtKind::kIf) {
+        return false;
+    }
+    
+    // Pattern 1: if (cond) { ... continue; } else { break; }
+    bool then_has_continue = !last.then_body.empty() &&
+                             last.then_body.back().kind == StmtKind::kContinue;
+    bool else_has_break = !last.else_body.empty() &&
+                          last.else_body.size() == 1 &&
+                          last.else_body[0].kind == StmtKind::kBreak;
+    
+    if (then_has_continue && else_has_break) {
+        out_cond = last.condition;
+        // Remove the continue from then_body
+        last.then_body.pop_back();
+        // Move then_body contents into main body (replacing the if)
+        std::vector<Stmt> new_body;
+        new_body.reserve(body.size() - 1 + last.then_body.size());
+        for (std::size_t i = 0; i + 1 < body.size(); ++i) {
+            new_body.push_back(std::move(body[i]));
+        }
+        for (auto& stmt : last.then_body) {
+            new_body.push_back(std::move(stmt));
+        }
+        body = std::move(new_body);
+        return true;
+    }
+    
+    // Pattern 2: if (!cond) break; (at the end, like a do-while check)
+    bool then_only_break = last.then_body.size() == 1 &&
+                           last.then_body[0].kind == StmtKind::kBreak &&
+                           last.else_body.empty();
+    
+    if (then_only_break) {
+        out_cond = invert_loop_condition(last.condition);
+        body.pop_back();
+        return true;
+    }
+    
+    return false;
+}
+
+// Try to recover loop condition from a while(1) loop
+// Returns true if a better condition was found
+bool try_recover_loop_condition(Stmt& loop) {
+    if (loop.kind != StmtKind::kWhile) {
+        return false;
+    }
+    if (!is_constant_true_condition(loop.condition)) {
+        return false;
+    }
+    if (loop.body.empty()) {
+        return false;
+    }
+    
+    // Try to extract condition from beginning guard: if (cond) break;
+    mlil::MlilExpr guard_cond;
+    if (extract_guard_condition(loop.body, guard_cond)) {
+        loop.condition = std::move(guard_cond);
+        return true;
+    }
+    
+    // Try to extract condition from trailing guard
+    if (extract_trailing_guard_condition(loop.body, guard_cond)) {
+        loop.condition = std::move(guard_cond);
+        return true;
+    }
+    
+    return false;
+}
+
 void merge_while_to_for_block(std::vector<Stmt>& stmts) {
     for (auto& stmt : stmts) {
         if (stmt.kind == StmtKind::kIf) {
@@ -680,6 +838,13 @@ void merge_while_to_for_block(std::vector<Stmt>& stmts) {
             merge_while_to_for_block(stmt.body);
             merge_while_to_for_block(stmt.then_body);
             merge_while_to_for_block(stmt.else_body);
+        }
+    }
+    
+    // First pass: try to recover loop conditions for while(1) loops
+    for (auto& stmt : stmts) {
+        if (stmt.kind == StmtKind::kWhile) {
+            try_recover_loop_condition(stmt);
         }
     }
 
@@ -714,13 +879,75 @@ void merge_while_to_for_block(std::vector<Stmt>& stmts) {
 
         Stmt for_stmt;
         for_stmt.kind = StmtKind::kFor;
-        for_stmt.condition = loop.condition;
+        
+        // Save init statement before moving
+        Stmt init_copy = init;
+        std::string inc_name = init.var.name;
+        
+        // Try to recover loop condition from while(1) loops
+        if (is_constant_true_condition(loop.condition)) {
+            mlil::MlilExpr guard_cond;
+            // Make a copy of body before extracting (without the increment at the end)
+            std::vector<Stmt> body_copy;
+            body_copy.reserve(loop.body.size() - 1);
+            for (std::size_t k = 0; k + 1 < loop.body.size(); ++k) {
+                body_copy.push_back(loop.body[k]);
+            }
+            
+            if (extract_guard_condition(body_copy, guard_cond)) {
+                for_stmt.condition = std::move(guard_cond);
+                // Use modified body (without guard and without increment)
+                for_stmt.body = std::move(body_copy);
+            } else if (extract_trailing_guard_condition(body_copy, guard_cond)) {
+                for_stmt.condition = std::move(guard_cond);
+                for_stmt.body = std::move(body_copy);
+            } else {
+                // Keep the while(1) condition but remove increment from body
+                for_stmt.condition = loop.condition;
+                for_stmt.body.reserve(loop.body.size() - 1);
+                for (std::size_t k = 0; k + 1 < loop.body.size(); ++k) {
+                    for_stmt.body.push_back(std::move(loop.body[k]));
+                }
+            }
+        } else {
+            // Normal while loop with proper condition
+            for_stmt.condition = loop.condition;
+            // Remove increment from body
+            for_stmt.body.reserve(loop.body.size() - 1);
+            for (std::size_t k = 0; k + 1 < loop.body.size(); ++k) {
+                for_stmt.body.push_back(std::move(loop.body[k]));
+            }
+        }
+        
+        // then_body holds the initialization statement
         for_stmt.then_body.clear();
-        for_stmt.then_body.push_back(std::move(init));
+        for_stmt.then_body.push_back(std::move(init_copy));
+        
+        // else_body holds the step/increment statement
+        // Reconstruct the increment statement
+        Stmt inc_stmt;
+        inc_stmt.kind = StmtKind::kAssign;
+        inc_stmt.var.name = inc_name;
+        inc_stmt.var.version = -1;
+        mlil::MlilExpr inc_expr;
+        inc_expr.kind = mlil::MlilExprKind::kOp;
+        inc_expr.op = (delta > 0) ? mlil::MlilOp::kAdd : mlil::MlilOp::kSub;
+        inc_expr.size = 8;
+        mlil::MlilExpr var_expr;
+        var_expr.kind = mlil::MlilExprKind::kVar;
+        var_expr.var.name = inc_name;
+        var_expr.var.version = -1;
+        var_expr.size = 8;
+        mlil::MlilExpr one_expr;
+        one_expr.kind = mlil::MlilExprKind::kImm;
+        one_expr.imm = 1;
+        one_expr.size = 8;
+        inc_expr.args.push_back(std::move(var_expr));
+        inc_expr.args.push_back(std::move(one_expr));
+        inc_stmt.expr = std::move(inc_expr);
+        
         for_stmt.else_body.clear();
-        for_stmt.else_body.push_back(std::move(loop.body[last]));
-        loop.body.pop_back();
-        for_stmt.body = std::move(loop.body);
+        for_stmt.else_body.push_back(std::move(inc_stmt));
 
         stmts.erase(stmts.begin() + static_cast<std::ptrdiff_t>(i + 1));
         stmts[i] = std::move(for_stmt);

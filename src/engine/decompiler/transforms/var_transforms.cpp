@@ -643,6 +643,19 @@ bool expr_depends_on(const std::unordered_set<std::string>& deps, const std::str
     return deps.find(name) != deps.end();
 }
 
+// Helper to check if expression contains self-reference (would create x^x pattern)
+bool expr_contains_self_ref(const mlil::MlilExpr& expr, const std::string& var_name) {
+    if (expr.kind == mlil::MlilExprKind::kVar && expr.var.name == var_name) {
+        return true;
+    }
+    for (const auto& arg : expr.args) {
+        if (expr_contains_self_ref(arg, var_name)) {
+            return true;
+        }
+    }
+    return false;
+}
+
 void substitute_expr_with_avail(mlil::MlilExpr& expr,
                                 const std::unordered_map<std::string, AvailExprInfo>& avail,
                                 const std::unordered_map<std::string, int>& def_counts,
@@ -657,6 +670,12 @@ void substitute_expr_with_avail(mlil::MlilExpr& expr,
         }
         auto it = avail.find(expr.var.name);
         if (it != avail.end()) {
+            // Prevent self-referential substitution that would create x^x patterns
+            // E.g., if h = h ^ input, and we try to substitute h with (h ^ input),
+            // we'd get (h ^ input) ^ input which still contains h -> infinite loop
+            if (expr_contains_self_ref(it->second.expr, expr.var.name)) {
+                return;
+            }
             expr = it->second.expr;
             substitute_expr_with_avail(expr, avail, def_counts, depth + 1);
             return;
@@ -974,6 +993,231 @@ void decompose_complex_return_exprs(Function& function) {
         state.used_names.insert(local.name);
     }
     decompose_complex_return_block(function.stmts, function, state);
+}
+
+namespace {
+
+// Get base variable name (strip SSA version suffix like _v0, _v1, etc.)
+std::string get_base_var_name(const std::string& name) {
+    if (name.empty()) {
+        return name;
+    }
+    // Find pattern like _v followed by digits at the end
+    std::size_t pos = name.rfind("_v");
+    if (pos != std::string::npos && pos + 2 < name.size()) {
+        bool all_digits = true;
+        for (std::size_t i = pos + 2; i < name.size(); ++i) {
+            if (!std::isdigit(static_cast<unsigned char>(name[i]))) {
+                all_digits = false;
+                break;
+            }
+        }
+        if (all_digits) {
+            return name.substr(0, pos);
+        }
+    }
+    return name;
+}
+
+// Check if an assignment is redundant (x = x pattern)
+bool is_redundant_assignment(const Stmt& stmt) {
+    if (stmt.kind != StmtKind::kAssign) {
+        return false;
+    }
+    if (stmt.var.name.empty()) {
+        return false;
+    }
+    // Check if expr is just the same variable
+    if (stmt.expr.kind != mlil::MlilExprKind::kVar) {
+        return false;
+    }
+    if (stmt.expr.var.name.empty()) {
+        return false;
+    }
+    // Compare base names (ignoring SSA version suffixes)
+    std::string base_var = get_base_var_name(stmt.var.name);
+    std::string base_expr = get_base_var_name(stmt.expr.var.name);
+    return base_var == base_expr;
+}
+
+// Check if an assignment is effectively a no-op identity operation
+// E.g., x = (x + 0), x = (x | 0), x = (x ^ 0), x = (x * 1), x = (x & 0xFFFFFFFF)
+bool is_identity_assignment(const Stmt& stmt) {
+    if (stmt.kind != StmtKind::kAssign) {
+        return false;
+    }
+    if (stmt.var.name.empty()) {
+        return false;
+    }
+    
+    // Check for binary operations that are identity
+    if (stmt.expr.kind != mlil::MlilExprKind::kOp || stmt.expr.args.size() != 2) {
+        return false;
+    }
+    
+    const auto& lhs = stmt.expr.args[0];
+    const auto& rhs = stmt.expr.args[1];
+    
+    // Check if one side is the variable being assigned to
+    bool lhs_is_var = (lhs.kind == mlil::MlilExprKind::kVar && lhs.var.name == stmt.var.name);
+    bool rhs_is_var = (rhs.kind == mlil::MlilExprKind::kVar && rhs.var.name == stmt.var.name);
+    
+    if (!lhs_is_var && !rhs_is_var) {
+        return false;
+    }
+    
+    std::uint64_t imm_val = 0;
+    bool other_is_imm = false;
+    
+    if (lhs_is_var) {
+        other_is_imm = get_imm_value(rhs, imm_val);
+    } else {
+        other_is_imm = get_imm_value(lhs, imm_val);
+    }
+    
+    if (!other_is_imm) {
+        return false;
+    }
+    
+    switch (stmt.expr.op) {
+        case mlil::MlilOp::kAdd:
+        case mlil::MlilOp::kSub:
+        case mlil::MlilOp::kOr:
+        case mlil::MlilOp::kXor:
+        case mlil::MlilOp::kShl:
+        case mlil::MlilOp::kShr:
+        case mlil::MlilOp::kSar:
+            // x + 0, x - 0, x | 0, x ^ 0, x << 0, x >> 0 are identity
+            return imm_val == 0;
+        case mlil::MlilOp::kMul:
+            // x * 1 is identity
+            return imm_val == 1;
+        case mlil::MlilOp::kAnd:
+            // x & all_ones is identity (depends on size)
+            if (stmt.expr.size <= 8) {
+                std::uint64_t all_ones = (stmt.expr.size == 8) ?
+                    0xFFFFFFFFFFFFFFFFULL :
+                    ((1ULL << (stmt.expr.size * 8)) - 1);
+                return imm_val == all_ones;
+            }
+            return false;
+        default:
+            return false;
+    }
+}
+
+// Check if condition is a constant false (0)
+bool is_constant_false(const mlil::MlilExpr& cond) {
+    if (cond.kind == mlil::MlilExprKind::kImm) {
+        return cond.imm == 0;
+    }
+    return false;
+}
+
+// Check if condition is a constant true (non-zero)
+bool is_constant_true(const mlil::MlilExpr& cond) {
+    if (cond.kind == mlil::MlilExprKind::kImm) {
+        return cond.imm != 0;
+    }
+    return false;
+}
+
+// Check if a statement is effectively empty (nop or empty block)
+bool is_empty_stmt(const Stmt& stmt) {
+    if (stmt.kind == StmtKind::kNop) {
+        return true;
+    }
+    if (stmt.kind == StmtKind::kIf) {
+        // if with empty both branches
+        return stmt.then_body.empty() && stmt.else_body.empty();
+    }
+    return false;
+}
+
+void remove_redundant_assignments_block(std::vector<Stmt>& stmts) {
+    // First recurse into nested structures
+    for (auto& stmt : stmts) {
+        if (stmt.kind == StmtKind::kIf) {
+            remove_redundant_assignments_block(stmt.then_body);
+            remove_redundant_assignments_block(stmt.else_body);
+        } else if (stmt.kind == StmtKind::kWhile || stmt.kind == StmtKind::kDoWhile || stmt.kind == StmtKind::kFor) {
+            remove_redundant_assignments_block(stmt.body);
+            remove_redundant_assignments_block(stmt.then_body);
+            remove_redundant_assignments_block(stmt.else_body);
+        } else if (stmt.kind == StmtKind::kSwitch) {
+            for (auto& case_body : stmt.case_bodies) {
+                remove_redundant_assignments_block(case_body);
+            }
+            remove_redundant_assignments_block(stmt.default_body);
+        }
+    }
+    
+    // Remove redundant statements
+    stmts.erase(
+        std::remove_if(stmts.begin(), stmts.end(), [](const Stmt& stmt) {
+            // Remove redundant assignments: x = x
+            if (is_redundant_assignment(stmt) || is_identity_assignment(stmt)) {
+                return true;
+            }
+            // Remove if(0) statements
+            if (stmt.kind == StmtKind::kIf && is_constant_false(stmt.condition)) {
+                return true;
+            }
+            // Remove empty if statements (both branches empty)
+            if (stmt.kind == StmtKind::kIf && stmt.then_body.empty() && stmt.else_body.empty()) {
+                return true;
+            }
+            return false;
+        }),
+        stmts.end()
+    );
+    
+    // Simplify if statements with only one non-empty branch when other is empty
+    for (auto& stmt : stmts) {
+        if (stmt.kind != StmtKind::kIf) {
+            continue;
+        }
+        // If then is empty but else is not, invert condition and swap
+        if (stmt.then_body.empty() && !stmt.else_body.empty()) {
+            // Invert condition
+            if (stmt.condition.kind == mlil::MlilExprKind::kOp) {
+                switch (stmt.condition.op) {
+                    case mlil::MlilOp::kEq: stmt.condition.op = mlil::MlilOp::kNe; break;
+                    case mlil::MlilOp::kNe: stmt.condition.op = mlil::MlilOp::kEq; break;
+                    case mlil::MlilOp::kLt: stmt.condition.op = mlil::MlilOp::kGe; break;
+                    case mlil::MlilOp::kLe: stmt.condition.op = mlil::MlilOp::kGt; break;
+                    case mlil::MlilOp::kGt: stmt.condition.op = mlil::MlilOp::kLe; break;
+                    case mlil::MlilOp::kGe: stmt.condition.op = mlil::MlilOp::kLt; break;
+                    default: {
+                        // Wrap in NOT
+                        mlil::MlilExpr not_expr;
+                        not_expr.kind = mlil::MlilExprKind::kOp;
+                        not_expr.op = mlil::MlilOp::kNot;
+                        not_expr.size = 1;
+                        not_expr.args.push_back(std::move(stmt.condition));
+                        stmt.condition = std::move(not_expr);
+                        break;
+                    }
+                }
+            } else {
+                // Wrap in NOT
+                mlil::MlilExpr not_expr;
+                not_expr.kind = mlil::MlilExprKind::kOp;
+                not_expr.op = mlil::MlilOp::kNot;
+                not_expr.size = 1;
+                not_expr.args.push_back(std::move(stmt.condition));
+                stmt.condition = std::move(not_expr);
+            }
+            stmt.then_body = std::move(stmt.else_body);
+            stmt.else_body.clear();
+        }
+    }
+}
+
+} // namespace
+
+void remove_redundant_assignments(Function& function) {
+    remove_redundant_assignments_block(function.stmts);
 }
 
 } // namespace engine::decompiler
