@@ -22,6 +22,7 @@
 #include "engine/symbols.h"
 #include "engine/strings.h"
 #include "engine/xrefs.h"
+#include "engine/pdb_loader.h"
 
 namespace engine {
 
@@ -46,6 +47,18 @@ public:
                                std::size_t max_results,
                                std::vector<xrefs::XrefEntry>& out) const;
     const LoadedImage& image() const;
+
+    /// Load symbols from a PDB file
+    /// @param pdb_path Path to the PDB file
+    /// @param options Loading options
+    /// @return Result containing statistics and any error message
+    PdbLoadResult load_pdb(const std::string& pdb_path, const PdbLoadOptions& options = {});
+
+    /// Check if PDB symbols have been loaded
+    bool has_pdb_symbols() const;
+
+    /// Get the path to the loaded PDB file (empty if none)
+    const std::string& pdb_path() const;
 
     std::uint64_t cursor() const;
     void set_cursor(std::uint64_t addr);
@@ -89,6 +102,16 @@ public:
                                llir::Function& function,
                                std::string& error) const;
 
+    bool build_mlil_ssa_x86_64(std::uint64_t entry,
+                               std::size_t max_instructions,
+                               mlil::Function& function,
+                               std::string& error) const;
+
+    bool build_hlil_x86_64(std::uint64_t entry,
+                           std::size_t max_instructions,
+                           hlil::Function& function,
+                           std::string& error) const;
+
     bool discover_llir_functions_arm64(std::uint64_t entry,
                                        std::size_t max_instructions_per_function,
                                        const analysis::FunctionDiscoveryOptions& options,
@@ -113,9 +136,12 @@ public:
 
 private:
     void apply_relocations();
+    void try_load_pdb();
 
     bool loaded_ = false;
     std::string path_;
+    std::string pdb_path_;
+    bool has_pdb_symbols_ = false;
     BinaryInfo binary_info_;
     std::vector<BinarySegment> segments_;
     std::vector<BinarySection> sections_;

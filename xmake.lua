@@ -31,6 +31,12 @@ option("with_imgui_client")
     set_description("Build the ImGui client (Windows only)")
 option_end()
 
+option("with_example_plugin")
+    set_default(false)
+    set_showmenu(true)
+    set_description("Build the example plugin")
+option_end()
+
 if is_plat("windows") and has_config("with_imgui_client") then
     add_requires("imgui docking", {configs = {win32 = true, dx11 = true, dx12 = true}})
 end
@@ -74,6 +80,7 @@ target("client_common")
     add_files("clients/common/src/commands/*.cpp")
     add_files("clients/common/src/args/*.cpp")
     add_files("clients/common/src/util/*.cpp")
+    add_files("clients/common/src/plugin/*.cpp")
     add_deps("engine")
     add_packages("spdlog")
 
@@ -97,4 +104,30 @@ if is_plat("windows") and has_config("with_imgui_client") then
         
         add_files("clients/imgui/**.cpp")
         add_links("d3d11", "d3d12", "dxgi")
+end
+
+-- Example plugin (demonstrates plugin SDK)
+if has_config("with_example_plugin") then
+    target("example_plugin")
+        set_kind("shared")
+        add_deps("engine")
+        add_packages("spdlog")
+        add_files("plugins/example/*.cpp")
+        
+        -- Plugin output settings
+        set_prefixname("")  -- No "lib" prefix on Unix
+        set_extension(is_plat("windows") and ".dll" or ".so")
+        
+        -- Copy to plugins directory after build
+        after_build(function(target)
+            -- Copy to project root plugins/ for direct CLI execution
+            local plugindir = path.join(os.projectdir(), "plugins")
+            os.mkdir(plugindir)
+            os.cp(target:targetfile(), plugindir)
+            
+            -- Also copy to build output plugins/ for xmake run
+            local buildplugindir = path.join(path.directory(target:targetfile()), "plugins")
+            os.mkdir(buildplugindir)
+            os.cp(target:targetfile(), buildplugindir)
+        end)
 end

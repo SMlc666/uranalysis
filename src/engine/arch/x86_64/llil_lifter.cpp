@@ -116,32 +116,162 @@ LlilExpr flag_reg(const char* name) {
     return expr;
 }
 
-void set_flag_unknown(Instruction& out, const char* name) {
+void emit_flag_set(Instruction& out, const char* name, LlilExpr expr) {
     LlilStmt stmt;
     stmt.kind = LlilStmtKind::kSetReg;
     stmt.reg.name = name;
-    stmt.expr = flag_reg(name);
+    stmt.expr = std::move(expr);
     out.llil.push_back(std::move(stmt));
 }
 
+LlilExpr make_bool_op(LlilOp op, LlilExpr lhs, LlilExpr rhs) {
+    std::vector<LlilExpr> args;
+    args.push_back(std::move(lhs));
+    args.push_back(std::move(rhs));
+    return make_op(op, std::move(args), 1);
+}
+
+LlilExpr make_msb_expr(const LlilExpr& value, std::size_t size) {
+    std::size_t width = size;
+    if (width == 0) {
+        width = value.size;
+    }
+    if (width == 0) {
+        width = 8;
+    }
+    const std::size_t shift = (width * 8) - 1;
+    std::vector<LlilExpr> shift_args;
+    shift_args.push_back(value);
+    shift_args.push_back(make_imm(shift, 8));
+    LlilExpr shifted = make_op(LlilOp::kShr, std::move(shift_args), width);
+    std::vector<LlilExpr> and_args;
+    and_args.push_back(std::move(shifted));
+    and_args.push_back(make_imm(1, 1));
+    return make_op(LlilOp::kAnd, std::move(and_args), 1);
+}
+
+// Emit ZF and SF flags based on result
+void emit_zs_flags(Instruction& out, const LlilExpr& result, std::size_t size) {
+    // ZF = (result == 0)
+    emit_flag_set(out, "flag_z", make_bool_op(LlilOp::kEq, result, make_imm(0, size)));
+    // SF = MSB(result)
+    emit_flag_set(out, "flag_s", make_msb_expr(result, size));
+}
+
+// Emit flags for SUB/CMP: result = lhs - rhs
+void emit_flags_sub(Instruction& out,
+                    const LlilExpr& lhs,
+                    const LlilExpr& rhs,
+                    const LlilExpr& result,
+                    std::size_t size) {
+    emit_zs_flags(out, result, size);
+    // CF = (lhs < rhs) for unsigned subtraction (borrow)
+    // Note: Using kLt here; proper unsigned semantics handled at higher IR levels
+    emit_flag_set(out, "flag_c", make_bool_op(LlilOp::kLt, lhs, rhs));
+    // OF = signed overflow: (lhs_sign != rhs_sign) && (result_sign != lhs_sign)
+    LlilExpr n_l = make_msb_expr(lhs, size);
+    LlilExpr n_r = make_msb_expr(rhs, size);
+    LlilExpr n_res = make_msb_expr(result, size);
+    LlilExpr diff_sign = make_bool_op(LlilOp::kNe, n_l, n_r);
+    LlilExpr diff_res = make_bool_op(LlilOp::kNe, n_res, n_l);
+    emit_flag_set(out, "flag_o", make_bool_op(LlilOp::kAnd, diff_sign, diff_res));
+}
+
+// Emit flags for AND/TEST: result = lhs & rhs
+void emit_flags_logic(Instruction& out, const LlilExpr& result, std::size_t size) {
+    emit_zs_flags(out, result, size);
+    // CF = 0, OF = 0 for logical operations
+    emit_flag_set(out, "flag_c", make_imm(0, 1));
+    emit_flag_set(out, "flag_o", make_imm(0, 1));
+}
+
 LlilExpr condition_from_jcc(unsigned int id) {
+    // Helper to get flag registers
+    auto zf = []() { return flag_reg("flag_z"); };
+    auto sf = []() { return flag_reg("flag_s"); };
+    auto cf = []() { return flag_reg("flag_c"); };
+    auto of = []() { return flag_reg("flag_o"); };
+    auto one = []() { return make_imm(1, 1); };
+
     switch (id) {
-        case X86_INS_JE:
-            return make_op(LlilOp::kEq, {flag_reg("flag_z"), make_imm(1, 1)}, 1);
-        case X86_INS_JNE:
-            return make_op(LlilOp::kNe, {flag_reg("flag_z"), make_imm(1, 1)}, 1);
-        case X86_INS_JS:
-            return make_op(LlilOp::kEq, {flag_reg("flag_s"), make_imm(1, 1)}, 1);
-        case X86_INS_JNS:
-            return make_op(LlilOp::kNe, {flag_reg("flag_s"), make_imm(1, 1)}, 1);
-        case X86_INS_JO:
-            return make_op(LlilOp::kEq, {flag_reg("flag_o"), make_imm(1, 1)}, 1);
-        case X86_INS_JNO:
-            return make_op(LlilOp::kNe, {flag_reg("flag_o"), make_imm(1, 1)}, 1);
-        case X86_INS_JB:
-            return make_op(LlilOp::kEq, {flag_reg("flag_c"), make_imm(1, 1)}, 1);
-        case X86_INS_JAE:
-            return make_op(LlilOp::kNe, {flag_reg("flag_c"), make_imm(1, 1)}, 1);
+        // Zero flag conditions
+        case X86_INS_JE:   // ZF == 1
+        case X86_INS_SETE:
+        case X86_INS_CMOVE:
+            return make_op(LlilOp::kEq, {zf(), one()}, 1);
+        case X86_INS_JNE:  // ZF == 0
+        case X86_INS_SETNE:
+        case X86_INS_CMOVNE:
+            return make_op(LlilOp::kNe, {zf(), one()}, 1);
+
+        // Sign flag conditions
+        case X86_INS_JS:   // SF == 1
+        case X86_INS_SETS:
+        case X86_INS_CMOVS:
+            return make_op(LlilOp::kEq, {sf(), one()}, 1);
+        case X86_INS_JNS:  // SF == 0
+        case X86_INS_SETNS:
+        case X86_INS_CMOVNS:
+            return make_op(LlilOp::kNe, {sf(), one()}, 1);
+
+        // Overflow flag conditions
+        case X86_INS_JO:   // OF == 1
+        case X86_INS_SETO:
+        case X86_INS_CMOVO:
+            return make_op(LlilOp::kEq, {of(), one()}, 1);
+        case X86_INS_JNO:  // OF == 0
+        case X86_INS_SETNO:
+        case X86_INS_CMOVNO:
+            return make_op(LlilOp::kNe, {of(), one()}, 1);
+
+        // Unsigned comparisons (using CF)
+        case X86_INS_JB:   // CF == 1 (below, unsigned <)
+        case X86_INS_SETB:
+        case X86_INS_CMOVB:
+            return make_op(LlilOp::kEq, {cf(), one()}, 1);
+        case X86_INS_JAE:  // CF == 0 (above or equal, unsigned >=)
+        case X86_INS_SETAE:
+        case X86_INS_CMOVAE:
+            return make_op(LlilOp::kNe, {cf(), one()}, 1);
+        case X86_INS_JBE:  // CF == 1 OR ZF == 1 (below or equal, unsigned <=)
+        case X86_INS_SETBE:
+        case X86_INS_CMOVBE:
+            return make_op(LlilOp::kOr, {
+                make_op(LlilOp::kEq, {cf(), one()}, 1),
+                make_op(LlilOp::kEq, {zf(), one()}, 1)
+            }, 1);
+        case X86_INS_JA:   // CF == 0 AND ZF == 0 (above, unsigned >)
+        case X86_INS_SETA:
+        case X86_INS_CMOVA:
+            return make_op(LlilOp::kAnd, {
+                make_op(LlilOp::kNe, {cf(), one()}, 1),
+                make_op(LlilOp::kNe, {zf(), one()}, 1)
+            }, 1);
+
+        // Signed comparisons (using SF, OF, ZF)
+        case X86_INS_JL:   // SF != OF (less, signed <)
+        case X86_INS_SETL:
+        case X86_INS_CMOVL:
+            return make_op(LlilOp::kNe, {sf(), of()}, 1);
+        case X86_INS_JGE:  // SF == OF (greater or equal, signed >=)
+        case X86_INS_SETGE:
+        case X86_INS_CMOVGE:
+            return make_op(LlilOp::kEq, {sf(), of()}, 1);
+        case X86_INS_JLE:  // ZF == 1 OR SF != OF (less or equal, signed <=)
+        case X86_INS_SETLE:
+        case X86_INS_CMOVLE:
+            return make_op(LlilOp::kOr, {
+                make_op(LlilOp::kEq, {zf(), one()}, 1),
+                make_op(LlilOp::kNe, {sf(), of()}, 1)
+            }, 1);
+        case X86_INS_JG:   // ZF == 0 AND SF == OF (greater, signed >)
+        case X86_INS_SETG:
+        case X86_INS_CMOVG:
+            return make_op(LlilOp::kAnd, {
+                make_op(LlilOp::kNe, {zf(), one()}, 1),
+                make_op(LlilOp::kEq, {sf(), of()}, 1)
+            }, 1);
+
         default:
             break;
     }
@@ -255,14 +385,32 @@ void lift_shift(csh handle, LlilOp op_kind, const cs_x86& x86, Instruction& out)
     emit_set_reg(out, std::move(dst_reg), std::move(value));
 }
 
-void lift_cmp_test(const cs_x86& x86, Instruction& out) {
+void lift_cmp(csh handle, const cs_x86& x86, Instruction& out) {
     if (x86.op_count < 2) {
         return;
     }
-    set_flag_unknown(out, "flag_z");
-    set_flag_unknown(out, "flag_s");
-    set_flag_unknown(out, "flag_c");
-    set_flag_unknown(out, "flag_o");
+    const auto& op0 = x86.operands[0];
+    const auto& op1 = x86.operands[1];
+    const std::size_t size = op_size(op0);
+    LlilExpr lhs = operand_value(handle, op0, size);
+    LlilExpr rhs = operand_value(handle, op1, size);
+    // CMP computes lhs - rhs and sets flags (discards result)
+    LlilExpr result = make_op(LlilOp::kSub, {lhs, rhs}, size);
+    emit_flags_sub(out, lhs, rhs, result, size);
+}
+
+void lift_test(csh handle, const cs_x86& x86, Instruction& out) {
+    if (x86.op_count < 2) {
+        return;
+    }
+    const auto& op0 = x86.operands[0];
+    const auto& op1 = x86.operands[1];
+    const std::size_t size = op_size(op0);
+    LlilExpr lhs = operand_value(handle, op0, size);
+    LlilExpr rhs = operand_value(handle, op1, size);
+    // TEST computes lhs & rhs and sets flags (discards result)
+    LlilExpr result = make_op(LlilOp::kAnd, {lhs, rhs}, size);
+    emit_flags_logic(out, result, size);
 }
 
 void lift_setcc(csh handle, unsigned int id, const cs_x86& x86, Instruction& out) {
@@ -443,8 +591,10 @@ void lift_instruction(csh handle, const cs_insn& insn, Instruction& out) {
             lift_pop(handle, x86, out);
             return;
         case X86_INS_CMP:
+            lift_cmp(handle, x86, out);
+            return;
         case X86_INS_TEST:
-            lift_cmp_test(x86, out);
+            lift_test(handle, x86, out);
             return;
         case X86_INS_SETNE:
         case X86_INS_SETE:

@@ -1,6 +1,8 @@
 #include "client/commands/commands.h"
 #include "client/formatters/address.h"
 
+#include "engine/pdb_loader.h"
+
 #include <iomanip>
 #include <sstream>
 
@@ -149,6 +151,94 @@ void register_file_commands(CommandRegistry& registry) {
                     }
                     output.write_line(oss.str());
                 }
+                return true;
+            }));
+
+    // ==========================================================================
+    // pdb - Load PDB symbols
+    // ==========================================================================
+    registry.register_command(
+        CommandV2("pdb", {"loadpdb"})
+            .description("Load symbols from a PDB file")
+            .positional("path", "Path to PDB file (optional, auto-detected if not specified)", false)
+            .requires_file()
+            .handler([](Session& session, Output& output, const args::ArgMatches& m) {
+                // Check if we already have PDB symbols
+                if (session.has_pdb_symbols()) {
+                    std::ostringstream oss;
+                    oss << "PDB already loaded: " << session.pdb_path();
+                    output.write_line(oss.str());
+                    return true;
+                }
+
+                std::string pdb_path;
+                if (m.has("path")) {
+                    pdb_path = m.get<std::string>("path");
+                } else {
+                    // Try to auto-detect
+                    if (!engine::find_pdb_for_pe(session.path(), pdb_path)) {
+                        output.write_line("no PDB file found, specify path manually");
+                        return true;
+                    }
+                    output.write_line("found: " + pdb_path);
+                }
+
+                // Validate
+                if (!engine::is_valid_pdb(pdb_path)) {
+                    output.write_line("error: invalid PDB file");
+                    return true;
+                }
+
+                // Load
+                engine::PdbLoadOptions options;
+                engine::PdbLoadResult result = session.load_pdb(pdb_path, options);
+
+                if (!result.success) {
+                    output.write_line("error: " + result.error);
+                    return true;
+                }
+
+                std::ostringstream oss;
+                oss << "loaded: " << result.public_symbols << " public, "
+                    << result.global_symbols << " global, "
+                    << result.function_symbols << " functions, "
+                    << result.module_symbols << " from modules";
+                output.write_line(oss.str());
+                return true;
+            }));
+
+    // ==========================================================================
+    // pdbinfo - Show PDB information
+    // ==========================================================================
+    registry.register_command(
+        CommandV2("pdbinfo", {})
+            .description("Show PDB file information")
+            .requires_file()
+            .handler([](Session& session, Output& output, const args::ArgMatches&) {
+                if (!session.has_pdb_symbols()) {
+                    output.write_line("no PDB loaded");
+                    return true;
+                }
+
+                std::ostringstream oss;
+                oss << "PDB: " << session.pdb_path();
+                output.write_line(oss.str());
+
+                // Count function symbols
+                std::size_t func_count = 0;
+                std::size_t data_count = 0;
+                for (const auto& sym : session.symbols()) {
+                    if ((sym.info & 0x0f) == 0x02) {
+                        ++func_count;
+                    } else if ((sym.info & 0x0f) == 0x01) {
+                        ++data_count;
+                    }
+                }
+
+                oss.str("");
+                oss << "Symbols: " << session.symbols().size() 
+                    << " (" << func_count << " functions, " << data_count << " data)";
+                output.write_line(oss.str());
                 return true;
             }));
 }

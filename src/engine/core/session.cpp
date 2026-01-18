@@ -7,10 +7,12 @@
 #include "engine/llir_passes.h"
 #include "engine/llir_opt.h"
 #include "engine/mlil_lift.h"
+#include "engine/pdb_loader.h"
 #include "engine/debug/log_channels.h"
 #include "engine/debug/ir_dump.h"
 
 #include <algorithm>
+#include <spdlog/spdlog.h>
 
 namespace engine {
 
@@ -86,6 +88,12 @@ bool Session::open(const std::string& path, std::string& error) {
     eh_frame_catalog_.discover(sections_, image_, binary_info_);
     string_catalog_.discover(sections_, image_);
     string_catalog_.attach_symbols(symbol_table_);
+
+    // Auto-load PDB for PE files
+    if (binary_info_.format == BinaryFormat::kPe) {
+        try_load_pdb();
+    }
+
     loaded_ = true;
     cursor_ = binary_info_.entry;
     return true;
@@ -165,6 +173,8 @@ void Session::apply_relocations() {
 void Session::close() {
     loaded_ = false;
     path_.clear();
+    pdb_path_.clear();
+    has_pdb_symbols_ = false;
     binary_info_ = {};
     segments_.clear();
     sections_.clear();
@@ -384,7 +394,70 @@ bool Session::build_llir_ssa_x86_64(std::uint64_t entry,
     if (!llir::resolve_indirect_branches(function, error)) {
         return false;
     }
+    // Resolve jump tables for switch statement recovery
+    if (!llir::resolve_jump_tables(function, image_, segments_, error)) {
+        return false;
+    }
     return true;
+}
+
+bool Session::build_mlil_ssa_x86_64(std::uint64_t entry,
+                                    std::size_t max_instructions,
+                                    mlil::Function& function,
+                                    std::string& error) const {
+    LOG_CH_DEBUG(log::Channel::kMlil, "build_mlil_ssa_x86_64: entry=0x{:x}", entry);
+    
+    llir::Function llir_function;
+    if (!build_llir_ssa_x86_64(entry, max_instructions, llir_function, error)) {
+        return false;
+    }
+    
+    LOG_CH_TRACE(log::Channel::kMlil, "LLIR complete: {} blocks, {} stmts", 
+                 llir_function.blocks.size(), debug::count_stmts(llir_function));
+    
+    if (!mlil::build_mlil_from_llil_ssa(llir_function, function, error)) {
+        return false;
+    }
+    
+    LOG_CH_TRACE(log::Channel::kMlil, "MLIL lift complete: {} blocks, {} stmts",
+                 function.blocks.size(), debug::count_stmts(function));
+    
+    // Note: We skip mlil::build_ssa_with_call_clobbers here because LLIR already
+    // has correct SSA information. Rebuilding SSA in MLIL would overwrite the
+    // correct version numbers from LLIR, causing issues like xor(a, b) becoming
+    // xor(a, a) when both operands are different versions of the same register.
+    // The call clobbers are already handled in LLIR SSA construction.
+    
+    mlil::MlilOptOptions options;
+    // Disable copy propagation to prevent incorrect variable merging
+    options.copy_propagation = false;
+    bool result = mlil::optimize_mlil_ssa(function, options, error);
+    
+    LOG_CH_DEBUG(log::Channel::kMlil, "MLIL opt complete: {} stmts", debug::count_stmts(function));
+    return result;
+}
+
+bool Session::build_hlil_x86_64(std::uint64_t entry,
+                                std::size_t max_instructions,
+                                hlil::Function& function,
+                                std::string& error) const {
+    LOG_CH_DEBUG(log::Channel::kHlil, "build_hlil_x86_64: entry=0x{:x}", entry);
+    
+    mlil::Function mlil_function;
+    if (!build_mlil_ssa_x86_64(entry, max_instructions, mlil_function, error)) {
+        return false;
+    }
+    if (!hlil::build_hlil_from_mlil(mlil_function, function, error)) {
+        return false;
+    }
+    
+    LOG_CH_TRACE(log::Channel::kHlil, "HLIL structure complete: {} stmts", debug::count_stmts(function));
+    
+    hlil::HlilOptOptions options;
+    bool result = hlil::optimize_hlil(function, options, error);
+    
+    LOG_CH_DEBUG(log::Channel::kHlil, "HLIL complete: {} stmts", debug::count_stmts(function));
+    return result;
 }
 
 bool Session::discover_llir_functions_arm64(std::uint64_t entry,
@@ -519,6 +592,56 @@ bool Session::discover_function_ranges_x86_64(std::uint64_t entry,
                                                      local_options,
                                                      ranges,
                                                      error);
+}
+
+void Session::try_load_pdb() {
+    std::string pdb_candidate;
+    if (!find_pdb_for_pe(path_, pdb_candidate)) {
+        SPDLOG_DEBUG("No PDB file found for {}", path_);
+        return;
+    }
+
+    SPDLOG_INFO("Found PDB file: {}", pdb_candidate);
+
+    PdbLoadOptions options;
+    PdbLoadResult result = load_pdb_symbols(pdb_candidate, binary_info_.image_base, symbols_, options);
+    
+    if (!result.success) {
+        SPDLOG_WARN("Failed to load PDB: {}", result.error);
+        return;
+    }
+
+    pdb_path_ = pdb_candidate;
+    has_pdb_symbols_ = true;
+
+    // Re-populate symbol table with new symbols
+    symbol_table_.populate(symbols_, sections_);
+
+    SPDLOG_INFO("Loaded PDB symbols: {} public, {} global, {} functions, {} from modules",
+                result.public_symbols, result.global_symbols,
+                result.function_symbols, result.module_symbols);
+}
+
+PdbLoadResult Session::load_pdb(const std::string& pdb_path, const PdbLoadOptions& options) {
+    PdbLoadResult result = load_pdb_symbols(pdb_path, binary_info_.image_base, symbols_, options);
+    
+    if (result.success) {
+        pdb_path_ = pdb_path;
+        has_pdb_symbols_ = true;
+
+        // Re-populate symbol table with new symbols
+        symbol_table_.populate(symbols_, sections_);
+    }
+
+    return result;
+}
+
+bool Session::has_pdb_symbols() const {
+    return has_pdb_symbols_;
+}
+
+const std::string& Session::pdb_path() const {
+    return pdb_path_;
 }
 
 }  // namespace engine

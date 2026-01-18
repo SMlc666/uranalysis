@@ -67,7 +67,14 @@ std::unordered_set<uint64_t> collect_call_targets(const engine::mlil::Function& 
 int analyze_param_count(Session& session, uint64_t addr, size_t max_instructions) {
     std::string error;
     engine::mlil::Function callee_mlil;
-    if (!session.build_mlil_ssa_arm64(addr, max_instructions, callee_mlil, error)) {
+    const auto machine = session.binary_info().machine;
+    bool ok = false;
+    if (machine == engine::BinaryMachine::kAarch64) {
+        ok = session.build_mlil_ssa_arm64(addr, max_instructions, callee_mlil, error);
+    } else if (machine == engine::BinaryMachine::kX86_64) {
+        ok = session.build_mlil_ssa_x86_64(addr, max_instructions, callee_mlil, error);
+    }
+    if (!ok) {
         return -1;
     }
     auto params = engine::decompiler::passes::collect_abi_params(callee_mlil);
@@ -197,14 +204,19 @@ void register_ir_commands(CommandRegistry& registry) {
                 size_t max_instructions = static_cast<size_t>(m.get_or<uint64_t>("max", 1024));
                 
                 const auto machine = session.binary_info().machine;
-                if (machine != engine::BinaryMachine::kAarch64) {
-                    output.write_line("hlil error: only arm64 is supported for now");
-                    return true;
-                }
-                
                 std::string error;
                 engine::hlil::Function hlil_function;
-                if (!session.build_hlil_arm64(addr, max_instructions, hlil_function, error)) {
+                bool ok = false;
+                
+                if (machine == engine::BinaryMachine::kAarch64) {
+                    ok = session.build_hlil_arm64(addr, max_instructions, hlil_function, error);
+                } else if (machine == engine::BinaryMachine::kX86_64) {
+                    ok = session.build_hlil_x86_64(addr, max_instructions, hlil_function, error);
+                } else {
+                    error = "unsupported architecture for hlil";
+                }
+                
+                if (!ok) {
                     output.write_line("hlil error: " + (error.empty() ? "build failed" : error));
                     return true;
                 }
@@ -234,14 +246,19 @@ void register_ir_commands(CommandRegistry& registry) {
                 size_t max_instructions = static_cast<size_t>(m.get_or<uint64_t>("max", 1024));
                 
                 const auto machine = session.binary_info().machine;
-                if (machine != engine::BinaryMachine::kAarch64) {
-                    output.write_line("hlilraw error: only arm64 is supported for now");
-                    return true;
-                }
-                
                 std::string error;
                 engine::mlil::Function mlil_function;
-                if (!session.build_mlil_ssa_arm64(addr, max_instructions, mlil_function, error)) {
+                bool ok = false;
+                
+                if (machine == engine::BinaryMachine::kAarch64) {
+                    ok = session.build_mlil_ssa_arm64(addr, max_instructions, mlil_function, error);
+                } else if (machine == engine::BinaryMachine::kX86_64) {
+                    ok = session.build_mlil_ssa_x86_64(addr, max_instructions, mlil_function, error);
+                } else {
+                    error = "unsupported architecture for hlilraw";
+                }
+                
+                if (!ok) {
                     output.write_line("hlilraw error: " + (error.empty() ? "mlil build failed" : error));
                     return true;
                 }
@@ -276,8 +293,9 @@ void register_ir_commands(CommandRegistry& registry) {
                 size_t max_instructions = static_cast<size_t>(m.get_or<uint64_t>("max", 1024));
                 
                 const auto machine = session.binary_info().machine;
-                if (machine != engine::BinaryMachine::kAarch64) {
-                    output.write_line("pseudoc error: only arm64 is supported for now");
+                if (machine != engine::BinaryMachine::kAarch64 && 
+                    machine != engine::BinaryMachine::kX86_64) {
+                    output.write_line("pseudoc error: unsupported architecture");
                     return true;
                 }
                 
@@ -299,7 +317,13 @@ void register_ir_commands(CommandRegistry& registry) {
                 }
                 
                 engine::mlil::Function mlil_function;
-                if (!session.build_mlil_ssa_arm64(addr, max_instructions, mlil_function, error)) {
+                bool mlil_ok = false;
+                if (machine == engine::BinaryMachine::kAarch64) {
+                    mlil_ok = session.build_mlil_ssa_arm64(addr, max_instructions, mlil_function, error);
+                } else if (machine == engine::BinaryMachine::kX86_64) {
+                    mlil_ok = session.build_mlil_ssa_x86_64(addr, max_instructions, mlil_function, error);
+                }
+                if (!mlil_ok) {
                     output.write_line("pseudoc error: " + (error.empty() ? "build failed" : error));
                     return true;
                 }

@@ -8,17 +8,89 @@ std::size_t reg_size_from_name(const std::string& name) {
     if (name.empty()) {
         return 0;
     }
+    
+    // ARM64 registers (first char prefix)
     switch (name[0]) {
-        case 'w': return 4;
-        case 'x': return 8;
-        case 'b': return 1;
-        case 'h': return 2;
-        case 's': return 4;
-        case 'd': return 8;
+        case 'w': return 4;   // w0-w30 (32-bit)
+        case 'x': return 8;   // x0-x30, xzr (64-bit)
+        case 'b': return 1;   // b0-b31 (8-bit SIMD)
+        case 'h': return 2;   // h0-h31 (16-bit SIMD)
         case 'q':
-        case 'v': return 16;
-        default: return 0;
+        case 'v': return 16;  // v0-v31, q0-q31 (128-bit SIMD)
+        default: break;
     }
+    
+    // x86-64 registers
+    // 64-bit: rax, rbx, rcx, rdx, rsi, rdi, rsp, rbp, r8-r15, rip
+    if (name[0] == 'r') {
+        // r8-r15 without suffix are 64-bit
+        if (name.size() >= 2) {
+            char c1 = name[1];
+            // rax, rbx, rcx, rdx, rsi, rdi, rsp, rbp, rip
+            if (c1 == 'a' || c1 == 'b' || c1 == 'c' || c1 == 'd' ||
+                c1 == 's' || c1 == 'i') {
+                return 8;
+            }
+            // r8-r15 and variants
+            if (c1 >= '0' && c1 <= '9') {
+                // Check for suffix: r8d (32), r8w (16), r8b (8)
+                if (name.size() >= 3) {
+                    char last = name.back();
+                    if (last == 'd') return 4;
+                    if (last == 'w') return 2;
+                    if (last == 'b') return 1;
+                }
+                return 8;  // r8, r9, ..., r15
+            }
+        }
+    }
+    
+    // 32-bit: eax, ebx, ecx, edx, esi, edi, esp, ebp
+    if (name[0] == 'e') {
+        return 4;
+    }
+    
+    // 16-bit: ax, bx, cx, dx, si, di, sp, bp (2 chars, no 'r' or 'e' prefix)
+    // 8-bit: al, bl, cl, dl, ah, bh, ch, dh, sil, dil, spl, bpl
+    if (name.size() == 2) {
+        char c1 = name[1];
+        // al, bl, cl, dl, ah, bh, ch, dh
+        if (c1 == 'l' || c1 == 'h') {
+            return 1;
+        }
+        // ax, bx, cx, dx, si, di, sp, bp
+        if (c1 == 'x' || c1 == 'i' || c1 == 'p') {
+            return 2;
+        }
+    }
+    
+    // 8-bit: sil, dil, spl, bpl (3 chars ending in 'l')
+    if (name.size() == 3 && name[2] == 'l') {
+        if ((name[0] == 's' && (name[1] == 'i' || name[1] == 'p')) ||
+            (name[0] == 'd' && name[1] == 'i') ||
+            (name[0] == 'b' && name[1] == 'p')) {
+            return 1;
+        }
+    }
+    
+    // x86-64 SIMD: xmm0-xmm15 (128-bit), ymm0-ymm15 (256-bit)
+    if (name.size() >= 4 && name[0] == 'x' && name[1] == 'm' && name[2] == 'm') {
+        return 16;
+    }
+    if (name.size() >= 4 && name[0] == 'y' && name[1] == 'm' && name[2] == 'm') {
+        return 32;
+    }
+    
+    // x86-64 flags (1-byte pseudo registers)
+    if (name.size() >= 5 && name.rfind("flag_", 0) == 0) {
+        return 1;
+    }
+    
+    // ARM64 SIMD single/double precision
+    if (name[0] == 's') return 4;   // s0-s31 (32-bit float)
+    if (name[0] == 'd') return 8;   // d0-d31 (64-bit float)
+    
+    return 0;
 }
 
 VarRef make_var_from_reg(const llir::RegRef& reg, std::size_t size) {

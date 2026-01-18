@@ -14,11 +14,14 @@
 
 #include "client/command.h"
 #include "client/output.h"
+#include "client/plugin/command_bridge.h"
 #include "client/session.h"
 #include "engine/api.h"
 #include "engine/log.h"
+#include "engine/plugin/manager.h"
 #include "replxx.hxx"
 #include <spdlog/sinks/stdout_color_sinks.h>
+#include <filesystem>
 
 
 namespace {
@@ -150,9 +153,9 @@ int main(int argc, char* argv[]) {
     std::string script_path;
     bool quiet = false;
 
-    // Initialize engine logging
+    // Initialize engine logging (use stderr to not interfere with command output)
     engine::log::init();
-    auto console_sink = std::make_shared<spdlog::sinks::stdout_color_sink_mt>();
+    auto console_sink = std::make_shared<spdlog::sinks::stderr_color_sink_mt>();
     engine::log::add_sink(console_sink);
 
     // Parse command line arguments
@@ -185,6 +188,42 @@ int main(int argc, char* argv[]) {
     client::Session session;
     client::StdoutOutput output;
     auto registry = client::make_default_registry();
+    
+    // Initialize plugin system (must be declared before command_bridge so it's destroyed after)
+    engine::plugin::PluginManager plugin_manager;
+    
+    // Command bridge for plugin commands (destroyed before plugin_manager unloads DLLs)
+    client::plugin::PluginCommandBridge command_bridge(registry, &session);
+    
+    // Determine plugin directory: check next to executable first, then current directory
+    std::filesystem::path exe_dir = std::filesystem::path(argv[0]).parent_path();
+    if (exe_dir.empty()) exe_dir = std::filesystem::current_path();
+    
+    std::filesystem::path plugin_dir = exe_dir / "plugins";
+    if (!std::filesystem::exists(plugin_dir)) {
+        // Fallback to current working directory
+        plugin_dir = std::filesystem::current_path() / "plugins";
+    }
+    
+    if (std::filesystem::exists(plugin_dir)) {
+        plugin_manager.set_options({
+            .plugin_directory = plugin_dir.string(),
+            .auto_load = true,
+            .fail_on_error = false,
+        });
+        plugin_manager.set_command_registry(&registry);
+        plugin_manager.set_session(&session);
+        
+        // Set up command registration callback
+        plugin_manager.set_command_register_callback([&command_bridge](engine::plugin::ICommand* cmd) {
+            return command_bridge.register_command(cmd);
+        });
+        
+        std::size_t loaded = plugin_manager.discover_and_load();
+        if (loaded > 0 && !quiet) {
+            std::cout << "Loaded " << loaded << " plugin(s)\n";
+        }
+    }
 
     // Execute commands from -e options
     if (!execute_commands.empty()) {
