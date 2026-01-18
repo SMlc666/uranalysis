@@ -98,6 +98,5 @@ bool build_pseudoc_from_mlil_ssa_debug(const mlil::Function& mlil_function,
                                        const FunctionHints* hints,
                                        mlil::Function* mlil_lowered_out,
                                        SymbolResolver resolver = nullptr);
-void emit_pseudoc(const Function& function, std::vector<std::string>& out_lines);
 
 }  // namespace engine::decompiler

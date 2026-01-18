@@ -4,6 +4,7 @@
 #include <unordered_set>
 
 #include "engine/decompiler/passes/abi_params.h"
+#include "engine/emit/emit.h"
 #include "engine/hlil_lift.h"
 #include "engine/mlil_lift.h"
 
@@ -272,7 +273,7 @@ PseudocResult IrService::build_pseudoc(std::uint64_t address,
     }
 
     // Emit lines
-    engine::decompiler::emit_pseudoc(result.function, result.lines);
+    result.lines = engine::emit::to_lines(result.function);
     result.success = true;
 
     return result;

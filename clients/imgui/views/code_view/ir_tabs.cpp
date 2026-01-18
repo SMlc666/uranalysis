@@ -9,6 +9,7 @@
 #include "client/formatters/address.h"
 #include "engine/hlil_opt.h"
 #include "engine/decompiler.h"
+#include "engine/emit/emit.h"
 
 namespace client {
 
@@ -146,7 +147,7 @@ void IrTabs::refresh_ir(CodeViewState& state, std::uint64_t address) {
             state.pseudoc_error = error.empty() ? "pseudoc build failed" : error;
             state.pseudoc_mlil_error = state.pseudoc_error;
         } else {
-            engine::decompiler::emit_pseudoc(pseudoc_function, state.pseudoc_lines);
+            state.pseudoc_lines = engine::emit::to_lines(pseudoc_function);
             client::fmt::format_mlil_function(pseudoc_mlil_lowered, state.pseudoc_mlil_lines);
             state.pseudoc_mlil_error.clear();
         }

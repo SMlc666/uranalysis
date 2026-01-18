@@ -1,0 +1,5 @@
+target("raw_pdb")
+    set_kind("static")
+    set_default(false)
+    add_includedirs("src", {public = true})
+    add_files("src/*.cpp")

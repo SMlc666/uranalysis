@@ -9,11 +9,12 @@ add_requires("capstone")
 add_requires("catch2")
 add_requires("replxx")
 add_requires("sqlite3")
-add_requires("raw_pdb")
+
 add_requires("spdlog", {configs = {header_only = true}})
 
 
 includes("third-party/llvm")
+includes("third-party/raw_pdb-main")
 
 
 set_encodings ("utf-8")
@@ -46,10 +47,11 @@ end
     add_includedirs("src/engine/pass/include", {public = true})
     add_includedirs("src/engine/ir", {public = true})
     add_includedirs("src/engine/debug/include", {public = true})
+    add_includedirs("src/engine/emit/include", {public = true})
     add_files("src/engine/**/*.cpp")
     add_packages("capstone")
     add_packages("sqlite3")
-    add_packages("raw_pdb")
+    add_deps("raw_pdb")
     add_packages("spdlog")
     add_deps("llvm_demangle")
 
@@ -78,6 +80,7 @@ target("client_common")
 target("engine_tests")
     set_kind("binary")
     add_files("tests/*.cpp")
+    add_files("tests/engine/**/*.cpp")
     add_deps("engine", "client_common")
     add_includedirs("tests")
     add_packages("catch2", "sqlite3", "spdlog")

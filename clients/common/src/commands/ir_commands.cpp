@@ -4,6 +4,7 @@
 #include "client/util/address_resolver.h"
 #include "engine/decompiler.h"
 #include "engine/decompiler/passes/abi_params.h"
+#include "engine/emit/emit.h"
 #include "engine/hlil.h"
 #include "engine/hlil_lift.h"
 #include "engine/llir.h"
@@ -344,8 +345,7 @@ void register_ir_commands(CommandRegistry& registry) {
                     return true;
                 }
                 
-                std::vector<std::string> lines;
-                engine::decompiler::emit_pseudoc(pseudo_function, lines);
+                std::vector<std::string> lines = engine::emit::to_lines(pseudo_function);
                 for (const auto& line : lines) {
                     output.write_line(line);
                 }

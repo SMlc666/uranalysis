@@ -25,12 +25,30 @@
 #include "engine/hlil_lift.h"
 #include "engine/hlil_opt.h"
 
-#include "printer.h"
 #include "engine/decompiler/transforms.h"
 
 namespace engine::decompiler {
 
 namespace {
+
+// Utility: format an address as hex string
+std::string format_hex(std::uint64_t value) {
+    std::ostringstream oss;
+    oss << "0x" << std::hex << value;
+    return oss.str();
+}
+
+// Utility: normalize a function name by removing parameter list
+std::string normalize_function_name(std::string name) {
+    auto pos = name.find('(');
+    if (pos != std::string::npos) {
+        name = name.substr(0, pos);
+    }
+    while (!name.empty() && std::isspace(static_cast<unsigned char>(name.back()))) {
+        name.pop_back();
+    }
+    return name;
+}
 
 // Debug helper: count all statements recursively including loop bodies
 std::size_t count_stmts_recursive(const std::vector<Stmt>& stmts) {
@@ -332,10 +350,6 @@ bool build_pseudoc_from_mlil_ssa_debug(const mlil::Function& mlil_function,
                                        mlil::Function* mlil_lowered_out,
                                        SymbolResolver resolver) {
     return build_pseudoc_from_mlil_ssa_internal(mlil_function, out, error, hints, mlil_lowered_out, resolver);
-}
-
-void emit_pseudoc(const Function& function, std::vector<std::string>& out_lines) {
-    emit_function_pseudoc(function, out_lines);
 }
 
 }  // namespace engine::decompiler

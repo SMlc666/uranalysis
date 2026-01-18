@@ -6,6 +6,29 @@
 
 Binary analysis framework: ELF/PE loading → Capstone disassembly → 3-tier IR (LLIR→MLIR→HLIR) → decompilation. C++20, xmake build.
 
+## CODE-INDEX (USE THIS FIRST!)
+
+**Semantic code search via `code-index` MCP. Use proactively before grep/glob.**
+
+| Tool | Purpose | Example |
+|------|---------|---------|
+| `code-index_search_code` | Natural language code search | `"ELF binary loader parsing"` |
+| `code-index_index_status` | Check index health | Before debugging search issues |
+
+**Note:** Incremental indexing is automatic. Avoid `code-index_reindex` unless index is corrupted.
+
+**When to use:**
+- Finding where functionality is implemented → `search_code("decompiler pass pipeline")`
+- Understanding unfamiliar modules → `search_code("SSA construction")`
+- Locating patterns across codebase → `search_code("Capstone instruction lifting")`
+
+**Search tips:**
+- Use descriptive phrases, not keywords: `"how are ELF relocations parsed"` > `"relocation"`
+- Include domain context: `"ARM64 branch instruction handling"` > `"branch"`
+- Combine concepts: `"type inference constraint solver"` > `"type solver"`
+
+**Index stats:** 2288 chunks, 1129 symbols, OpenAI embeddings (1536-dim).
+
 ## STRUCTURE
 
 ```
