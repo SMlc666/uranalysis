@@ -28,14 +28,19 @@ pub fn render_operand(operand: &Operand) -> String {
 }
 
 fn render_memory(mem: &MemoryOperand) -> String {
+    let base = mem
+        .base
+        .as_ref()
+        .map(|reg| reg.name.as_str())
+        .unwrap_or("unknown");
     if mem.offset == 0 && !mem.writeback && !mem.post_index {
-        format!("[{}]", mem.base.name)
+        format!("[{base}]")
     } else if mem.post_index {
-        format!("[{}], #{}", mem.base.name, format_signed_hex(mem.offset))
+        format!("[{base}], #{}", format_signed_hex(mem.offset))
     } else if mem.writeback {
-        format!("[{}, #{}]!", mem.base.name, format_signed_hex(mem.offset))
+        format!("[{base}, #{}]!", format_signed_hex(mem.offset))
     } else {
-        format!("[{}, #{}]", mem.base.name, format_signed_hex(mem.offset))
+        format!("[{base}, #{}]", format_signed_hex(mem.offset))
     }
 }
 

@@ -469,12 +469,11 @@ fn decode_load_store_unsigned(word: u32, address: u64) -> Instruction {
         if load { "ldr" } else { "str" },
         vec![
             Operand::Register(reg),
-            Operand::Memory(crate::model::MemoryOperand {
-                base: base_reg,
-                offset: imm,
-                writeback: false,
-                post_index: false,
-            }),
+            Operand::Memory(crate::model::MemoryOperand::base_offset(
+                base_reg,
+                imm,
+                Some((access_size_bytes(word) * 8) as u16),
+            )),
         ],
         if load {
             InstructionKind::Load
@@ -495,19 +494,22 @@ fn decode_load_store_unscaled(word: u32, address: u64) -> Instruction {
     let rt = bits(word, 0, 4);
     let reg = access_register(word, rt);
     let base_reg = crate::arch::aarch64::registers::x_or_sp(rn);
+    let mut memory = crate::model::MemoryOperand::base_offset(
+        base_reg,
+        imm,
+        Some((access_size_bytes(word) * 8) as u16),
+    );
+    if pre_index {
+        memory = memory.with_writeback();
+    }
+    if post_index {
+        memory = memory.with_post_index();
+    }
     base(
         word,
         address,
         if load { "ldr" } else { "str" },
-        vec![
-            Operand::Register(reg),
-            Operand::Memory(crate::model::MemoryOperand {
-                base: base_reg,
-                offset: imm,
-                writeback: pre_index,
-                post_index,
-            }),
-        ],
+        vec![Operand::Register(reg), Operand::Memory(memory)],
         if load {
             InstructionKind::Load
         } else {

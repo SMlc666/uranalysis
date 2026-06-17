@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Architecture {
     Aarch64,
+    X86_64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -63,10 +64,73 @@ pub struct Register {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MemoryOperand {
-    pub base: Register,
+    pub base: Option<Register>,
+    pub index: Option<Register>,
+    pub scale: u8,
     pub offset: i64,
+    pub width_bits: Option<u16>,
     pub writeback: bool,
     pub post_index: bool,
+    pub relative: bool,
+}
+
+impl MemoryOperand {
+    pub fn base_offset(base: Register, offset: i64, width_bits: Option<u16>) -> Self {
+        Self {
+            base: Some(base),
+            index: None,
+            scale: 1,
+            offset,
+            width_bits,
+            writeback: false,
+            post_index: false,
+            relative: false,
+        }
+    }
+
+    pub fn indexed(
+        base: Option<Register>,
+        index: Option<Register>,
+        scale: u8,
+        offset: i64,
+        width_bits: Option<u16>,
+    ) -> Self {
+        Self {
+            base,
+            index,
+            scale,
+            offset,
+            width_bits,
+            writeback: false,
+            post_index: false,
+            relative: false,
+        }
+    }
+
+    pub fn rip_relative(offset: i64, width_bits: Option<u16>) -> Self {
+        Self {
+            base: Some(Register {
+                name: "rip".to_string(),
+            }),
+            index: None,
+            scale: 1,
+            offset,
+            width_bits,
+            writeback: false,
+            post_index: false,
+            relative: true,
+        }
+    }
+
+    pub fn with_writeback(mut self) -> Self {
+        self.writeback = true;
+        self
+    }
+
+    pub fn with_post_index(mut self) -> Self {
+        self.post_index = true;
+        self
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

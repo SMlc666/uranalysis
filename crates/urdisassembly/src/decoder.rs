@@ -1,5 +1,5 @@
 use crate::{
-    arch::aarch64,
+    arch::{aarch64, x86_64},
     error::{DecodeError, Result},
     model::{Architecture, DecodeOptions, Endian, Instruction},
 };
@@ -13,7 +13,7 @@ pub struct Decoder {
 impl Decoder {
     pub fn new(architecture: Architecture, options: DecodeOptions) -> Result<Self> {
         match (architecture, options.endian) {
-            (Architecture::Aarch64, Endian::Little) => Ok(Self {
+            (Architecture::Aarch64 | Architecture::X86_64, Endian::Little) => Ok(Self {
                 architecture,
                 options,
             }),
@@ -29,9 +29,12 @@ impl Decoder {
     }
 
     pub fn decode_one(&self, bytes: &[u8], address: u64) -> Result<Instruction> {
-        let word = Self::require_word(bytes)?;
         match self.architecture {
-            Architecture::Aarch64 => Ok(aarch64::decode::decode_word(word, address)),
+            Architecture::Aarch64 => {
+                let word = Self::require_word(bytes)?;
+                Ok(aarch64::decode::decode_word(word, address))
+            }
+            Architecture::X86_64 => x86_64::decode::decode_instruction(bytes, address),
         }
     }
 
