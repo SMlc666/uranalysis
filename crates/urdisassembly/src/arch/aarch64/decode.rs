@@ -15,6 +15,11 @@ struct Pattern {
 
 const PATTERNS: &[Pattern] = &[
     Pattern {
+        mask: 0xffff_ffff,
+        value: 0xd503_201f,
+        decode: decode_nop,
+    },
+    Pattern {
         mask: 0xffff_fc1f,
         value: 0xd65f_0000,
         decode: decode_ret,
@@ -48,6 +53,21 @@ const PATTERNS: &[Pattern] = &[
         mask: 0x1f00_0000,
         value: 0x1000_0000,
         decode: decode_adr_adrp,
+    },
+    Pattern {
+        mask: 0x1f00_0000,
+        value: 0x1100_0000,
+        decode: decode_add_sub_imm,
+    },
+    Pattern {
+        mask: 0x1f80_0000,
+        value: 0x1280_0000,
+        decode: decode_move_wide,
+    },
+    Pattern {
+        mask: 0x1f00_0000,
+        value: 0x0a00_0000,
+        decode: decode_logical_shifted_register,
     },
     Pattern {
         mask: 0x7c00_0000,
@@ -260,6 +280,151 @@ fn decode_adr_adrp(word: u32, address: u64) -> Instruction {
         if page { "adrp" } else { "adr" },
         vec![Operand::Register(x(rd)), Operand::AbsoluteAddress(target)],
         InstructionKind::Address,
+        FlowKind::Fallthrough,
+        None,
+    )
+}
+
+fn decode_nop(word: u32, address: u64) -> Instruction {
+    base(
+        word,
+        address,
+        "nop",
+        Vec::new(),
+        InstructionKind::System,
+        FlowKind::Fallthrough,
+        None,
+    )
+}
+
+fn decode_add_sub_imm(word: u32, address: u64) -> Instruction {
+    let is_64 = bits(word, 31, 31) == 1;
+    let sub = bits(word, 30, 30) == 1;
+    let set_flags = bits(word, 29, 29) == 1;
+    let shift = if bits(word, 22, 22) == 1 { 12 } else { 0 };
+    let imm = i64::from(bits(word, 10, 21) << shift);
+    let rn = bits(word, 5, 9);
+    let rd = bits(word, 0, 4);
+    let dst = if is_64 {
+        crate::arch::aarch64::registers::x_or_sp(rd)
+    } else {
+        crate::arch::aarch64::registers::w_or_sp(rd)
+    };
+    let src = if is_64 {
+        crate::arch::aarch64::registers::x_or_sp(rn)
+    } else {
+        crate::arch::aarch64::registers::w_or_sp(rn)
+    };
+    let mnemonic = match (sub, set_flags, rd == 31) {
+        (true, true, true) => "cmp",
+        (false, true, true) => "cmn",
+        (true, true, false) => "subs",
+        (false, true, false) => "adds",
+        (true, false, _) => "sub",
+        (false, false, _) => "add",
+    };
+    let operands = if matches!(mnemonic, "cmp" | "cmn") {
+        vec![Operand::Register(src), Operand::Immediate(imm)]
+    } else {
+        vec![
+            Operand::Register(dst),
+            Operand::Register(src),
+            Operand::Immediate(imm),
+        ]
+    };
+    base(
+        word,
+        address,
+        mnemonic,
+        operands,
+        if matches!(mnemonic, "cmp" | "cmn") {
+            InstructionKind::Compare
+        } else {
+            InstructionKind::Arithmetic
+        },
+        FlowKind::Fallthrough,
+        None,
+    )
+}
+
+fn decode_move_wide(word: u32, address: u64) -> Instruction {
+    let is_64 = bits(word, 31, 31) == 1;
+    let opc = bits(word, 29, 30);
+    let hw = bits(word, 21, 22);
+    let imm = i64::from(bits(word, 5, 20) << (hw * 16));
+    let rd = bits(word, 0, 4);
+    let reg = if is_64 {
+        crate::arch::aarch64::registers::x(rd)
+    } else {
+        crate::arch::aarch64::registers::w(rd)
+    };
+    let mnemonic = match opc {
+        0b00 => "movn",
+        0b10 => "mov",
+        0b11 => "movk",
+        _ => "movz",
+    };
+    base(
+        word,
+        address,
+        mnemonic,
+        vec![Operand::Register(reg), Operand::Immediate(imm)],
+        InstructionKind::Move,
+        FlowKind::Fallthrough,
+        None,
+    )
+}
+
+fn decode_logical_shifted_register(word: u32, address: u64) -> Instruction {
+    let is_64 = bits(word, 31, 31) == 1;
+    let opc = bits(word, 29, 30);
+    let rn = bits(word, 5, 9);
+    let rm = bits(word, 16, 20);
+    let rd = bits(word, 0, 4);
+    let dst = if is_64 {
+        crate::arch::aarch64::registers::x_or_zr(rd)
+    } else {
+        crate::arch::aarch64::registers::w_or_zr(rd)
+    };
+    let src1 = if is_64 {
+        crate::arch::aarch64::registers::x_or_zr(rn)
+    } else {
+        crate::arch::aarch64::registers::w_or_zr(rn)
+    };
+    let src2 = if is_64 {
+        crate::arch::aarch64::registers::x_or_zr(rm)
+    } else {
+        crate::arch::aarch64::registers::w_or_zr(rm)
+    };
+    let mnemonic = if opc == 0b01 && rn == 31 {
+        "mov"
+    } else {
+        match opc {
+            0b00 => "and",
+            0b01 => "orr",
+            0b10 => "eor",
+            _ => "ands",
+        }
+    };
+    let operands = if mnemonic == "mov" {
+        vec![Operand::Register(dst), Operand::Register(src2)]
+    } else {
+        vec![
+            Operand::Register(dst),
+            Operand::Register(src1),
+            Operand::Register(src2),
+        ]
+    };
+    base(
+        word,
+        address,
+        mnemonic,
+        operands,
+        if mnemonic == "mov" {
+            InstructionKind::Move
+        } else {
+            InstructionKind::Logical
+        },
         FlowKind::Fallthrough,
         None,
     )

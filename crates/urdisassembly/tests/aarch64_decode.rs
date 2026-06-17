@@ -76,3 +76,29 @@ fn decodes_pc_relative_addressing() {
     assert_eq!(adrp.text, "adrp x0, 0x401000");
     assert_eq!(adrp.kind, InstructionKind::Address);
 }
+
+#[test]
+fn decodes_common_arithmetic_move_and_hint_forms() {
+    assert_eq!(decode(0xd503201f, 0x400100).text, "nop");
+
+    let add = decode(0x91002000, 0x400100);
+    assert_eq!(add.text, "add x0, x0, #0x8");
+    assert_eq!(add.kind, InstructionKind::Arithmetic);
+
+    let sub = decode(0xd1002000, 0x400100);
+    assert_eq!(sub.text, "sub x0, x0, #0x8");
+
+    let cmp = decode(0xf100201f, 0x400100);
+    assert_eq!(cmp.text, "cmp x0, #0x8");
+    assert_eq!(cmp.kind, InstructionKind::Compare);
+
+    let movz = decode(0xd2800020, 0x400100);
+    assert_eq!(movz.text, "mov x0, #0x1");
+    assert_eq!(movz.kind, InstructionKind::Move);
+
+    let movk = decode(0xf2800041, 0x400100);
+    assert_eq!(movk.text, "movk x1, #0x2");
+
+    let mov_reg = decode(0xaa0103e0, 0x400100);
+    assert_eq!(mov_reg.text, "mov x0, x1");
+}
