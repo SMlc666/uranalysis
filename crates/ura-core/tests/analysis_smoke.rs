@@ -107,6 +107,28 @@ fn branch_and_call_xrefs_use_decoder_flow() -> Result<()> {
 }
 
 #[test]
+fn call_xrefs_are_derived_from_cfg_edges() -> Result<()> {
+    let dir = tempdir()?;
+    let input = dir.path().join("sample.elf");
+    let project = dir.path().join("sample.ura");
+    let mut bytes = fixtures::minimal_elf64_aarch64_executable();
+    bytes[0x80..0x84].copy_from_slice(&0x94000002u32.to_le_bytes());
+    bytes[0x84..0x88].copy_from_slice(&0xd65f03c0u32.to_le_bytes());
+    bytes[0x88..0x8c].copy_from_slice(&0xd65f03c0u32.to_le_bytes());
+    std::fs::write(&input, bytes)?;
+
+    commands::new_project(&input, &project)?;
+    let xrefs = commands::xrefs(&project, 0x400088)?;
+
+    assert!(xrefs.iter().any(|xref| {
+        xref.from_addr == 0x400080
+            && xref.to_addr == 0x400088
+            && xref.kind == ura_core::model::XrefKind::Call
+    }));
+    Ok(())
+}
+
+#[test]
 fn function_discovery_uses_call_targets_without_merging_callee_body() -> Result<()> {
     let dir = tempdir()?;
     let input = dir.path().join("sample.elf");
