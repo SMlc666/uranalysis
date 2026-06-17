@@ -1,19 +1,19 @@
-use crate::{elf_loader::LoadedElf, model::StringRef};
+use crate::{analysis::AnalysisImage, model::StringRef};
 
-pub fn extract_strings(loaded: &LoadedElf) -> Vec<StringRef> {
+pub fn extract_strings(image: &AnalysisImage<'_>) -> Vec<StringRef> {
     let mut out = Vec::new();
     let mut start = 0usize;
-    while start < loaded.bytes.len() {
-        while start < loaded.bytes.len() && !is_printable(loaded.bytes[start]) {
+    while start < image.bytes.len() {
+        while start < image.bytes.len() && !is_printable(image.bytes[start]) {
             start += 1;
         }
         let mut end = start;
-        while end < loaded.bytes.len() && is_printable(loaded.bytes[end]) {
+        while end < image.bytes.len() && is_printable(image.bytes[end]) {
             end += 1;
         }
         if end.saturating_sub(start) >= 4 {
-            let value = String::from_utf8_lossy(&loaded.bytes[start..end]).to_string();
-            let addr = loaded
+            let value = String::from_utf8_lossy(&image.bytes[start..end]).to_string();
+            let addr = image
                 .segments
                 .iter()
                 .find_map(|seg| {

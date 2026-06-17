@@ -1,6 +1,6 @@
-use crate::{elf_loader::LoadedElf, model::Instruction, Result, UraError};
+use crate::{analysis::AnalysisImage, model::Instruction, Result, UraError};
 
-pub fn linear_disassemble(loaded: &LoadedElf) -> Result<Vec<Instruction>> {
+pub fn linear_disassemble(image: &AnalysisImage<'_>) -> Result<Vec<Instruction>> {
     let decoder = urdisassembly::Decoder::new(
         urdisassembly::Architecture::Aarch64,
         urdisassembly::DecodeOptions::default(),
@@ -8,9 +8,9 @@ pub fn linear_disassemble(loaded: &LoadedElf) -> Result<Vec<Instruction>> {
     .map_err(|err| UraError::Analysis(err.to_string()))?;
 
     let mut out = Vec::new();
-    for (start, end) in loaded.executable_ranges() {
+    for (start, end) in image.executable_ranges() {
         let size = (end - start) as usize;
-        let Some(bytes) = loaded.bytes_at(start, size) else {
+        let Some(bytes) = image.bytes_at(start, size) else {
             continue;
         };
         for (idx, chunk) in bytes.chunks_exact(4).enumerate() {

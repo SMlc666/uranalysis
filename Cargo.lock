@@ -728,12 +728,12 @@ name = "ura-core"
 version = "0.1.0"
 dependencies = [
  "bincode",
- "goblin",
  "serde",
  "serde_json",
  "tempfile",
  "thiserror",
  "urdisassembly",
+ "urloader",
 ]
 
 [[package]]

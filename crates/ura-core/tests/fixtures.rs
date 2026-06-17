@@ -24,3 +24,27 @@ pub fn minimal_elf64_aarch64_executable() -> Vec<u8> {
     bytes[0x80..0x84].copy_from_slice(&0xd65f03c0u32.to_le_bytes());
     bytes
 }
+
+#[allow(dead_code)]
+pub fn minimal_pe32_plus_x86_64() -> Vec<u8> {
+    let mut bytes = vec![0u8; 0x800];
+    bytes[0..2].copy_from_slice(b"MZ");
+    bytes[0x3c..0x40].copy_from_slice(&0x80u32.to_le_bytes());
+    bytes[0x80..0x84].copy_from_slice(b"PE\0\0");
+    let coff = 0x84usize;
+    bytes[coff..coff + 2].copy_from_slice(&0x8664u16.to_le_bytes());
+    bytes[coff + 2..coff + 4].copy_from_slice(&1u16.to_le_bytes());
+    bytes[coff + 16..coff + 18].copy_from_slice(&0xf0u16.to_le_bytes());
+    let opt = coff + 20;
+    bytes[opt..opt + 2].copy_from_slice(&0x20bu16.to_le_bytes());
+    bytes[opt + 16..opt + 20].copy_from_slice(&0x1000u32.to_le_bytes());
+    bytes[opt + 24..opt + 32].copy_from_slice(&0x140000000u64.to_le_bytes());
+    let text = opt + 0xf0;
+    bytes[text..text + 8].copy_from_slice(b".text\0\0\0");
+    bytes[text + 8..text + 12].copy_from_slice(&0x200u32.to_le_bytes());
+    bytes[text + 12..text + 16].copy_from_slice(&0x1000u32.to_le_bytes());
+    bytes[text + 16..text + 20].copy_from_slice(&0x200u32.to_le_bytes());
+    bytes[text + 20..text + 24].copy_from_slice(&0x200u32.to_le_bytes());
+    bytes[text + 36..text + 40].copy_from_slice(&0x6000_0020u32.to_le_bytes());
+    bytes
+}

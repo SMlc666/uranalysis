@@ -9,7 +9,7 @@ thiserror.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 bincode.workspace = true
-goblin.workspace = true
+urloader.workspace = true
 urdisassembly.workspace = true
 
 [dev-dependencies]

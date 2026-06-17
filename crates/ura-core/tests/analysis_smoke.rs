@@ -87,3 +87,18 @@ fn unknown_instruction_is_recorded_and_diagnosed() -> Result<()> {
         .any(|diag| diag.addr == Some(0x400080) && diag.message.contains("unknown instruction")));
     Ok(())
 }
+
+#[test]
+fn pe_input_is_rejected_before_analysis() -> Result<()> {
+    let dir = tempdir()?;
+    let input = dir.path().join("sample.exe");
+    let project = dir.path().join("sample.ura");
+    std::fs::write(&input, fixtures::minimal_pe32_plus_x86_64())?;
+
+    let err = commands::new_project(&input, &project)
+        .unwrap_err()
+        .to_string();
+
+    assert!(err.contains("unsupported analysis target"), "{err}");
+    Ok(())
+}

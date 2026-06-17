@@ -1,17 +1,19 @@
 mod fixtures;
 
-use ura_core::{elf_loader::LoadedElf, model::LoadProfile, Result};
+use ura_core::{commands, model::LoadProfile, Result};
 
 #[test]
-fn loads_minimal_aarch64_executable() -> Result<()> {
-    let bytes = fixtures::minimal_elf64_aarch64_executable();
-    let loaded = LoadedElf::parse(&bytes)?;
+fn commands_load_minimal_aarch64_executable_through_urloader() -> Result<()> {
+    let dir = tempfile::tempdir()?;
+    let input = dir.path().join("sample.elf");
+    let project = dir.path().join("sample.ura");
+    std::fs::write(&input, fixtures::minimal_elf64_aarch64_executable())?;
 
-    assert_eq!(loaded.entry, 0x400080);
-    assert_eq!(loaded.profile, LoadProfile::Executable);
-    assert_eq!(loaded.segments.len(), 1);
-    assert_eq!(loaded.segments[0].vaddr, 0x400000);
-    assert_eq!(loaded.va_to_offset(0x400080), Some(0x80));
-    assert_eq!(loaded.executable_ranges(), vec![(0x400000, 0x401000)]);
+    commands::new_project(&input, &project)?;
+    let info = commands::info(&project)?;
+    let disasm = commands::disasm(&project, 0x400080, 1)?;
+
+    assert_eq!(info.profile, LoadProfile::Executable);
+    assert_eq!(disasm[0].text, "ret");
     Ok(())
 }

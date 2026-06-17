@@ -5,10 +5,41 @@ pub mod strings;
 pub mod xrefs;
 
 use crate::{
-    elf_loader::LoadedElf,
-    model::{Diagnostic, Function, Instruction, StringRef, Xref},
+    model::{Diagnostic, Function, Instruction, Segment, StringRef, Xref},
     Result,
 };
+
+pub struct AnalysisImage<'a> {
+    pub entry: u64,
+    pub bytes: &'a [u8],
+    pub segments: &'a [Segment],
+}
+
+impl AnalysisImage<'_> {
+    pub fn va_to_offset(&self, addr: u64) -> Option<u64> {
+        self.segments.iter().find_map(|seg| {
+            let end = seg.vaddr.checked_add(seg.file_size)?;
+            if addr >= seg.vaddr && addr < end {
+                Some(seg.file_offset + (addr - seg.vaddr))
+            } else {
+                None
+            }
+        })
+    }
+
+    pub fn executable_ranges(&self) -> Vec<(u64, u64)> {
+        self.segments
+            .iter()
+            .filter(|seg| seg.permissions.contains('x'))
+            .map(|seg| (seg.vaddr, seg.vaddr + seg.mem_size))
+            .collect()
+    }
+
+    pub fn bytes_at(&self, addr: u64, size: usize) -> Option<&[u8]> {
+        let offset = self.va_to_offset(addr)? as usize;
+        self.bytes.get(offset..offset.checked_add(size)?)
+    }
+}
 
 pub struct AnalysisOutput {
     pub instructions: Vec<Instruction>,
@@ -19,12 +50,12 @@ pub struct AnalysisOutput {
 }
 
 pub fn run_initial_analysis(
-    loaded: &LoadedElf,
+    image: &AnalysisImage<'_>,
     user_functions: &[Function],
 ) -> Result<AnalysisOutput> {
-    let instructions = disasm::linear_disassemble(loaded)?;
-    let strings = strings::extract_strings(loaded);
-    let functions = functions::discover_functions(loaded.entry, &instructions, user_functions);
+    let instructions = disasm::linear_disassemble(image)?;
+    let strings = strings::extract_strings(image);
+    let functions = functions::discover_functions(image.entry, &instructions, user_functions);
     let xrefs = xrefs::build_xrefs(&instructions, &strings);
     let diagnostics = diagnostics::collect_diagnostics(&instructions);
     Ok(AnalysisOutput {
