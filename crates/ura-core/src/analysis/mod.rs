@@ -1,3 +1,4 @@
+pub mod cfg;
 pub mod diagnostics;
 pub mod disasm;
 pub mod functions;
