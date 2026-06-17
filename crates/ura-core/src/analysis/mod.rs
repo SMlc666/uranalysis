@@ -1,6 +1,7 @@
 pub mod diagnostics;
 pub mod disasm;
 pub mod functions;
+pub mod refresh;
 pub mod strings;
 pub mod target;
 pub mod xrefs;
