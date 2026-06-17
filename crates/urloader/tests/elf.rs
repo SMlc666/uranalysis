@@ -35,6 +35,12 @@ fn minimal_elf64_aarch64_executable() -> Vec<u8> {
     bytes
 }
 
+fn minimal_elf64_x86_64_executable() -> Vec<u8> {
+    let mut bytes = minimal_elf64_aarch64_executable();
+    bytes[0x12..0x14].copy_from_slice(&62u16.to_le_bytes());
+    bytes
+}
+
 #[test]
 fn loads_minimal_elf64_aarch64_executable_segments() {
     let image = load(&minimal_elf64_aarch64_executable()).unwrap();
@@ -58,6 +64,17 @@ fn loads_minimal_elf64_aarch64_executable_segments() {
         image.bytes_at(0x400080, 4),
         Some(&[0xc0, 0x03, 0x5f, 0xd6][..])
     );
+}
+
+#[test]
+fn loads_minimal_elf64_x86_64_executable_metadata() {
+    let image = load(&minimal_elf64_x86_64_executable()).unwrap();
+
+    assert_eq!(image.format, ImageFormat::Elf);
+    assert_eq!(image.architecture, Architecture::X86_64);
+    assert_eq!(image.class, ImageClass::Bits64);
+    assert_eq!(image.endian, Endian::Little);
+    assert_eq!(image.entry, 0x400080);
 }
 
 fn elf_with_sections_and_symbols() -> Vec<u8> {
@@ -168,7 +185,7 @@ fn rejects_unsupported_elf_class() {
 #[test]
 fn rejects_unsupported_elf_machine() {
     let mut bytes = minimal_elf64_aarch64_executable();
-    bytes[0x12..0x14].copy_from_slice(&62u16.to_le_bytes());
+    bytes[0x12..0x14].copy_from_slice(&999u16.to_le_bytes());
     let err = load(&bytes).unwrap_err().to_string();
     assert!(err.contains("unsupported machine"), "{err}");
 }
