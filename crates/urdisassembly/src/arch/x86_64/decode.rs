@@ -174,8 +174,196 @@ pub fn decode_instruction(bytes: &[u8], address: u64) -> Result<Instruction> {
                 DecodeStatus::Complete,
             ))
         }
+        0x01 => decode_reg_rm_binary(
+            bytes,
+            address,
+            prefixes,
+            "add",
+            InstructionKind::Arithmetic,
+            false,
+        ),
+        0x03 => decode_reg_rm_binary(
+            bytes,
+            address,
+            prefixes,
+            "add",
+            InstructionKind::Arithmetic,
+            true,
+        ),
+        0x29 => decode_reg_rm_binary(
+            bytes,
+            address,
+            prefixes,
+            "sub",
+            InstructionKind::Arithmetic,
+            false,
+        ),
+        0x2b => decode_reg_rm_binary(
+            bytes,
+            address,
+            prefixes,
+            "sub",
+            InstructionKind::Arithmetic,
+            true,
+        ),
+        0x21 => decode_reg_rm_binary(
+            bytes,
+            address,
+            prefixes,
+            "and",
+            InstructionKind::Logical,
+            false,
+        ),
+        0x23 => decode_reg_rm_binary(
+            bytes,
+            address,
+            prefixes,
+            "and",
+            InstructionKind::Logical,
+            true,
+        ),
+        0x09 => decode_reg_rm_binary(
+            bytes,
+            address,
+            prefixes,
+            "or",
+            InstructionKind::Logical,
+            false,
+        ),
+        0x0b => decode_reg_rm_binary(
+            bytes,
+            address,
+            prefixes,
+            "or",
+            InstructionKind::Logical,
+            true,
+        ),
+        0x31 => decode_reg_rm_binary(
+            bytes,
+            address,
+            prefixes,
+            "xor",
+            InstructionKind::Logical,
+            false,
+        ),
+        0x33 => decode_reg_rm_binary(
+            bytes,
+            address,
+            prefixes,
+            "xor",
+            InstructionKind::Logical,
+            true,
+        ),
+        0x39 => decode_reg_rm_binary(
+            bytes,
+            address,
+            prefixes,
+            "cmp",
+            InstructionKind::Compare,
+            false,
+        ),
+        0x3b => decode_reg_rm_binary(
+            bytes,
+            address,
+            prefixes,
+            "cmp",
+            InstructionKind::Compare,
+            true,
+        ),
+        0x85 => decode_reg_rm_binary(
+            bytes,
+            address,
+            prefixes,
+            "test",
+            InstructionKind::Compare,
+            false,
+        ),
+        0x83 => decode_group83(bytes, address, prefixes),
+        0x50..=0x57 => Ok(base(
+            bytes[..prefixes.opcode_offset + 1].to_vec(),
+            address,
+            "push",
+            vec![Operand::Register(reg64(extend_reg(
+                opcode - 0x50,
+                prefixes.rex.b,
+            )))],
+            InstructionKind::Store,
+            FlowKind::Fallthrough,
+            None,
+            DecodeStatus::Complete,
+        )),
+        0x58..=0x5f => Ok(base(
+            bytes[..prefixes.opcode_offset + 1].to_vec(),
+            address,
+            "pop",
+            vec![Operand::Register(reg64(extend_reg(
+                opcode - 0x58,
+                prefixes.rex.b,
+            )))],
+            InstructionKind::Load,
+            FlowKind::Fallthrough,
+            None,
+            DecodeStatus::Complete,
+        )),
         _ => Ok(unknown(opcode, address)),
     }
+}
+
+fn decode_reg_rm_binary(
+    bytes: &[u8],
+    address: u64,
+    prefixes: Prefixes,
+    mnemonic: &str,
+    kind: InstructionKind,
+    reg_is_dst: bool,
+) -> Result<Instruction> {
+    let modrm_offset = prefixes.opcode_offset + 1;
+    require_len(bytes, modrm_offset + 1)?;
+    let modrm = parse_modrm(bytes[modrm_offset]);
+    let reg = Operand::Register(reg64(extend_reg(modrm.reg, prefixes.rex.r)));
+    let (rm, consumed) = parse_rm_operand(bytes, modrm_offset, prefixes.rex, 64)?;
+    let operands = if reg_is_dst {
+        vec![reg, rm]
+    } else {
+        vec![rm, reg]
+    };
+    Ok(base(
+        bytes[..consumed].to_vec(),
+        address,
+        mnemonic,
+        operands,
+        kind,
+        FlowKind::Fallthrough,
+        None,
+        DecodeStatus::Complete,
+    ))
+}
+
+fn decode_group83(bytes: &[u8], address: u64, prefixes: Prefixes) -> Result<Instruction> {
+    let modrm_offset = prefixes.opcode_offset + 1;
+    require_len(bytes, modrm_offset + 2)?;
+    let modrm = parse_modrm(bytes[modrm_offset]);
+    let (rm, consumed_without_imm) = parse_rm_operand(bytes, modrm_offset, prefixes.rex, 64)?;
+    let imm = i64::from(read_i8(bytes, consumed_without_imm)?);
+    let consumed = consumed_without_imm + 1;
+    let (mnemonic, kind) = match modrm.reg {
+        0 => ("add", InstructionKind::Arithmetic),
+        5 => ("sub", InstructionKind::Arithmetic),
+        7 => ("cmp", InstructionKind::Compare),
+        _ => {
+            return Ok(unknown(bytes[prefixes.opcode_offset], address));
+        }
+    };
+    Ok(base(
+        bytes[..consumed].to_vec(),
+        address,
+        mnemonic,
+        vec![rm, Operand::Immediate(imm)],
+        kind,
+        FlowKind::Fallthrough,
+        None,
+        DecodeStatus::Complete,
+    ))
 }
 
 fn parse_prefixes(bytes: &[u8]) -> Result<Prefixes> {

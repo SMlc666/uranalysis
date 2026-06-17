@@ -157,3 +157,41 @@ fn decodes_x86_64_memory_moves_and_lea() {
     assert!(mem.relative);
     assert_eq!(mem.offset, 0x1234);
 }
+
+#[test]
+fn decodes_x86_64_arithmetic_and_logical_forms() {
+    let add_imm = decode(&[0x48, 0x83, 0xc0, 0x08], 0x401000);
+    assert_eq!(add_imm.text, "add rax, 0x8");
+    assert_eq!(add_imm.kind, InstructionKind::Arithmetic);
+
+    let sub_reg = decode(&[0x48, 0x29, 0xd8], 0x401000);
+    assert_eq!(sub_reg.text, "sub rax, rbx");
+    assert_eq!(sub_reg.kind, InstructionKind::Arithmetic);
+
+    let cmp_reg = decode(&[0x48, 0x39, 0xd8], 0x401000);
+    assert_eq!(cmp_reg.text, "cmp rax, rbx");
+    assert_eq!(cmp_reg.kind, InstructionKind::Compare);
+
+    let test_reg = decode(&[0x48, 0x85, 0xc0], 0x401000);
+    assert_eq!(test_reg.text, "test rax, rax");
+    assert_eq!(test_reg.kind, InstructionKind::Compare);
+
+    let xor_reg = decode(&[0x48, 0x31, 0xc0], 0x401000);
+    assert_eq!(xor_reg.text, "xor rax, rax");
+    assert_eq!(xor_reg.kind, InstructionKind::Logical);
+}
+
+#[test]
+fn decodes_x86_64_push_and_pop() {
+    let push = decode(&[0x50], 0x401000);
+    assert_eq!(push.text, "push rax");
+    assert_eq!(push.kind, InstructionKind::Store);
+
+    let pop = decode(&[0x58], 0x401000);
+    assert_eq!(pop.text, "pop rax");
+    assert_eq!(pop.kind, InstructionKind::Load);
+
+    let push_r8 = decode(&[0x41, 0x50], 0x401000);
+    assert_eq!(push_r8.text, "push r8");
+    assert_eq!(push_r8.size, 2);
+}
