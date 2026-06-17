@@ -40,3 +40,39 @@ fn decodes_unconditional_branch_immediates() {
     assert_eq!(bl.flow, FlowKind::Call);
     assert_eq!(bl.kind, InstructionKind::Call);
 }
+
+#[test]
+fn decodes_conditional_compare_and_test_branches() {
+    let b_eq = decode(0x54000080, 0x400100);
+    assert_eq!(b_eq.text, "b.eq 0x400110");
+    assert_eq!(b_eq.flow, FlowKind::ConditionalBranch);
+    assert_eq!(b_eq.branch_target, Some(0x400110));
+
+    let cbz = decode(0xb4000080, 0x400100);
+    assert_eq!(cbz.text, "cbz x0, 0x400110");
+    assert_eq!(cbz.flow, FlowKind::ConditionalBranch);
+
+    let cbnz = decode(0xb50000a1, 0x400100);
+    assert_eq!(cbnz.text, "cbnz x1, 0x400114");
+    assert_eq!(cbnz.flow, FlowKind::ConditionalBranch);
+
+    let tbz = decode(0x36000082, 0x400100);
+    assert_eq!(tbz.text, "tbz w2, #0x0, 0x400110");
+    assert_eq!(tbz.flow, FlowKind::ConditionalBranch);
+
+    let tbnz = decode(0x370000a3, 0x400100);
+    assert_eq!(tbnz.text, "tbnz w3, #0x0, 0x400114");
+    assert_eq!(tbnz.flow, FlowKind::ConditionalBranch);
+}
+
+#[test]
+fn decodes_pc_relative_addressing() {
+    let adr = decode(0x10000080, 0x400100);
+    assert_eq!(adr.text, "adr x0, 0x400110");
+    assert_eq!(adr.kind, InstructionKind::Address);
+    assert_eq!(adr.flow, FlowKind::Fallthrough);
+
+    let adrp = decode(0xb0000000, 0x400100);
+    assert_eq!(adrp.text, "adrp x0, 0x401000");
+    assert_eq!(adrp.kind, InstructionKind::Address);
+}

@@ -30,6 +30,26 @@ const PATTERNS: &[Pattern] = &[
         decode: decode_blr,
     },
     Pattern {
+        mask: 0xff00_0010,
+        value: 0x5400_0000,
+        decode: decode_b_cond,
+    },
+    Pattern {
+        mask: 0x7e00_0000,
+        value: 0x3400_0000,
+        decode: decode_cbz_cbnz,
+    },
+    Pattern {
+        mask: 0x7e00_0000,
+        value: 0x3600_0000,
+        decode: decode_tbz_tbnz,
+    },
+    Pattern {
+        mask: 0x1f00_0000,
+        value: 0x1000_0000,
+        decode: decode_adr_adrp,
+    },
+    Pattern {
         mask: 0x7c00_0000,
         value: 0x1400_0000,
         decode: decode_b_bl,
@@ -129,6 +149,119 @@ fn decode_b_bl(word: u32, address: u64) -> Instruction {
         },
         if link { FlowKind::Call } else { FlowKind::Branch },
         Some(target),
+    )
+}
+
+fn condition_name(cond: u32) -> &'static str {
+    match cond {
+        0x0 => "eq",
+        0x1 => "ne",
+        0x2 => "cs",
+        0x3 => "cc",
+        0x4 => "mi",
+        0x5 => "pl",
+        0x6 => "vs",
+        0x7 => "vc",
+        0x8 => "hi",
+        0x9 => "ls",
+        0xa => "ge",
+        0xb => "lt",
+        0xc => "gt",
+        0xd => "le",
+        0xe => "al",
+        _ => "nv",
+    }
+}
+
+fn decode_b_cond(word: u32, address: u64) -> Instruction {
+    let imm19 = bits(word, 5, 23);
+    let offset = sign_extend(imm19 << 2, 21);
+    let target = address.wrapping_add_signed(offset);
+    let mnemonic = format!("b.{}", condition_name(bits(word, 0, 3)));
+    base(
+        word,
+        address,
+        &mnemonic,
+        vec![Operand::AbsoluteAddress(target)],
+        InstructionKind::Branch,
+        FlowKind::ConditionalBranch,
+        Some(target),
+    )
+}
+
+fn decode_cbz_cbnz(word: u32, address: u64) -> Instruction {
+    let is_64 = bits(word, 31, 31) == 1;
+    let nonzero = bits(word, 24, 24) == 1;
+    let rt = bits(word, 0, 4);
+    let imm19 = bits(word, 5, 23);
+    let offset = sign_extend(imm19 << 2, 21);
+    let target = address.wrapping_add_signed(offset);
+    let reg = if is_64 {
+        crate::arch::aarch64::registers::x(rt)
+    } else {
+        crate::arch::aarch64::registers::w(rt)
+    };
+    base(
+        word,
+        address,
+        if nonzero { "cbnz" } else { "cbz" },
+        vec![Operand::Register(reg), Operand::AbsoluteAddress(target)],
+        InstructionKind::Compare,
+        FlowKind::ConditionalBranch,
+        Some(target),
+    )
+}
+
+fn decode_tbz_tbnz(word: u32, address: u64) -> Instruction {
+    let nonzero = bits(word, 24, 24) == 1;
+    let b5 = bits(word, 31, 31);
+    let b40 = bits(word, 19, 23);
+    let bit = (b5 << 5) | b40;
+    let rt = bits(word, 0, 4);
+    let imm14 = bits(word, 5, 18);
+    let offset = sign_extend(imm14 << 2, 16);
+    let target = address.wrapping_add_signed(offset);
+    let reg = if b5 == 1 {
+        crate::arch::aarch64::registers::x(rt)
+    } else {
+        crate::arch::aarch64::registers::w(rt)
+    };
+    base(
+        word,
+        address,
+        if nonzero { "tbnz" } else { "tbz" },
+        vec![
+            Operand::Register(reg),
+            Operand::Immediate(i64::from(bit)),
+            Operand::AbsoluteAddress(target),
+        ],
+        InstructionKind::Compare,
+        FlowKind::ConditionalBranch,
+        Some(target),
+    )
+}
+
+fn decode_adr_adrp(word: u32, address: u64) -> Instruction {
+    let page = bits(word, 31, 31) == 1;
+    let rd = bits(word, 0, 4);
+    let immlo = bits(word, 29, 30);
+    let immhi = bits(word, 5, 23);
+    let imm = (immhi << 2) | immlo;
+    let target = if page {
+        let offset = sign_extend(imm, 21) << 12;
+        (address & !0xfff).wrapping_add_signed(offset)
+    } else {
+        let offset = sign_extend(imm, 21);
+        address.wrapping_add_signed(offset)
+    };
+    base(
+        word,
+        address,
+        if page { "adrp" } else { "adr" },
+        vec![Operand::Register(x(rd)), Operand::AbsoluteAddress(target)],
+        InstructionKind::Address,
+        FlowKind::Fallthrough,
+        None,
     )
 }
 
