@@ -365,7 +365,7 @@ fn decode_move_wide(word: u32, address: u64) -> Instruction {
     let is_64 = bits(word, 31, 31) == 1;
     let opc = bits(word, 29, 30);
     let hw = bits(word, 21, 22);
-    let imm = i64::from(bits(word, 5, 20) << (hw * 16));
+    let imm = (u64::from(bits(word, 5, 20)) << (hw * 16)) as i64;
     let rd = bits(word, 0, 4);
     let reg = if is_64 {
         crate::arch::aarch64::registers::x(rd)
