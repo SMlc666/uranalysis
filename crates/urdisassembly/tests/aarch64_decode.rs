@@ -102,3 +102,20 @@ fn decodes_common_arithmetic_move_and_hint_forms() {
     let mov_reg = decode(0xaa0103e0, 0x400100);
     assert_eq!(mov_reg.text, "mov x0, x1");
 }
+
+#[test]
+fn decodes_common_load_store_forms() {
+    let ldr = decode(0xf9400420, 0x400100);
+    assert_eq!(ldr.text, "ldr x0, [x1, #0x8]");
+    assert_eq!(ldr.kind, InstructionKind::Load);
+
+    let str_ = decode(0xf9000822, 0x400100);
+    assert_eq!(str_.text, "str x2, [x1, #0x10]");
+    assert_eq!(str_.kind, InstructionKind::Store);
+
+    let ldr_pre = decode(0xf8408c20, 0x400100);
+    assert_eq!(ldr_pre.text, "ldr x0, [x1, #0x8]!");
+
+    let str_post = decode(0xf8008422, 0x400100);
+    assert_eq!(str_post.text, "str x2, [x1], #0x8");
+}

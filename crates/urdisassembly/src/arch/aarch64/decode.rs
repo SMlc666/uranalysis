@@ -70,6 +70,16 @@ const PATTERNS: &[Pattern] = &[
         decode: decode_logical_shifted_register,
     },
     Pattern {
+        mask: 0x3b00_0000,
+        value: 0x3900_0000,
+        decode: decode_load_store_unsigned,
+    },
+    Pattern {
+        mask: 0x3b20_0400,
+        value: 0x3800_0400,
+        decode: decode_load_store_unscaled,
+    },
+    Pattern {
         mask: 0x7c00_0000,
         value: 0x1400_0000,
         decode: decode_b_bl,
@@ -424,6 +434,80 @@ fn decode_logical_shifted_register(word: u32, address: u64) -> Instruction {
             InstructionKind::Move
         } else {
             InstructionKind::Logical
+        },
+        FlowKind::Fallthrough,
+        None,
+    )
+}
+
+fn access_size_bytes(word: u32) -> i64 {
+    1i64 << bits(word, 30, 31)
+}
+
+fn access_register(word: u32, rt: u32) -> crate::model::Register {
+    if bits(word, 30, 31) == 0b11 {
+        crate::arch::aarch64::registers::x(rt)
+    } else {
+        crate::arch::aarch64::registers::w(rt)
+    }
+}
+
+fn decode_load_store_unsigned(word: u32, address: u64) -> Instruction {
+    let load = bits(word, 22, 22) == 1;
+    let imm = i64::from(bits(word, 10, 21)) * access_size_bytes(word);
+    let rn = bits(word, 5, 9);
+    let rt = bits(word, 0, 4);
+    let reg = access_register(word, rt);
+    let base_reg = crate::arch::aarch64::registers::x_or_sp(rn);
+    base(
+        word,
+        address,
+        if load { "ldr" } else { "str" },
+        vec![
+            Operand::Register(reg),
+            Operand::Memory(crate::model::MemoryOperand {
+                base: base_reg,
+                offset: imm,
+                writeback: false,
+                post_index: false,
+            }),
+        ],
+        if load {
+            InstructionKind::Load
+        } else {
+            InstructionKind::Store
+        },
+        FlowKind::Fallthrough,
+        None,
+    )
+}
+
+fn decode_load_store_unscaled(word: u32, address: u64) -> Instruction {
+    let load = bits(word, 22, 22) == 1;
+    let post_index = bits(word, 10, 11) == 0b01;
+    let pre_index = bits(word, 10, 11) == 0b11;
+    let imm = sign_extend(bits(word, 12, 20), 9);
+    let rn = bits(word, 5, 9);
+    let rt = bits(word, 0, 4);
+    let reg = access_register(word, rt);
+    let base_reg = crate::arch::aarch64::registers::x_or_sp(rn);
+    base(
+        word,
+        address,
+        if load { "ldr" } else { "str" },
+        vec![
+            Operand::Register(reg),
+            Operand::Memory(crate::model::MemoryOperand {
+                base: base_reg,
+                offset: imm,
+                writeback: pre_index,
+                post_index,
+            }),
+        ],
+        if load {
+            InstructionKind::Load
+        } else {
+            InstructionKind::Store
         },
         FlowKind::Fallthrough,
         None,
