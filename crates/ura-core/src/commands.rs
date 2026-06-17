@@ -68,6 +68,10 @@ pub fn xrefs(project_path: impl AsRef<Path>, addr: u64) -> Result<Vec<Xref>> {
         .collect())
 }
 
+pub fn all_xrefs(project_path: impl AsRef<Path>) -> Result<Vec<Xref>> {
+    Ok(Project::open(project_path)?.file().xrefs.clone())
+}
+
 pub fn rename(project_path: impl AsRef<Path>, addr: u64, name: &str) -> Result<()> {
     let mut project = Project::open(project_path)?;
     project.file_mut().renames.insert(addr, name.to_string());
