@@ -39,11 +39,8 @@ pub(crate) fn lift(instruction: &urdisassembly::Instruction) -> Result<IlInstruc
             }
         }
         "add" | "sub" | "and" | "orr" | "eor" => {
-            if let [
-                urdisassembly::Operand::Register(dst),
-                urdisassembly::Operand::Register(lhs),
-                rhs,
-            ] = instruction.operands.as_slice()
+            if let [urdisassembly::Operand::Register(dst), urdisassembly::Operand::Register(lhs), rhs] =
+                instruction.operands.as_slice()
             {
                 let rhs_expr = operand_expr(rhs);
                 let lhs_expr = reg_expr(ARCH, &lhs.name, 64);
@@ -71,10 +68,8 @@ pub(crate) fn lift(instruction: &urdisassembly::Instruction) -> Result<IlInstruc
             }
         }
         "adr" | "adrp" => {
-            if let [
-                urdisassembly::Operand::Register(dst),
-                urdisassembly::Operand::AbsoluteAddress(addr),
-            ] = instruction.operands.as_slice()
+            if let [urdisassembly::Operand::Register(dst), urdisassembly::Operand::AbsoluteAddress(addr)] =
+                instruction.operands.as_slice()
             {
                 statements.push(IlStmt::Assign {
                     dst: reg_location(ARCH, &dst.name, 64),

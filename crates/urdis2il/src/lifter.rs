@@ -22,7 +22,10 @@ impl Lifter {
         instruction: &urdisassembly::Instruction,
     ) -> Result<IlInstruction> {
         if instruction.status != urdisassembly::DecodeStatus::Complete {
-            return Ok(unsupported_instruction(instruction, "unknown decode status"));
+            return Ok(unsupported_instruction(
+                instruction,
+                "unknown decode status",
+            ));
         }
         match self.architecture {
             urdisassembly::Architecture::Aarch64 => crate::aarch64::lift(instruction),

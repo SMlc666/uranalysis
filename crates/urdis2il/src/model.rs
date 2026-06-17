@@ -57,10 +57,7 @@ pub enum IlExpr {
     Reg(IlReg),
     Flag(IlFlag),
     Temp(u32),
-    Const {
-        value: u64,
-        width_bits: u16,
-    },
+    Const { value: u64, width_bits: u16 },
     Add(Box<IlExpr>, Box<IlExpr>),
     Sub(Box<IlExpr>, Box<IlExpr>),
     And(Box<IlExpr>, Box<IlExpr>),
@@ -75,18 +72,9 @@ pub enum IlExpr {
     Gt(Box<IlExpr>, Box<IlExpr>),
     Ge(Box<IlExpr>, Box<IlExpr>),
     Not(Box<IlExpr>),
-    SignExtend {
-        value: Box<IlExpr>,
-        to_bits: u16,
-    },
-    ZeroExtend {
-        value: Box<IlExpr>,
-        to_bits: u16,
-    },
-    Truncate {
-        value: Box<IlExpr>,
-        to_bits: u16,
-    },
+    SignExtend { value: Box<IlExpr>, to_bits: u16 },
+    ZeroExtend { value: Box<IlExpr>, to_bits: u16 },
+    Truncate { value: Box<IlExpr>, to_bits: u16 },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

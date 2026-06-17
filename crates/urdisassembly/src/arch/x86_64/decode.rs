@@ -38,7 +38,6 @@ pub fn decode_instruction(bytes: &[u8], address: u64) -> Result<Instruction> {
             InstructionKind::Return,
             FlowKind::Return,
             None,
-            DecodeStatus::Complete,
         )),
         0xe8 => {
             let size = opcode_offset + 5;
@@ -52,7 +51,6 @@ pub fn decode_instruction(bytes: &[u8], address: u64) -> Result<Instruction> {
                 InstructionKind::Call,
                 FlowKind::Call,
                 Some(target),
-                DecodeStatus::Complete,
             ))
         }
         0xe9 => {
@@ -67,7 +65,6 @@ pub fn decode_instruction(bytes: &[u8], address: u64) -> Result<Instruction> {
                 InstructionKind::Branch,
                 FlowKind::Branch,
                 Some(target),
-                DecodeStatus::Complete,
             ))
         }
         0xeb => {
@@ -82,7 +79,6 @@ pub fn decode_instruction(bytes: &[u8], address: u64) -> Result<Instruction> {
                 InstructionKind::Branch,
                 FlowKind::Branch,
                 Some(target),
-                DecodeStatus::Complete,
             ))
         }
         0x70..=0x7f => {
@@ -97,7 +93,6 @@ pub fn decode_instruction(bytes: &[u8], address: u64) -> Result<Instruction> {
                 InstructionKind::Branch,
                 FlowKind::ConditionalBranch,
                 Some(target),
-                DecodeStatus::Complete,
             ))
         }
         0x0f => {
@@ -115,7 +110,6 @@ pub fn decode_instruction(bytes: &[u8], address: u64) -> Result<Instruction> {
                     InstructionKind::Branch,
                     FlowKind::ConditionalBranch,
                     Some(target),
-                    DecodeStatus::Complete,
                 ))
             } else {
                 Ok(unknown(opcode, address))
@@ -143,7 +137,6 @@ pub fn decode_instruction(bytes: &[u8], address: u64) -> Result<Instruction> {
                 InstructionKind::Move,
                 FlowKind::Fallthrough,
                 None,
-                DecodeStatus::Complete,
             ))
         }
         0x89 | 0x8b | 0x8d => {
@@ -171,7 +164,6 @@ pub fn decode_instruction(bytes: &[u8], address: u64) -> Result<Instruction> {
                 kind,
                 FlowKind::Fallthrough,
                 None,
-                DecodeStatus::Complete,
             ))
         }
         0x01 => decode_reg_rm_binary(
@@ -290,7 +282,6 @@ pub fn decode_instruction(bytes: &[u8], address: u64) -> Result<Instruction> {
             InstructionKind::Store,
             FlowKind::Fallthrough,
             None,
-            DecodeStatus::Complete,
         )),
         0x58..=0x5f => Ok(base(
             bytes[..prefixes.opcode_offset + 1].to_vec(),
@@ -303,7 +294,6 @@ pub fn decode_instruction(bytes: &[u8], address: u64) -> Result<Instruction> {
             InstructionKind::Load,
             FlowKind::Fallthrough,
             None,
-            DecodeStatus::Complete,
         )),
         _ => Ok(unknown(opcode, address)),
     }
@@ -335,7 +325,6 @@ fn decode_reg_rm_binary(
         kind,
         FlowKind::Fallthrough,
         None,
-        DecodeStatus::Complete,
     ))
 }
 
@@ -362,7 +351,6 @@ fn decode_group83(bytes: &[u8], address: u64, prefixes: Prefixes) -> Result<Inst
         kind,
         FlowKind::Fallthrough,
         None,
-        DecodeStatus::Complete,
     ))
 }
 
@@ -543,7 +531,6 @@ fn base(
     kind: InstructionKind,
     flow: FlowKind,
     branch_target: Option<u64>,
-    status: DecodeStatus,
 ) -> Instruction {
     Instruction {
         address,
@@ -555,12 +542,12 @@ fn base(
         kind,
         flow,
         branch_target,
-        status,
+        status: DecodeStatus::Complete,
     }
 }
 
 fn unknown(byte: u8, address: u64) -> Instruction {
-    base(
+    let mut instruction = base(
         vec![byte],
         address,
         ".byte",
@@ -568,6 +555,7 @@ fn unknown(byte: u8, address: u64) -> Instruction {
         InstructionKind::Unknown,
         FlowKind::Fallthrough,
         None,
-        DecodeStatus::Unknown,
-    )
+    );
+    instruction.status = DecodeStatus::Unknown;
+    instruction
 }
