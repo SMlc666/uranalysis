@@ -1,5 +1,8 @@
 use crate::{
-    arch::x86_64::{format::render_instruction, registers::reg64},
+    arch::x86_64::{
+        format::render_instruction,
+        registers::{reg32, reg64},
+    },
     error::{DecodeError, Result},
     model::{DecodeStatus, FlowKind, Instruction, InstructionKind, MemoryOperand, Operand},
 };
@@ -115,20 +118,33 @@ pub fn decode_instruction(bytes: &[u8], address: u64) -> Result<Instruction> {
                 Ok(unknown(opcode, address))
             }
         }
-        0xb8..=0xbf if prefixes.rex.w => {
-            let size = opcode_offset + 9;
-            require_len(bytes, size)?;
-            let dst = reg64(extend_reg(opcode - 0xb8, prefixes.rex.b));
-            let imm = u64::from_le_bytes([
-                bytes[opcode_offset + 1],
-                bytes[opcode_offset + 2],
-                bytes[opcode_offset + 3],
-                bytes[opcode_offset + 4],
-                bytes[opcode_offset + 5],
-                bytes[opcode_offset + 6],
-                bytes[opcode_offset + 7],
-                bytes[opcode_offset + 8],
-            ]);
+        0xb8..=0xbf => {
+            let reg = extend_reg(opcode - 0xb8, prefixes.rex.b);
+            let (size, dst, imm) = if prefixes.rex.w {
+                let size = opcode_offset + 9;
+                require_len(bytes, size)?;
+                let imm = u64::from_le_bytes([
+                    bytes[opcode_offset + 1],
+                    bytes[opcode_offset + 2],
+                    bytes[opcode_offset + 3],
+                    bytes[opcode_offset + 4],
+                    bytes[opcode_offset + 5],
+                    bytes[opcode_offset + 6],
+                    bytes[opcode_offset + 7],
+                    bytes[opcode_offset + 8],
+                ]);
+                (size, reg64(reg), imm)
+            } else {
+                let size = opcode_offset + 5;
+                require_len(bytes, size)?;
+                let imm = u32::from_le_bytes([
+                    bytes[opcode_offset + 1],
+                    bytes[opcode_offset + 2],
+                    bytes[opcode_offset + 3],
+                    bytes[opcode_offset + 4],
+                ]);
+                (size, reg32(reg), u64::from(imm))
+            };
             Ok(base(
                 bytes[..size].to_vec(),
                 address,

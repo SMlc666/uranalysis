@@ -1,5 +1,29 @@
 use crate::model::Register;
 
+pub fn reg32(index: u8) -> Register {
+    let name = match index & 0x0f {
+        0 => "eax",
+        1 => "ecx",
+        2 => "edx",
+        3 => "ebx",
+        4 => "esp",
+        5 => "ebp",
+        6 => "esi",
+        7 => "edi",
+        8 => "r8d",
+        9 => "r9d",
+        10 => "r10d",
+        11 => "r11d",
+        12 => "r12d",
+        13 => "r13d",
+        14 => "r14d",
+        _ => "r15d",
+    };
+    Register {
+        name: name.to_string(),
+    }
+}
+
 pub fn reg64(index: u8) -> Register {
     let name = if index == 16 {
         "rip"

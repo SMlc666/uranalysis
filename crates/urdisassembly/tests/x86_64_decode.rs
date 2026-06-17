@@ -117,6 +117,18 @@ fn decodes_x86_64_mov_register_forms() {
     assert_eq!(mov_imm.kind, InstructionKind::Move);
     assert_eq!(register_name(&mov_imm.operands[0]), "rax");
 
+    let mov_ecx = decode(&[0xb9, 0x78, 0x56, 0x34, 0x12], 0x401000);
+    assert_eq!(mov_ecx.text, "mov ecx, 0x12345678");
+    assert_eq!(mov_ecx.size, 5);
+    assert_eq!(mov_ecx.kind, InstructionKind::Move);
+    assert_eq!(register_name(&mov_ecx.operands[0]), "ecx");
+
+    let mov_edi = decode(&[0xbf, 0xef, 0xcd, 0xab, 0x90], 0x401000);
+    assert_eq!(mov_edi.text, "mov edi, 0x90abcdef");
+    assert_eq!(mov_edi.size, 5);
+    assert_eq!(mov_edi.kind, InstructionKind::Move);
+    assert_eq!(register_name(&mov_edi.operands[0]), "edi");
+
     let mov_reg = decode(&[0x48, 0x89, 0xd8], 0x401000);
     assert_eq!(mov_reg.text, "mov rax, rbx");
     assert_eq!(mov_reg.size, 3);
