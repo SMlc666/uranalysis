@@ -55,7 +55,15 @@ pub fn run_initial_analysis(
     image: &AnalysisImage<'_>,
     user_functions: &[Function],
 ) -> Result<AnalysisOutput> {
-    let instructions = disasm::linear_disassemble(image)?;
+    run_initial_analysis_with_instruction_limit(image, user_functions, None)
+}
+
+pub fn run_initial_analysis_with_instruction_limit(
+    image: &AnalysisImage<'_>,
+    user_functions: &[Function],
+    max_instructions: Option<usize>,
+) -> Result<AnalysisOutput> {
+    let instructions = disasm::linear_disassemble_with_limit(image, max_instructions)?;
     let strings = strings::extract_strings(image);
     let functions = functions::discover_functions(image.entry, &instructions, user_functions);
     let xrefs = xrefs::build_xrefs(&instructions, &strings);

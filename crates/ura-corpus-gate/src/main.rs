@@ -7,6 +7,8 @@ use anyhow::{anyhow, bail, Context, Result};
 use serde::{Deserialize, Serialize};
 use tempfile::tempdir;
 
+const MAX_CORPUS_INSTRUCTIONS_PER_SAMPLE: usize = 20_000;
+
 #[derive(Debug, Deserialize)]
 struct Manifest {
     sample: Vec<Sample>,
@@ -144,7 +146,11 @@ fn analyze_sample(root: &Path, sample: &Sample) -> Result<SampleReport> {
     let dir = tempdir()?;
     let project = dir.path().join(format!("{}.ura", sample.id));
 
-    ura_core::commands::new_project(&input, &project)?;
+    ura_core::commands::new_project_with_instruction_limit(
+        &input,
+        &project,
+        MAX_CORPUS_INSTRUCTIONS_PER_SAMPLE,
+    )?;
     let info = ura_core::commands::info(&project)?;
     let instructions = ura_core::commands::disasm(&project, 0, usize::MAX)?;
     let strings = ura_core::commands::strings(&project, None)?;

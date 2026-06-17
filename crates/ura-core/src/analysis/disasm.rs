@@ -5,13 +5,23 @@ use crate::{
 };
 
 pub fn linear_disassemble(image: &AnalysisImage<'_>) -> Result<Vec<Instruction>> {
+    linear_disassemble_with_limit(image, None)
+}
+
+pub fn linear_disassemble_with_limit(
+    image: &AnalysisImage<'_>,
+    max_instructions: Option<usize>,
+) -> Result<Vec<Instruction>> {
     match image.target.architecture {
-        crate::model::Architecture::Aarch64 => disassemble_aarch64(image),
-        crate::model::Architecture::X86_64 => disassemble_x86_64(image),
+        crate::model::Architecture::Aarch64 => disassemble_aarch64(image, max_instructions),
+        crate::model::Architecture::X86_64 => disassemble_x86_64(image, max_instructions),
     }
 }
 
-fn disassemble_aarch64(image: &AnalysisImage<'_>) -> Result<Vec<Instruction>> {
+fn disassemble_aarch64(
+    image: &AnalysisImage<'_>,
+    max_instructions: Option<usize>,
+) -> Result<Vec<Instruction>> {
     let decoder = urdisassembly::Decoder::new(
         urdisassembly::Architecture::Aarch64,
         urdisassembly::DecodeOptions::default(),
@@ -19,6 +29,9 @@ fn disassemble_aarch64(image: &AnalysisImage<'_>) -> Result<Vec<Instruction>> {
     .map_err(|err| UraError::Analysis(err.to_string()))?;
 
     let mut out = Vec::new();
+    if reached_instruction_limit(&out, max_instructions) {
+        return Ok(out);
+    }
     for (start, end) in image.executable_ranges() {
         let size = (end - start) as usize;
         let Some(bytes) = image.bytes_at(start, size) else {
@@ -30,12 +43,18 @@ fn disassemble_aarch64(image: &AnalysisImage<'_>) -> Result<Vec<Instruction>> {
                 .decode_one(chunk, addr)
                 .map_err(|err| UraError::Analysis(err.to_string()))?;
             out.push(convert_instruction(decoded, "urdisassembly/aarch64"));
+            if reached_instruction_limit(&out, max_instructions) {
+                return Ok(out);
+            }
         }
     }
     Ok(out)
 }
 
-fn disassemble_x86_64(image: &AnalysisImage<'_>) -> Result<Vec<Instruction>> {
+fn disassemble_x86_64(
+    image: &AnalysisImage<'_>,
+    max_instructions: Option<usize>,
+) -> Result<Vec<Instruction>> {
     let decoder = urdisassembly::Decoder::new(
         urdisassembly::Architecture::X86_64,
         urdisassembly::DecodeOptions::default(),
@@ -43,6 +62,9 @@ fn disassemble_x86_64(image: &AnalysisImage<'_>) -> Result<Vec<Instruction>> {
     .map_err(|err| UraError::Analysis(err.to_string()))?;
 
     let mut out = Vec::new();
+    if reached_instruction_limit(&out, max_instructions) {
+        return Ok(out);
+    }
     for (start, end) in image.executable_ranges() {
         let mut addr = start;
         while addr < end {
@@ -58,15 +80,25 @@ fn disassemble_x86_64(image: &AnalysisImage<'_>) -> Result<Vec<Instruction>> {
                     let size = u64::from(decoded.size.max(1));
                     out.push(convert_instruction(decoded, "urdisassembly/x86_64"));
                     addr = addr.saturating_add(size);
+                    if reached_instruction_limit(&out, max_instructions) {
+                        return Ok(out);
+                    }
                 }
                 Err(_) => {
                     out.push(unknown_byte_instruction(addr, bytes[0]));
                     addr = addr.saturating_add(1);
+                    if reached_instruction_limit(&out, max_instructions) {
+                        return Ok(out);
+                    }
                 }
             }
         }
     }
     Ok(out)
+}
+
+fn reached_instruction_limit(out: &[Instruction], max_instructions: Option<usize>) -> bool {
+    max_instructions.is_some_and(|limit| out.len() >= limit)
 }
 
 fn convert_instruction(decoded: urdisassembly::Instruction, decoder: &str) -> Instruction {

@@ -17,10 +17,26 @@ use crate::{
 };
 
 pub fn new_project(input: impl AsRef<Path>, output: impl AsRef<Path>) -> Result<()> {
+    new_project_with_options(input, output, None)
+}
+
+pub fn new_project_with_instruction_limit(
+    input: impl AsRef<Path>,
+    output: impl AsRef<Path>,
+    max_instructions: usize,
+) -> Result<()> {
+    new_project_with_options(input, output, Some(max_instructions))
+}
+
+fn new_project_with_options(
+    input: impl AsRef<Path>,
+    output: impl AsRef<Path>,
+    max_instructions: Option<usize>,
+) -> Result<()> {
     let bytes = fs::read(input)?;
     let hash = stable_hash(&bytes);
     let loaded = urloader::load(&bytes).map_err(|err| UraError::Elf(err.to_string()))?;
-    let project_file = build_project_file(&hash, &loaded, &[])?;
+    let project_file = build_project_file(&hash, &loaded, &[], max_instructions)?;
     Project::create(output, project_file)?;
     Ok(())
 }
@@ -162,6 +178,7 @@ fn build_project_file(
     source_hash: &str,
     loaded: &urloader::LoadedImage,
     user_functions: &[Function],
+    max_instructions: Option<usize>,
 ) -> Result<ProjectFile> {
     let segments = convert_segments(&loaded.segments);
     let sections = convert_sections(&loaded.sections);
@@ -173,7 +190,11 @@ fn build_project_file(
         bytes: &loaded.bytes,
         segments: &segments,
     };
-    let analysis = analysis::run_initial_analysis(&analysis_image, user_functions)?;
+    let analysis = analysis::run_initial_analysis_with_instruction_limit(
+        &analysis_image,
+        user_functions,
+        max_instructions,
+    )?;
     Ok(ProjectFile {
         info: ProjectInfo {
             schema_version: PROJECT_SCHEMA_VERSION,
