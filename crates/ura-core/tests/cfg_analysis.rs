@@ -10,36 +10,36 @@ use ura_core::{
 #[test]
 fn aarch64_conditional_branch_creates_true_and_false_edges() -> Result<()> {
     let instructions = vec![
-        instruction(
-            0x400080,
-            4,
-            "b.eq 0x400088",
-            InstructionKind::Branch,
-            FlowKind::ConditionalBranch,
-            Some(0x400084),
-            Some(0x400088),
-            DecodeStatus::Complete,
-        ),
-        instruction(
-            0x400084,
-            4,
-            "ret",
-            InstructionKind::Return,
-            FlowKind::Return,
-            None,
-            None,
-            DecodeStatus::Complete,
-        ),
-        instruction(
-            0x400088,
-            4,
-            "ret",
-            InstructionKind::Return,
-            FlowKind::Return,
-            None,
-            None,
-            DecodeStatus::Complete,
-        ),
+        instruction(InstructionSpec {
+            addr: 0x400080,
+            size: 4,
+            text: "b.eq 0x400088",
+            kind: InstructionKind::Branch,
+            flow: FlowKind::ConditionalBranch,
+            fallthrough: Some(0x400084),
+            branch_target: Some(0x400088),
+            decode_status: DecodeStatus::Complete,
+        }),
+        instruction(InstructionSpec {
+            addr: 0x400084,
+            size: 4,
+            text: "ret",
+            kind: InstructionKind::Return,
+            flow: FlowKind::Return,
+            fallthrough: None,
+            branch_target: None,
+            decode_status: DecodeStatus::Complete,
+        }),
+        instruction(InstructionSpec {
+            addr: 0x400088,
+            size: 4,
+            text: "ret",
+            kind: InstructionKind::Return,
+            flow: FlowKind::Return,
+            fallthrough: None,
+            branch_target: None,
+            decode_status: DecodeStatus::Complete,
+        }),
     ];
 
     let cfg = build_cfg(&instructions, &[0x400080], window(0x400080, 0x40008c))?;
@@ -57,36 +57,36 @@ fn aarch64_conditional_branch_creates_true_and_false_edges() -> Result<()> {
 #[test]
 fn x86_64_call_creates_call_and_fallthrough_edges() -> Result<()> {
     let instructions = vec![
-        instruction(
-            0x401000,
-            5,
-            "call 0x401010",
-            InstructionKind::Call,
-            FlowKind::Call,
-            Some(0x401005),
-            Some(0x401010),
-            DecodeStatus::Complete,
-        ),
-        instruction(
-            0x401005,
-            1,
-            "ret",
-            InstructionKind::Return,
-            FlowKind::Return,
-            None,
-            None,
-            DecodeStatus::Complete,
-        ),
-        instruction(
-            0x401010,
-            1,
-            "ret",
-            InstructionKind::Return,
-            FlowKind::Return,
-            None,
-            None,
-            DecodeStatus::Complete,
-        ),
+        instruction(InstructionSpec {
+            addr: 0x401000,
+            size: 5,
+            text: "call 0x401010",
+            kind: InstructionKind::Call,
+            flow: FlowKind::Call,
+            fallthrough: Some(0x401005),
+            branch_target: Some(0x401010),
+            decode_status: DecodeStatus::Complete,
+        }),
+        instruction(InstructionSpec {
+            addr: 0x401005,
+            size: 1,
+            text: "ret",
+            kind: InstructionKind::Return,
+            flow: FlowKind::Return,
+            fallthrough: None,
+            branch_target: None,
+            decode_status: DecodeStatus::Complete,
+        }),
+        instruction(InstructionSpec {
+            addr: 0x401010,
+            size: 1,
+            text: "ret",
+            kind: InstructionKind::Return,
+            flow: FlowKind::Return,
+            fallthrough: None,
+            branch_target: None,
+            decode_status: DecodeStatus::Complete,
+        }),
     ];
 
     let cfg = build_cfg(&instructions, &[0x401000], window(0x401000, 0x401011))?;
@@ -105,26 +105,26 @@ fn x86_64_call_creates_call_and_fallthrough_edges() -> Result<()> {
 #[test]
 fn unreachable_unknown_instruction_does_not_fail_cfg() -> Result<()> {
     let instructions = vec![
-        instruction(
-            0x400080,
-            4,
-            "ret",
-            InstructionKind::Return,
-            FlowKind::Return,
-            None,
-            None,
-            DecodeStatus::Complete,
-        ),
-        instruction(
-            0x400084,
-            4,
-            ".word 0xffffffff",
-            InstructionKind::Unknown,
-            FlowKind::Fallthrough,
-            Some(0x400088),
-            None,
-            DecodeStatus::Unknown,
-        ),
+        instruction(InstructionSpec {
+            addr: 0x400080,
+            size: 4,
+            text: "ret",
+            kind: InstructionKind::Return,
+            flow: FlowKind::Return,
+            fallthrough: None,
+            branch_target: None,
+            decode_status: DecodeStatus::Complete,
+        }),
+        instruction(InstructionSpec {
+            addr: 0x400084,
+            size: 4,
+            text: ".word 0xffffffff",
+            kind: InstructionKind::Unknown,
+            flow: FlowKind::Fallthrough,
+            fallthrough: Some(0x400088),
+            branch_target: None,
+            decode_status: DecodeStatus::Unknown,
+        }),
     ];
 
     let cfg = build_cfg(&instructions, &[0x400080], window(0x400080, 0x400088))?;
@@ -135,16 +135,16 @@ fn unreachable_unknown_instruction_does_not_fail_cfg() -> Result<()> {
 
 #[test]
 fn reachable_unknown_instruction_fails_cfg_with_address_and_bytes() {
-    let mut unknown = instruction(
-        0x400080,
-        4,
-        ".word 0xffffffff",
-        InstructionKind::Unknown,
-        FlowKind::Fallthrough,
-        Some(0x400084),
-        None,
-        DecodeStatus::Unknown,
-    );
+    let mut unknown = instruction(InstructionSpec {
+        addr: 0x400080,
+        size: 4,
+        text: ".word 0xffffffff",
+        kind: InstructionKind::Unknown,
+        flow: FlowKind::Fallthrough,
+        fallthrough: Some(0x400084),
+        branch_target: None,
+        decode_status: DecodeStatus::Unknown,
+    });
     unknown.bytes = vec![0xff, 0xff, 0xff, 0xff];
 
     let err = build_cfg(&[unknown], &[0x400080], window(0x400080, 0x400084))
@@ -168,32 +168,40 @@ fn window(start: u64, end: u64) -> AnalysisWindow {
     }
 }
 
-fn instruction(
+struct InstructionSpec<'a> {
     addr: u64,
     size: u8,
-    text: &str,
+    text: &'a str,
     kind: InstructionKind,
     flow: FlowKind,
     fallthrough: Option<u64>,
     branch_target: Option<u64>,
     decode_status: DecodeStatus,
-) -> Instruction {
-    let mnemonic = text.split_whitespace().next().unwrap_or(text).to_string();
+}
+
+fn instruction(spec: InstructionSpec<'_>) -> Instruction {
+    let mnemonic = spec
+        .text
+        .split_whitespace()
+        .next()
+        .unwrap_or(spec.text)
+        .to_string();
     Instruction {
-        addr,
-        size,
-        bytes: vec![0; usize::from(size)],
+        addr: spec.addr,
+        size: spec.size,
+        bytes: vec![0; usize::from(spec.size)],
         mnemonic,
-        operands: text
+        operands: spec
+            .text
             .split_once(' ')
             .map(|(_, operands)| operands.to_string())
             .unwrap_or_default(),
-        text: text.to_string(),
-        kind,
-        flow,
-        fallthrough,
-        branch_target,
-        decode_status,
+        text: spec.text.to_string(),
+        kind: spec.kind,
+        flow: spec.flow,
+        fallthrough: spec.fallthrough,
+        branch_target: spec.branch_target,
+        decode_status: spec.decode_status,
         decoder: "test".to_string(),
         decoder_version: "test".to_string(),
         function_addr: None,

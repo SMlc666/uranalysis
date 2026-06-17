@@ -34,10 +34,7 @@ pub fn build_cfg(
         }
 
         let mut addr = start;
-        loop {
-            let Some(insn) = by_addr.get(&addr).copied() else {
-                break;
-            };
+        while let Some(insn) = by_addr.get(&addr).copied() {
             ensure_graph_decodable(insn, window)?;
 
             if addr != start && block_starts.contains(&addr) {
