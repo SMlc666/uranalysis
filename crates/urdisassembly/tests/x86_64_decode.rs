@@ -1,5 +1,6 @@
 use urdisassembly::{
     Architecture, DecodeError, DecodeOptions, DecodeStatus, Decoder, FlowKind, InstructionKind,
+    MemoryOperand, Operand,
 };
 
 fn decode(bytes: &[u8], address: u64) -> urdisassembly::Instruction {
@@ -89,4 +90,70 @@ fn truncated_x86_64_relative_control_flow_is_an_error() {
             actual: 2,
         }
     );
+}
+
+fn register_name(operand: &Operand) -> &str {
+    match operand {
+        Operand::Register(reg) => &reg.name,
+        other => panic!("expected register operand, got {other:?}"),
+    }
+}
+
+fn memory_operand(operand: &Operand) -> &MemoryOperand {
+    match operand {
+        Operand::Memory(mem) => mem,
+        other => panic!("expected memory operand, got {other:?}"),
+    }
+}
+
+#[test]
+fn decodes_x86_64_mov_register_forms() {
+    let mov_imm = decode(
+        &[0x48, 0xb8, 0x88, 0x77, 0x66, 0x55, 0x44, 0x33, 0x22, 0x11],
+        0x401000,
+    );
+    assert_eq!(mov_imm.text, "mov rax, 0x1122334455667788");
+    assert_eq!(mov_imm.size, 10);
+    assert_eq!(mov_imm.kind, InstructionKind::Move);
+    assert_eq!(register_name(&mov_imm.operands[0]), "rax");
+
+    let mov_reg = decode(&[0x48, 0x89, 0xd8], 0x401000);
+    assert_eq!(mov_reg.text, "mov rax, rbx");
+    assert_eq!(mov_reg.size, 3);
+    assert_eq!(register_name(&mov_reg.operands[0]), "rax");
+    assert_eq!(register_name(&mov_reg.operands[1]), "rbx");
+
+    let mov_r8 = decode(&[0x4d, 0x89, 0xc8], 0x401000);
+    assert_eq!(mov_r8.text, "mov r8, r9");
+    assert_eq!(register_name(&mov_r8.operands[0]), "r8");
+    assert_eq!(register_name(&mov_r8.operands[1]), "r9");
+}
+
+#[test]
+fn decodes_x86_64_memory_moves_and_lea() {
+    let load = decode(&[0x48, 0x8b, 0x43, 0x08], 0x401000);
+    assert_eq!(load.text, "mov rax, [rbx+0x8]");
+    assert_eq!(load.kind, InstructionKind::Load);
+    let mem = memory_operand(&load.operands[1]);
+    assert_eq!(mem.base.as_ref().unwrap().name, "rbx");
+    assert_eq!(mem.offset, 8);
+    assert_eq!(mem.width_bits, Some(64));
+
+    let store = decode(&[0x48, 0x89, 0x43, 0x08], 0x401000);
+    assert_eq!(store.text, "mov [rbx+0x8], rax");
+    assert_eq!(store.kind, InstructionKind::Store);
+
+    let lea = decode(&[0x48, 0x8d, 0x44, 0x8b, 0x10], 0x401000);
+    assert_eq!(lea.text, "lea rax, [rbx+rcx*4+0x10]");
+    let mem = memory_operand(&lea.operands[1]);
+    assert_eq!(mem.base.as_ref().unwrap().name, "rbx");
+    assert_eq!(mem.index.as_ref().unwrap().name, "rcx");
+    assert_eq!(mem.scale, 4);
+    assert_eq!(mem.offset, 0x10);
+
+    let rip = decode(&[0x48, 0x8b, 0x05, 0x34, 0x12, 0x00, 0x00], 0x401000);
+    assert_eq!(rip.text, "mov rax, [rip+0x1234]");
+    let mem = memory_operand(&rip.operands[1]);
+    assert!(mem.relative);
+    assert_eq!(mem.offset, 0x1234);
 }

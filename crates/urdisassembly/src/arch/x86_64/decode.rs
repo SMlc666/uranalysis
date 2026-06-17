@@ -1,17 +1,37 @@
 use crate::{
-    arch::x86_64::format::render_instruction,
+    arch::x86_64::{format::render_instruction, registers::reg64},
     error::{DecodeError, Result},
-    model::{DecodeStatus, FlowKind, Instruction, InstructionKind, Operand},
+    model::{DecodeStatus, FlowKind, Instruction, InstructionKind, MemoryOperand, Operand},
 };
 
+#[derive(Debug, Clone, Copy, Default)]
+struct Rex {
+    w: bool,
+    r: bool,
+    x: bool,
+    b: bool,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct Prefixes {
+    rex: Rex,
+    opcode_offset: usize,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct ModRm {
+    mode: u8,
+    reg: u8,
+    rm: u8,
+}
+
 pub fn decode_instruction(bytes: &[u8], address: u64) -> Result<Instruction> {
-    let first = *bytes.first().ok_or(DecodeError::TruncatedInstruction {
-        expected: 1,
-        actual: 0,
-    })?;
-    match first {
+    let prefixes = parse_prefixes(bytes)?;
+    let opcode_offset = prefixes.opcode_offset;
+    let opcode = bytes[opcode_offset];
+    match opcode {
         0xc3 => Ok(base(
-            vec![0xc3],
+            bytes[..opcode_offset + 1].to_vec(),
             address,
             "ret",
             Vec::new(),
@@ -21,10 +41,11 @@ pub fn decode_instruction(bytes: &[u8], address: u64) -> Result<Instruction> {
             DecodeStatus::Complete,
         )),
         0xe8 => {
-            let disp = i64::from(read_i32(bytes, 1)?);
-            let target = rel_target(address, 5, disp);
+            let size = opcode_offset + 5;
+            let disp = i64::from(read_i32(bytes, opcode_offset + 1)?);
+            let target = rel_target(address, size, disp);
             Ok(base(
-                bytes[..5].to_vec(),
+                bytes[..size].to_vec(),
                 address,
                 "call",
                 absolute_target(target),
@@ -35,10 +56,11 @@ pub fn decode_instruction(bytes: &[u8], address: u64) -> Result<Instruction> {
             ))
         }
         0xe9 => {
-            let disp = i64::from(read_i32(bytes, 1)?);
-            let target = rel_target(address, 5, disp);
+            let size = opcode_offset + 5;
+            let disp = i64::from(read_i32(bytes, opcode_offset + 1)?);
+            let target = rel_target(address, size, disp);
             Ok(base(
-                bytes[..5].to_vec(),
+                bytes[..size].to_vec(),
                 address,
                 "jmp",
                 absolute_target(target),
@@ -49,10 +71,11 @@ pub fn decode_instruction(bytes: &[u8], address: u64) -> Result<Instruction> {
             ))
         }
         0xeb => {
-            let disp = i64::from(read_i8(bytes, 1)?);
-            let target = rel_target(address, 2, disp);
+            let size = opcode_offset + 2;
+            let disp = i64::from(read_i8(bytes, opcode_offset + 1)?);
+            let target = rel_target(address, size, disp);
             Ok(base(
-                bytes[..2].to_vec(),
+                bytes[..size].to_vec(),
                 address,
                 "jmp",
                 absolute_target(target),
@@ -63,12 +86,13 @@ pub fn decode_instruction(bytes: &[u8], address: u64) -> Result<Instruction> {
             ))
         }
         0x70..=0x7f => {
-            let disp = i64::from(read_i8(bytes, 1)?);
-            let target = rel_target(address, 2, disp);
+            let size = opcode_offset + 2;
+            let disp = i64::from(read_i8(bytes, opcode_offset + 1)?);
+            let target = rel_target(address, size, disp);
             Ok(base(
-                bytes[..2].to_vec(),
+                bytes[..size].to_vec(),
                 address,
-                mnemonic_for_jcc(first),
+                mnemonic_for_jcc(opcode),
                 absolute_target(target),
                 InstructionKind::Branch,
                 FlowKind::ConditionalBranch,
@@ -77,13 +101,14 @@ pub fn decode_instruction(bytes: &[u8], address: u64) -> Result<Instruction> {
             ))
         }
         0x0f => {
-            require_len(bytes, 2)?;
-            let second = bytes[1];
+            require_len(bytes, opcode_offset + 2)?;
+            let second = bytes[opcode_offset + 1];
             if (0x80..=0x8f).contains(&second) {
-                let disp = i64::from(read_i32(bytes, 2)?);
-                let target = rel_target(address, 6, disp);
+                let size = opcode_offset + 6;
+                let disp = i64::from(read_i32(bytes, opcode_offset + 2)?);
+                let target = rel_target(address, size, disp);
                 Ok(base(
-                    bytes[..6].to_vec(),
+                    bytes[..size].to_vec(),
                     address,
                     mnemonic_for_jcc(second),
                     absolute_target(target),
@@ -93,11 +118,106 @@ pub fn decode_instruction(bytes: &[u8], address: u64) -> Result<Instruction> {
                     DecodeStatus::Complete,
                 ))
             } else {
-                Ok(unknown(first, address))
+                Ok(unknown(opcode, address))
             }
         }
-        _ => Ok(unknown(first, address)),
+        0xb8..=0xbf if prefixes.rex.w => {
+            let size = opcode_offset + 9;
+            require_len(bytes, size)?;
+            let dst = reg64(extend_reg(opcode - 0xb8, prefixes.rex.b));
+            let imm = u64::from_le_bytes([
+                bytes[opcode_offset + 1],
+                bytes[opcode_offset + 2],
+                bytes[opcode_offset + 3],
+                bytes[opcode_offset + 4],
+                bytes[opcode_offset + 5],
+                bytes[opcode_offset + 6],
+                bytes[opcode_offset + 7],
+                bytes[opcode_offset + 8],
+            ]);
+            Ok(base(
+                bytes[..size].to_vec(),
+                address,
+                "mov",
+                vec![Operand::Register(dst), Operand::Immediate(imm as i64)],
+                InstructionKind::Move,
+                FlowKind::Fallthrough,
+                None,
+                DecodeStatus::Complete,
+            ))
+        }
+        0x89 | 0x8b | 0x8d => {
+            let modrm_offset = opcode_offset + 1;
+            require_len(bytes, modrm_offset + 1)?;
+            let modrm = parse_modrm(bytes[modrm_offset]);
+            let reg = Operand::Register(reg64(extend_reg(modrm.reg, prefixes.rex.r)));
+            let (rm, consumed) = parse_rm_operand(bytes, modrm_offset, prefixes.rex, 64)?;
+            let operands = match opcode {
+                0x89 => vec![rm.clone(), reg],
+                0x8b | 0x8d => vec![reg, rm.clone()],
+                _ => Vec::new(),
+            };
+            let kind = match opcode {
+                0x8d => InstructionKind::Address,
+                0x89 if matches!(rm, Operand::Memory(_)) => InstructionKind::Store,
+                0x8b if matches!(rm, Operand::Memory(_)) => InstructionKind::Load,
+                _ => InstructionKind::Move,
+            };
+            Ok(base(
+                bytes[..consumed].to_vec(),
+                address,
+                if opcode == 0x8d { "lea" } else { "mov" },
+                operands,
+                kind,
+                FlowKind::Fallthrough,
+                None,
+                DecodeStatus::Complete,
+            ))
+        }
+        _ => Ok(unknown(opcode, address)),
     }
+}
+
+fn parse_prefixes(bytes: &[u8]) -> Result<Prefixes> {
+    require_len(bytes, 1)?;
+    let mut offset = 0;
+    let mut rex = Rex::default();
+    while offset < bytes.len() {
+        let byte = bytes[offset];
+        if (0x40..=0x4f).contains(&byte) {
+            rex = Rex {
+                w: byte & 0x08 != 0,
+                r: byte & 0x04 != 0,
+                x: byte & 0x02 != 0,
+                b: byte & 0x01 != 0,
+            };
+            offset += 1;
+        } else {
+            break;
+        }
+    }
+    if offset >= bytes.len() {
+        return Err(DecodeError::TruncatedInstruction {
+            expected: offset + 1,
+            actual: bytes.len(),
+        });
+    }
+    Ok(Prefixes {
+        rex,
+        opcode_offset: offset,
+    })
+}
+
+fn parse_modrm(byte: u8) -> ModRm {
+    ModRm {
+        mode: byte >> 6,
+        reg: (byte >> 3) & 0x07,
+        rm: byte & 0x07,
+    }
+}
+
+fn extend_reg(index: u8, extension: bool) -> u8 {
+    index | if extension { 8 } else { 0 }
 }
 
 fn require_len(bytes: &[u8], expected: usize) -> Result<()> {
@@ -123,6 +243,77 @@ fn read_i32(bytes: &[u8], offset: usize) -> Result<i32> {
         bytes[offset + 2],
         bytes[offset + 3],
     ]))
+}
+
+fn read_i32_as_i64(bytes: &[u8], offset: usize) -> Result<i64> {
+    Ok(i64::from(read_i32(bytes, offset)?))
+}
+
+fn parse_rm_operand(
+    bytes: &[u8],
+    modrm_offset: usize,
+    rex: Rex,
+    width_bits: u16,
+) -> Result<(Operand, usize)> {
+    require_len(bytes, modrm_offset + 1)?;
+    let modrm = parse_modrm(bytes[modrm_offset]);
+    let mut consumed = modrm_offset + 1;
+    if modrm.mode == 0b11 {
+        let reg = reg64(extend_reg(modrm.rm, rex.b));
+        return Ok((Operand::Register(reg), consumed));
+    }
+
+    let mut base = None;
+    let mut index = None;
+    let mut scale = 1u8;
+    let mut offset = 0i64;
+    let mut relative = false;
+
+    if modrm.rm == 0b100 {
+        require_len(bytes, consumed + 1)?;
+        let sib = bytes[consumed];
+        consumed += 1;
+        scale = 1u8 << (sib >> 6);
+        let sib_index = (sib >> 3) & 0x07;
+        let sib_base = sib & 0x07;
+        if sib_index != 0b100 {
+            index = Some(reg64(extend_reg(sib_index, rex.x)));
+        }
+        if modrm.mode == 0 && sib_base == 0b101 {
+            offset = read_i32_as_i64(bytes, consumed)?;
+            consumed += 4;
+        } else {
+            base = Some(reg64(extend_reg(sib_base, rex.b)));
+        }
+    } else if modrm.mode == 0 && modrm.rm == 0b101 {
+        relative = true;
+        base = Some(reg64(16));
+        offset = read_i32_as_i64(bytes, consumed)?;
+        consumed += 4;
+    } else {
+        base = Some(reg64(extend_reg(modrm.rm, rex.b)));
+    }
+
+    match modrm.mode {
+        0 => {}
+        1 => {
+            offset = i64::from(read_i8(bytes, consumed)?);
+            consumed += 1;
+        }
+        2 => {
+            offset = read_i32_as_i64(bytes, consumed)?;
+            consumed += 4;
+        }
+        _ => {}
+    }
+
+    let mut mem = if relative {
+        MemoryOperand::rip_relative(offset, Some(width_bits))
+    } else {
+        MemoryOperand::indexed(base, index, scale, offset, Some(width_bits))
+    };
+    mem.relative = relative;
+    Ok((Operand::Memory(mem), consumed))
 }
 
 fn rel_target(address: u64, size: usize, displacement: i64) -> u64 {
