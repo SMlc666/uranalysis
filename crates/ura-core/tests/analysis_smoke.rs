@@ -66,6 +66,26 @@ fn user_edits_persist_across_reanalysis() -> Result<()> {
 }
 
 #[test]
+fn set_function_range_refreshes_only_the_graph_window() -> Result<()> {
+    let dir = tempdir()?;
+    let input = dir.path().join("sample.elf");
+    let project = dir.path().join("sample.ura");
+    std::fs::write(&input, fixtures::minimal_elf64_aarch64_executable())?;
+
+    commands::new_project(&input, &project)?;
+    commands::set_function_range(&project, 0x400080, 0x400080, 0x400084)?;
+
+    let funcs = commands::functions(&project)?;
+    assert!(funcs.iter().any(|func| {
+        func.addr == 0x400080
+            && func.start == 0x400080
+            && func.end == 0x400084
+            && func.source == ura_core::model::FunctionSource::User
+    }));
+    Ok(())
+}
+
+#[test]
 fn branch_and_call_xrefs_use_decoder_flow() -> Result<()> {
     let dir = tempdir()?;
     let input = dir.path().join("sample.elf");
