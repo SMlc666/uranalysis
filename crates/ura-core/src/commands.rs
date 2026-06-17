@@ -359,7 +359,15 @@ fn refresh_graph_window(project_file: &mut ProjectFile, window: AnalysisWindow) 
         &project_file.strings,
         &project_file.cfg_edges,
     );
-    project_file.diagnostics = analysis::diagnostics::collect_diagnostics(&project_file.instructions);
+    let mut diagnostics = analysis::diagnostics::collect_diagnostics(&project_file.instructions);
+    diagnostics.extend(analysis::diagnostics::collect_graph_diagnostics(
+        &project_file.cfg_edges,
+    ));
+    diagnostics.extend(analysis::diagnostics::collect_user_function_diagnostics(
+        &project_file.functions,
+        &project_file.instructions,
+    ));
+    project_file.diagnostics = diagnostics;
     Ok(())
 }
 

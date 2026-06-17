@@ -83,7 +83,12 @@ pub fn run_initial_analysis_with_instruction_limit(
         user_functions,
     );
     let xrefs = xrefs::build_xrefs(&instructions, &strings, &cfg.cfg_edges);
-    let diagnostics = diagnostics::collect_diagnostics(&instructions);
+    let mut diagnostics = diagnostics::collect_diagnostics(&instructions);
+    diagnostics.extend(diagnostics::collect_graph_diagnostics(&cfg.cfg_edges));
+    diagnostics.extend(diagnostics::collect_user_function_diagnostics(
+        &functions,
+        &instructions,
+    ));
     Ok(AnalysisOutput {
         instructions,
         basic_blocks: cfg.basic_blocks,

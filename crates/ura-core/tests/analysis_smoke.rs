@@ -86,6 +86,31 @@ fn set_function_range_refreshes_only_the_graph_window() -> Result<()> {
 }
 
 #[test]
+fn invalid_user_function_root_is_retained_and_diagnosed() -> Result<()> {
+    let dir = tempdir()?;
+    let input = dir.path().join("sample.elf");
+    let project = dir.path().join("sample.ura");
+    std::fs::write(&input, fixtures::minimal_elf64_aarch64_executable())?;
+
+    commands::new_project(&input, &project)?;
+    commands::make_function(&project, 0x500000)?;
+
+    let funcs = commands::functions(&project)?;
+    let diagnostics = commands::diagnostics(&project)?;
+
+    assert!(funcs.iter().any(|func| {
+        func.addr == 0x500000 && func.source == ura_core::model::FunctionSource::User
+    }));
+    assert!(diagnostics.iter().any(|diag| {
+        diag.addr == Some(0x500000)
+            && diag
+                .message
+                .contains("manual function root is not in disassembly")
+    }));
+    Ok(())
+}
+
+#[test]
 fn branch_and_call_xrefs_use_decoder_flow() -> Result<()> {
     let dir = tempdir()?;
     let input = dir.path().join("sample.elf");
