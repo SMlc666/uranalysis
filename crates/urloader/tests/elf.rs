@@ -156,3 +156,33 @@ fn loads_elf_sections_and_symbols() {
             && !symbol.is_import
     }));
 }
+
+#[test]
+fn rejects_unsupported_elf_class() {
+    let mut bytes = minimal_elf64_aarch64_executable();
+    bytes[4] = 1;
+    let err = load(&bytes).unwrap_err().to_string();
+    assert!(err.contains("unsupported class"), "{err}");
+}
+
+#[test]
+fn rejects_unsupported_elf_machine() {
+    let mut bytes = minimal_elf64_aarch64_executable();
+    bytes[0x12..0x14].copy_from_slice(&62u16.to_le_bytes());
+    let err = load(&bytes).unwrap_err().to_string();
+    assert!(err.contains("unsupported machine"), "{err}");
+}
+
+#[test]
+fn rejects_truncated_elf_header() {
+    let err = load(b"\x7fELF").unwrap_err().to_string();
+    assert!(err.contains("truncated header"), "{err}");
+}
+
+#[test]
+fn rejects_out_of_bounds_elf_program_header() {
+    let mut bytes = minimal_elf64_aarch64_executable();
+    bytes[0x20..0x28].copy_from_slice(&0x2000u64.to_le_bytes());
+    let err = load(&bytes).unwrap_err().to_string();
+    assert!(err.contains("truncated program header"), "{err}");
+}
