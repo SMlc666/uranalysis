@@ -42,12 +42,15 @@ struct SampleReport {
     detected_architecture: Option<String>,
     detected_class: Option<String>,
     decoded_instruction_count: usize,
+    basic_block_count: usize,
+    cfg_edge_count: usize,
     unknown_instruction_count: usize,
     unknown_rate: f64,
     string_count: usize,
     function_count: usize,
     xref_count: usize,
     diagnostic_count: usize,
+    cfg_failure_count: usize,
     failure_reason: Option<String>,
 }
 
@@ -127,12 +130,15 @@ fn run_sample(root: &Path, sample: &Sample) -> SampleReport {
             detected_architecture: None,
             detected_class: None,
             decoded_instruction_count: 0,
+            basic_block_count: 0,
+            cfg_edge_count: 0,
             unknown_instruction_count: 0,
             unknown_rate: 1.0,
             string_count: 0,
             function_count: 0,
             xref_count: 0,
             diagnostic_count: 0,
+            cfg_failure_count: 1,
             failure_reason: Some(err.to_string()),
         },
     }
@@ -153,6 +159,8 @@ fn analyze_sample(root: &Path, sample: &Sample) -> Result<SampleReport> {
     )?;
     let info = ura_core::commands::info(&project)?;
     let instructions = ura_core::commands::disasm(&project, 0, usize::MAX)?;
+    let basic_blocks = ura_core::commands::basic_blocks(&project)?;
+    let cfg_edges = ura_core::commands::cfg_edges(&project)?;
     let strings = ura_core::commands::strings(&project, None)?;
     let functions = ura_core::commands::functions(&project)?;
     let xrefs = ura_core::commands::all_xrefs(&project)?;
@@ -218,12 +226,15 @@ fn analyze_sample(root: &Path, sample: &Sample) -> Result<SampleReport> {
         detected_architecture: Some(detected_architecture),
         detected_class: Some(detected_class),
         decoded_instruction_count: instructions.len(),
+        basic_block_count: basic_blocks.len(),
+        cfg_edge_count: cfg_edges.len(),
         unknown_instruction_count: unknown,
         unknown_rate,
         string_count: strings.len(),
         function_count: functions.len(),
         xref_count: xrefs.len(),
         diagnostic_count: diagnostics.len(),
+        cfg_failure_count: 0,
         failure_reason: if ok { None } else { Some(failures.join("; ")) },
     })
 }
@@ -231,14 +242,16 @@ fn analyze_sample(root: &Path, sample: &Sample) -> Result<SampleReport> {
 fn render_summary(report: &Report) -> String {
     let mut out = String::new();
     out.push_str("# Corpus Gate\n\n");
-    out.push_str("| Sample | OK | Instructions | Unknown Rate | Failure |\n");
-    out.push_str("| --- | --- | ---: | ---: | --- |\n");
+    out.push_str("| Sample | OK | Instructions | Blocks | Edges | Unknown Rate | Failure |\n");
+    out.push_str("| --- | --- | ---: | ---: | ---: | ---: | --- |\n");
     for sample in &report.samples {
         out.push_str(&format!(
-            "| {} | {} | {} | {:.4} | {} |\n",
+            "| {} | {} | {} | {} | {} | {:.4} | {} |\n",
             sample.id,
             sample.ok,
             sample.decoded_instruction_count,
+            sample.basic_block_count,
+            sample.cfg_edge_count,
             sample.unknown_rate,
             sample.failure_reason.clone().unwrap_or_default()
         ));
@@ -252,4 +265,40 @@ fn write_file(path: &Path, contents: &str) -> Result<()> {
     }
     fs::write(path, contents)?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn summary_includes_cfg_metrics() {
+        let report = Report {
+            ok: true,
+            samples: vec![SampleReport {
+                id: "sample".to_string(),
+                kind: "source".to_string(),
+                ok: true,
+                detected_format: Some("elf".to_string()),
+                detected_architecture: Some("aarch64".to_string()),
+                detected_class: Some("bits64".to_string()),
+                decoded_instruction_count: 4,
+                basic_block_count: 2,
+                cfg_edge_count: 1,
+                unknown_instruction_count: 0,
+                unknown_rate: 0.0,
+                string_count: 1,
+                function_count: 1,
+                xref_count: 1,
+                diagnostic_count: 0,
+                cfg_failure_count: 0,
+                failure_reason: None,
+            }],
+        };
+
+        let summary = render_summary(&report);
+
+        assert!(summary.contains("| Sample | OK | Instructions | Blocks | Edges | Unknown Rate | Failure |"));
+        assert!(summary.contains("| sample | true | 4 | 2 | 1 | 0.0000 |  |"));
+    }
 }
