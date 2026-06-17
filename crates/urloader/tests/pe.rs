@@ -88,3 +88,46 @@ fn loads_minimal_pe32_plus_x86_64_sections() {
         Some(&[0x48, 0x31, 0xc0, 0xc3][..])
     );
 }
+
+#[test]
+fn rejects_out_of_bounds_pe_pointer() {
+    let mut bytes = minimal_pe32_plus_x86_64();
+    bytes[0x3c..0x40].copy_from_slice(&0x900u32.to_le_bytes());
+    let err = load(&bytes).unwrap_err().to_string();
+    assert!(err.contains("truncated pe signature"), "{err}");
+}
+
+#[test]
+fn rejects_missing_pe_signature() {
+    let mut bytes = minimal_pe32_plus_x86_64();
+    bytes[0x80..0x84].copy_from_slice(b"PX\0\0");
+    let err = load(&bytes).unwrap_err().to_string();
+    assert!(err.contains("missing PE signature"), "{err}");
+}
+
+#[test]
+fn rejects_truncated_optional_header() {
+    let mut bytes = minimal_pe32_plus_x86_64();
+    let coff = 0x84usize;
+    bytes[coff + 16..coff + 18].copy_from_slice(&0x800u16.to_le_bytes());
+    let err = load(&bytes).unwrap_err().to_string();
+    assert!(err.contains("truncated optional header"), "{err}");
+}
+
+#[test]
+fn rejects_unsupported_optional_header_magic() {
+    let mut bytes = minimal_pe32_plus_x86_64();
+    let opt = 0x84usize + 20;
+    bytes[opt..opt + 2].copy_from_slice(&0x999u16.to_le_bytes());
+    let err = load(&bytes).unwrap_err().to_string();
+    assert!(err.contains("unsupported optional header magic"), "{err}");
+}
+
+#[test]
+fn rejects_section_raw_range_outside_file() {
+    let mut bytes = minimal_pe32_plus_x86_64();
+    let text = 0x84usize + 20 + 0xf0;
+    bytes[text + 20..text + 24].copy_from_slice(&0x700u32.to_le_bytes());
+    let err = load(&bytes).unwrap_err().to_string();
+    assert!(err.contains("section raw range"), "{err}");
+}
