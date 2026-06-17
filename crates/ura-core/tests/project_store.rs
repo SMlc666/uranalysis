@@ -1,7 +1,7 @@
 mod fixtures;
 
 use tempfile::tempdir;
-use ura_core::{commands, Result};
+use ura_core::{commands, project::Project, Result};
 
 #[test]
 fn project_file_uses_ura_binary_magic_not_sqlite_header() -> Result<()> {
@@ -76,5 +76,19 @@ fn project_file_rejects_malformed_binary_headers() -> Result<()> {
     let err = commands::info(&project).unwrap_err().to_string();
     assert!(err.contains("project payload length mismatch"), "{err}");
 
+    Ok(())
+}
+
+#[test]
+fn empty_project_schema_v4_has_source_and_graph_containers() -> Result<()> {
+    let dir = tempdir()?;
+    let project_path = dir.path().join("empty.ura");
+
+    let project = Project::create_empty(&project_path, "hash-for-test")?;
+
+    assert_eq!(project.file().info.schema_version, 4);
+    assert!(project.file().source_bytes.is_empty());
+    assert!(project.file().basic_blocks.is_empty());
+    assert!(project.file().cfg_edges.is_empty());
     Ok(())
 }

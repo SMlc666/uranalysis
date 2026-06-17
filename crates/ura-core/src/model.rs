@@ -145,12 +145,43 @@ pub enum FunctionSource {
     User,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum BasicBlockSource {
+    Entry,
+    BranchTarget,
+    Fallthrough,
+    User,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BasicBlock {
     pub id: i64,
-    pub function_addr: u64,
+    pub function_addr: Option<u64>,
     pub start: u64,
     pub end: u64,
+    pub terminal_addr: Option<u64>,
+    pub instruction_count: usize,
+    pub source: BasicBlockSource,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum CfgEdgeKind {
+    Fallthrough,
+    Branch,
+    ConditionalTrue,
+    ConditionalFalse,
+    Call,
+    Return,
+    Indirect,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CfgEdge {
+    pub from_block: i64,
+    pub to_block: Option<i64>,
+    pub from_addr: u64,
+    pub to_addr: Option<u64>,
+    pub kind: CfgEdgeKind,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
