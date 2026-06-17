@@ -1,5 +1,7 @@
 # X86-64 Coverage Matrix
 
+The CI corpus gate records sample-level decode totals and unknown rates. Per-encoding corpus attribution is still not measured in this matrix.
+
 | Encoding group | Representative mnemonics | Decode | Format | Flow semantics | Golden tests | Corpus evidence | Notes |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | Return | `ret` | Implemented | Implemented | Implemented | Yes | Not measured | Near return only. |

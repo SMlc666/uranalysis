@@ -19,9 +19,9 @@ This project is not a mature reverse-engineering suite. The current goal is to b
 
 | Target | Loader | Core Analysis | Notes |
 | --- | --- | --- | --- |
-| ELF64 AArch64 little-endian | Supported | Supported | Primary current path. |
-| ELF64 x86-64 little-endian | Planned | Planned | Part of the next multi-target stage. |
-| PE32+ x86-64 little-endian | Supported by loader | Planned | Part of the next multi-target stage. |
+| ELF64 AArch64 little-endian | Supported | Supported | Fixed-width AArch64 disassembly. |
+| ELF64 x86-64 little-endian | Supported | Supported | Variable-width x86-64 disassembly. |
+| PE32+ x86-64 little-endian | Supported | Supported | PE sections are analyzed as executable ranges. |
 
 Instruction coverage is intentionally partial. Unknown instructions are preserved in analysis output and surfaced through diagnostics.
 

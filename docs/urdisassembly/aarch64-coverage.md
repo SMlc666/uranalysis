@@ -1,5 +1,7 @@
 # AArch64 Coverage Matrix
 
+The CI corpus gate records sample-level decode totals and unknown rates. Per-encoding corpus attribution is still not measured in this matrix.
+
 | Encoding group | Representative mnemonics | Decode | Format | Flow semantics | Golden tests | Corpus evidence | Notes |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | Unconditional branch immediate | `b`, `bl` | Implemented | Implemented | Implemented | Yes | Not measured | Direct targets use absolute addresses. |
