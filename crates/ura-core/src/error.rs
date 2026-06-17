@@ -6,8 +6,6 @@ pub type Result<T> = std::result::Result<T, UraError>;
 pub enum UraError {
     #[error("I/O error: {0}")]
     Io(#[from] std::io::Error),
-    #[error("SQLite error: {0}")]
-    Sqlite(#[from] rusqlite::Error),
     #[error("ELF parse error: {0}")]
     Elf(String),
     #[error("unsupported binary: {0}")]
@@ -18,4 +16,6 @@ pub enum UraError {
     NotFound(String),
     #[error("analysis error: {0}")]
     Analysis(String),
+    #[error("project format error: {0}")]
+    ProjectFormat(String),
 }

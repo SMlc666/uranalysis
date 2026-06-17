@@ -55,53 +55,13 @@ fn project_schema_v2_records_decode_metadata() -> Result<()> {
 }
 
 #[test]
-fn opening_schema_v1_project_migrates_and_preserves_user_truth() -> Result<()> {
+fn binary_project_rejects_old_sqlite_header() -> Result<()> {
     let dir = tempdir()?;
-    let input = dir.path().join("sample.elf");
-    let project = dir.path().join("sample.ura");
-    std::fs::write(&input, fixtures::minimal_elf64_aarch64_executable())?;
+    let project = dir.path().join("old.ura");
+    std::fs::write(&project, b"SQLite format 3\0")?;
 
-    commands::new_project(&input, &project)?;
-    {
-        let conn = rusqlite::Connection::open(&project)?;
-        conn.execute(
-            "UPDATE metadata SET value = '1' WHERE key = 'schema_version'",
-            [],
-        )?;
-        conn.execute("ALTER TABLE instructions RENAME TO instructions_v2", [])?;
-        conn.execute(
-            "CREATE TABLE instructions (
-                addr INTEGER PRIMARY KEY,
-                size INTEGER NOT NULL,
-                bytes BLOB NOT NULL,
-                mnemonic TEXT NOT NULL,
-                operands TEXT NOT NULL,
-                fallthrough INTEGER,
-                branch_target INTEGER,
-                function_addr INTEGER
-            )",
-            [],
-        )?;
-        conn.execute(
-            "INSERT INTO instructions(addr, size, bytes, mnemonic, operands, fallthrough, branch_target, function_addr)
-             SELECT addr, size, bytes, mnemonic, operands, fallthrough, branch_target, function_addr FROM instructions_v2",
-            [],
-        )?;
-        conn.execute("DROP TABLE instructions_v2", [])?;
-    }
+    let err = commands::info(&project).unwrap_err().to_string();
 
-    commands::make_function(&project, 0x400080)?;
-    commands::rename(&project, 0x400080, "manual_ret")?;
-    commands::comment(&project, 0x400080, "manual function")?;
-
-    let funcs = commands::functions(&project)?;
-    let comments = commands::comments(&project, 0x400080)?;
-    let info = commands::info(&project)?;
-
-    assert_eq!(info.schema_version, 2);
-    assert!(funcs
-        .iter()
-        .any(|func| func.addr == 0x400080 && func.name == "manual_ret"));
-    assert_eq!(comments, vec!["manual function".to_string()]);
+    assert!(err.contains("invalid project magic"), "{err}");
     Ok(())
 }

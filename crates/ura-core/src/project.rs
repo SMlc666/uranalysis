@@ -1,47 +1,62 @@
 use std::path::{Path, PathBuf};
 
-use rusqlite::Connection;
-
-use crate::{db, Result, UraError};
+use crate::{
+    store::{BinaryProjectStore, ProjectFile, ProjectStore},
+    Result, UraError,
+};
 
 pub struct Project {
     path: PathBuf,
-    conn: Connection,
+    file: ProjectFile,
 }
 
 impl Project {
     pub fn create_empty(path: impl AsRef<Path>, source_hash: &str) -> Result<Self> {
         let path = path.as_ref().to_path_buf();
-        let conn = db::open_connection(&path)?;
-        db::initialize(&conn, source_hash)?;
-        Ok(Self { path, conn })
+        let file = ProjectFile::empty(source_hash);
+        BinaryProjectStore.save(&path, &file)?;
+        Ok(Self { path, file })
+    }
+
+    pub fn create(path: impl AsRef<Path>, file: ProjectFile) -> Result<Self> {
+        let path = path.as_ref().to_path_buf();
+        BinaryProjectStore.save(&path, &file)?;
+        Ok(Self { path, file })
     }
 
     pub fn open(path: impl AsRef<Path>) -> Result<Self> {
         let path = path.as_ref().to_path_buf();
-        let conn = db::open_connection(&path)?;
-        db::migrate(&conn)?;
-        Ok(Self { path, conn })
+        let file = BinaryProjectStore.load(&path)?;
+        Ok(Self { path, file })
+    }
+
+    pub fn save(&self) -> Result<()> {
+        BinaryProjectStore.save(&self.path, &self.file)
     }
 
     pub fn path(&self) -> &Path {
         &self.path
     }
 
-    pub fn conn(&self) -> &Connection {
-        &self.conn
+    pub fn file(&self) -> &ProjectFile {
+        &self.file
+    }
+
+    pub fn file_mut(&mut self) -> &mut ProjectFile {
+        &mut self.file
     }
 
     pub fn source_hash(&self) -> Result<String> {
-        db::get_metadata(&self.conn, "source_hash")?
-            .ok_or_else(|| UraError::NotFound("source_hash metadata".to_string()))
+        Ok(self.file.info.source_hash.clone())
     }
 
     pub fn schema_version(&self) -> Result<i64> {
-        let value = db::get_metadata(&self.conn, "schema_version")?
-            .ok_or_else(|| UraError::NotFound("schema_version metadata".to_string()))?;
-        value
-            .parse::<i64>()
-            .map_err(|err| UraError::Unsupported(format!("invalid schema_version: {err}")))
+        if self.file.info.schema_version <= 0 {
+            return Err(UraError::ProjectFormat(format!(
+                "invalid schema_version: {}",
+                self.file.info.schema_version
+            )));
+        }
+        Ok(self.file.info.schema_version)
     }
 }
