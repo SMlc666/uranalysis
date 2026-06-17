@@ -1,3 +1,5 @@
+pub mod arch;
+pub mod bits;
 pub mod decoder;
 pub mod error;
 pub mod model;
