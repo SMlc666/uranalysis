@@ -9,7 +9,7 @@ use crate::{
     Result, UraError,
 };
 
-pub const SCHEMA_VERSION: i64 = 1;
+pub const SCHEMA_VERSION: i64 = 2;
 
 pub fn open_connection(path: &Path) -> Result<Connection> {
     let conn = Connection::open(path)?;
@@ -57,8 +57,14 @@ pub fn initialize(conn: &Connection, source_hash: &str) -> Result<()> {
             bytes BLOB NOT NULL,
             mnemonic TEXT NOT NULL,
             operands TEXT NOT NULL,
+            text TEXT NOT NULL,
+            kind TEXT NOT NULL,
+            flow TEXT NOT NULL,
             fallthrough INTEGER,
             branch_target INTEGER,
+            decode_status TEXT NOT NULL,
+            decoder TEXT NOT NULL,
+            decoder_version TEXT NOT NULL,
             function_addr INTEGER
         );
         CREATE TABLE IF NOT EXISTS functions (
@@ -104,6 +110,46 @@ pub fn initialize(conn: &Connection, source_hash: &str) -> Result<()> {
     set_metadata(conn, "schema_version", &SCHEMA_VERSION.to_string())?;
     set_metadata(conn, "engine_version", env!("CARGO_PKG_VERSION"))?;
     set_metadata(conn, "source_hash", source_hash)?;
+    Ok(())
+}
+
+pub fn migrate(conn: &Connection) -> Result<()> {
+    let Some(version) = get_metadata(conn, "schema_version")? else {
+        return Err(UraError::NotFound("schema_version metadata".to_string()));
+    };
+    let version = version
+        .parse::<i64>()
+        .map_err(|err| UraError::Unsupported(format!("invalid schema_version: {err}")))?;
+    if version == SCHEMA_VERSION {
+        return Ok(());
+    }
+    if version != 1 {
+        return Err(UraError::Unsupported(format!(
+            "schema version {version}, expected {SCHEMA_VERSION}"
+        )));
+    }
+
+    conn.execute("DROP TABLE IF EXISTS instructions", [])?;
+    conn.execute(
+        "CREATE TABLE instructions (
+            addr INTEGER PRIMARY KEY,
+            size INTEGER NOT NULL,
+            bytes BLOB NOT NULL,
+            mnemonic TEXT NOT NULL,
+            operands TEXT NOT NULL,
+            text TEXT NOT NULL,
+            kind TEXT NOT NULL,
+            flow TEXT NOT NULL,
+            fallthrough INTEGER,
+            branch_target INTEGER,
+            decode_status TEXT NOT NULL,
+            decoder TEXT NOT NULL,
+            decoder_version TEXT NOT NULL,
+            function_addr INTEGER
+        )",
+        [],
+    )?;
+    set_metadata(conn, "schema_version", &SCHEMA_VERSION.to_string())?;
     Ok(())
 }
 
@@ -189,16 +235,22 @@ pub fn insert_instructions(conn: &Connection, instructions: &[Instruction]) -> R
     conn.execute("DELETE FROM instructions", [])?;
     for insn in instructions {
         conn.execute(
-            "INSERT INTO instructions(addr, size, bytes, mnemonic, operands, fallthrough, branch_target, function_addr)
-             VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            "INSERT INTO instructions(addr, size, bytes, mnemonic, operands, text, kind, flow, fallthrough, branch_target, decode_status, decoder, decoder_version, function_addr)
+             VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
             params![
                 to_i64(insn.addr)?,
                 i64::from(insn.size),
                 insn.bytes,
                 insn.mnemonic,
                 insn.operands,
+                insn.text,
+                insn.kind,
+                insn.flow,
                 optional_to_i64(insn.fallthrough)?,
                 optional_to_i64(insn.branch_target)?,
+                insn.decode_status,
+                insn.decoder,
+                insn.decoder_version,
                 optional_to_i64(insn.function_addr)?
             ],
         )?;
@@ -294,7 +346,7 @@ pub fn project_info(conn: &Connection) -> Result<ProjectInfo> {
 
 pub fn query_disasm(conn: &Connection, addr: u64, count: usize) -> Result<Vec<Instruction>> {
     let mut stmt = conn.prepare(
-        "SELECT addr, size, bytes, mnemonic, operands, fallthrough, branch_target, function_addr
+        "SELECT addr, size, bytes, mnemonic, operands, text, kind, flow, fallthrough, branch_target, decode_status, decoder, decoder_version, function_addr
          FROM instructions WHERE addr >= ?1 ORDER BY addr LIMIT ?2",
     )?;
     let rows = stmt.query_map(params![to_i64(addr)?, count as i64], |row| {
@@ -304,9 +356,15 @@ pub fn query_disasm(conn: &Connection, addr: u64, count: usize) -> Result<Vec<In
             bytes: row.get(2)?,
             mnemonic: row.get(3)?,
             operands: row.get(4)?,
-            fallthrough: row.get::<_, Option<i64>>(5)?.map(from_i64),
-            branch_target: row.get::<_, Option<i64>>(6)?.map(from_i64),
-            function_addr: row.get::<_, Option<i64>>(7)?.map(from_i64),
+            text: row.get(5)?,
+            kind: row.get(6)?,
+            flow: row.get(7)?,
+            fallthrough: row.get::<_, Option<i64>>(8)?.map(from_i64),
+            branch_target: row.get::<_, Option<i64>>(9)?.map(from_i64),
+            decode_status: row.get(10)?,
+            decoder: row.get(11)?,
+            decoder_version: row.get(12)?,
+            function_addr: row.get::<_, Option<i64>>(13)?.map(from_i64),
         })
     })?;
     Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)

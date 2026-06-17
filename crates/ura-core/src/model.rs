@@ -68,8 +68,14 @@ pub struct Instruction {
     pub bytes: Vec<u8>,
     pub mnemonic: String,
     pub operands: String,
+    pub text: String,
+    pub kind: String,
+    pub flow: String,
     pub fallthrough: Option<u64>,
     pub branch_target: Option<u64>,
+    pub decode_status: String,
+    pub decoder: String,
+    pub decoder_version: String,
     pub function_addr: Option<u64>,
 }
 

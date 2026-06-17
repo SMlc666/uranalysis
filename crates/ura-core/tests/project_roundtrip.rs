@@ -14,7 +14,7 @@ fn creates_and_reopens_empty_project() -> Result<()> {
 
     let reopened = Project::open(&path)?;
     assert_eq!(reopened.source_hash()?, "hash-for-test");
-    assert_eq!(reopened.schema_version()?, 1);
+    assert_eq!(reopened.schema_version()?, 2);
     Ok(())
 }
 
@@ -30,5 +30,78 @@ fn creates_project_from_elf_and_persists_metadata() -> Result<()> {
 
     assert_eq!(info.profile, LoadProfile::Executable);
     assert_eq!(info.architecture, ura_core::model::Architecture::Aarch64);
+    Ok(())
+}
+
+#[test]
+fn project_schema_v2_records_decode_metadata() -> Result<()> {
+    let dir = tempdir()?;
+    let input = dir.path().join("sample.elf");
+    let project = dir.path().join("sample.ura");
+    std::fs::write(&input, fixtures::minimal_elf64_aarch64_executable())?;
+
+    commands::new_project(&input, &project)?;
+    let info = commands::info(&project)?;
+    let disasm = commands::disasm(&project, 0x400080, 1)?;
+
+    assert_eq!(info.schema_version, 2);
+    assert_eq!(disasm[0].text, "ret");
+    assert_eq!(disasm[0].kind, "Return");
+    assert_eq!(disasm[0].flow, "Return");
+    assert_eq!(disasm[0].decode_status, "Complete");
+    assert_eq!(disasm[0].decoder, "urdisassembly/aarch64");
+    assert_eq!(disasm[0].decoder_version, env!("CARGO_PKG_VERSION"));
+    Ok(())
+}
+
+#[test]
+fn opening_schema_v1_project_migrates_and_preserves_user_truth() -> Result<()> {
+    let dir = tempdir()?;
+    let input = dir.path().join("sample.elf");
+    let project = dir.path().join("sample.ura");
+    std::fs::write(&input, fixtures::minimal_elf64_aarch64_executable())?;
+
+    commands::new_project(&input, &project)?;
+    {
+        let conn = rusqlite::Connection::open(&project)?;
+        conn.execute(
+            "UPDATE metadata SET value = '1' WHERE key = 'schema_version'",
+            [],
+        )?;
+        conn.execute("ALTER TABLE instructions RENAME TO instructions_v2", [])?;
+        conn.execute(
+            "CREATE TABLE instructions (
+                addr INTEGER PRIMARY KEY,
+                size INTEGER NOT NULL,
+                bytes BLOB NOT NULL,
+                mnemonic TEXT NOT NULL,
+                operands TEXT NOT NULL,
+                fallthrough INTEGER,
+                branch_target INTEGER,
+                function_addr INTEGER
+            )",
+            [],
+        )?;
+        conn.execute(
+            "INSERT INTO instructions(addr, size, bytes, mnemonic, operands, fallthrough, branch_target, function_addr)
+             SELECT addr, size, bytes, mnemonic, operands, fallthrough, branch_target, function_addr FROM instructions_v2",
+            [],
+        )?;
+        conn.execute("DROP TABLE instructions_v2", [])?;
+    }
+
+    commands::make_function(&project, 0x400080)?;
+    commands::rename(&project, 0x400080, "manual_ret")?;
+    commands::comment(&project, 0x400080, "manual function")?;
+
+    let funcs = commands::functions(&project)?;
+    let comments = commands::comments(&project, 0x400080)?;
+    let info = commands::info(&project)?;
+
+    assert_eq!(info.schema_version, 2);
+    assert!(funcs
+        .iter()
+        .any(|func| func.addr == 0x400080 && func.name == "manual_ret"));
+    assert_eq!(comments, vec!["manual function".to_string()]);
     Ok(())
 }

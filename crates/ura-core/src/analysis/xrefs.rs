@@ -4,7 +4,8 @@ pub fn build_xrefs(instructions: &[Instruction], strings: &[StringRef]) -> Vec<X
     let mut out = Vec::new();
     for insn in instructions {
         if let Some(target) = insn.branch_target {
-            let kind = if insn.mnemonic == "bl" {
+            let kind = if insn.flow == "Call" || insn.flow == "IndirectCall" || insn.kind == "Call"
+            {
                 XrefKind::Call
             } else {
                 XrefKind::Code

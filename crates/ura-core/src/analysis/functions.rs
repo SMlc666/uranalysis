@@ -10,7 +10,10 @@ pub fn discover_functions(
     let mut starts = BTreeSet::new();
     starts.insert((entry, FunctionSource::Entry));
     for insn in instructions {
-        if matches!(insn.mnemonic.as_str(), "bl" | "b") {
+        if matches!(
+            insn.flow.as_str(),
+            "Call" | "Branch" | "ConditionalBranch"
+        ) {
             if let Some(target) = insn.branch_target {
                 starts.insert((target, FunctionSource::BranchTarget));
             }
@@ -38,6 +41,6 @@ fn first_terminal_end(start: u64, instructions: &[Instruction]) -> Option<u64> {
     instructions
         .iter()
         .filter(|insn| insn.addr >= start)
-        .find(|insn| matches!(insn.mnemonic.as_str(), "ret" | "br" | "b"))
+        .find(|insn| matches!(insn.flow.as_str(), "Return" | "Branch" | "IndirectBranch"))
         .map(|insn| insn.addr + u64::from(insn.size))
 }

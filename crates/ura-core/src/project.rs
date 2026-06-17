@@ -20,14 +20,7 @@ impl Project {
     pub fn open(path: impl AsRef<Path>) -> Result<Self> {
         let path = path.as_ref().to_path_buf();
         let conn = db::open_connection(&path)?;
-        let version = db::get_metadata(&conn, "schema_version")?
-            .ok_or_else(|| UraError::NotFound("schema_version metadata".to_string()))?;
-        if version != db::SCHEMA_VERSION.to_string() {
-            return Err(UraError::Unsupported(format!(
-                "schema version {version}, expected {}",
-                db::SCHEMA_VERSION
-            )));
-        }
+        db::migrate(&conn)?;
         Ok(Self { path, conn })
     }
 

@@ -45,3 +45,45 @@ fn user_edits_persist_across_reanalysis() -> Result<()> {
     assert_eq!(comments, vec!["manual function".to_string()]);
     Ok(())
 }
+
+#[test]
+fn branch_and_call_xrefs_use_decoder_flow() -> Result<()> {
+    let dir = tempdir()?;
+    let input = dir.path().join("sample.elf");
+    let project = dir.path().join("sample.ura");
+    let mut bytes = fixtures::minimal_elf64_aarch64_executable();
+    bytes[0x80..0x84].copy_from_slice(&0x94000002u32.to_le_bytes());
+    bytes[0x84..0x88].copy_from_slice(&0x14000003u32.to_le_bytes());
+    bytes[0x88..0x8c].copy_from_slice(&0xd65f03c0u32.to_le_bytes());
+    bytes[0x90..0x94].copy_from_slice(&0xd65f03c0u32.to_le_bytes());
+    std::fs::write(&input, bytes)?;
+
+    commands::new_project(&input, &project)?;
+    let xrefs_to_88 = commands::xrefs(&project, 0x400088)?;
+    let xrefs_to_90 = commands::xrefs(&project, 0x400090)?;
+
+    assert!(xrefs_to_88.iter().any(|xref| xref.from_addr == 0x400080));
+    assert!(xrefs_to_90.iter().any(|xref| xref.from_addr == 0x400084));
+    Ok(())
+}
+
+#[test]
+fn unknown_instruction_is_recorded_and_diagnosed() -> Result<()> {
+    let dir = tempdir()?;
+    let input = dir.path().join("sample.elf");
+    let project = dir.path().join("sample.ura");
+    let mut bytes = fixtures::minimal_elf64_aarch64_executable();
+    bytes[0x80..0x84].copy_from_slice(&0xffffffffu32.to_le_bytes());
+    std::fs::write(&input, bytes)?;
+
+    commands::new_project(&input, &project)?;
+    let disasm = commands::disasm(&project, 0x400080, 1)?;
+    let diagnostics = commands::diagnostics(&project)?;
+
+    assert_eq!(disasm[0].text, ".word 0xffffffff");
+    assert_eq!(disasm[0].decode_status, "Unknown");
+    assert!(diagnostics
+        .iter()
+        .any(|diag| diag.addr == Some(0x400080) && diag.message.contains("unknown instruction")));
+    Ok(())
+}
