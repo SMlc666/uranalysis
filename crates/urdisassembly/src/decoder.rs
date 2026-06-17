@@ -1,0 +1,39 @@
+use crate::{
+    error::{DecodeError, Result},
+    model::{Architecture, DecodeOptions, Endian},
+};
+
+#[derive(Debug, Clone)]
+pub struct Decoder {
+    architecture: Architecture,
+    options: DecodeOptions,
+}
+
+impl Decoder {
+    pub fn new(architecture: Architecture, options: DecodeOptions) -> Result<Self> {
+        match (architecture, options.endian) {
+            (Architecture::Aarch64, Endian::Little) => Ok(Self {
+                architecture,
+                options,
+            }),
+        }
+    }
+
+    pub fn architecture(&self) -> Architecture {
+        self.architecture
+    }
+
+    pub fn options(&self) -> DecodeOptions {
+        self.options
+    }
+
+    pub fn require_word(bytes: &[u8]) -> Result<u32> {
+        let word = bytes
+            .get(..4)
+            .ok_or(DecodeError::TruncatedInstruction {
+                expected: 4,
+                actual: bytes.len(),
+            })?;
+        Ok(u32::from_le_bytes([word[0], word[1], word[2], word[3]]))
+    }
+}

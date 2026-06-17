@@ -854,6 +854,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "urdisassembly"
+version = "0.1.0"
+dependencies = [
+ "goblin",
+ "serde",
+ "tempfile",
+ "thiserror",
+]
+
+[[package]]
 name = "utf8parse"
 version = "0.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
