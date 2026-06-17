@@ -32,7 +32,12 @@ pub fn load(bytes: &[u8]) -> Result<LoadedImage> {
     let section_count = u16_at(bytes, coff + 2, "number_of_sections")?;
     let optional_size = u16_at(bytes, coff + 16, "size_of_optional_header")?;
     let optional = coff + 20;
-    need(bytes, optional, usize::from(optional_size), "optional header")?;
+    need(
+        bytes,
+        optional,
+        usize::from(optional_size),
+        "optional header",
+    )?;
 
     let magic = u16_at(bytes, optional, "optional magic")?;
     let class = match magic {
@@ -77,12 +82,7 @@ pub fn load(bytes: &[u8]) -> Result<LoadedImage> {
     })
 }
 
-fn parse_sections(
-    bytes: &[u8],
-    table: usize,
-    count: u16,
-    image_base: u64,
-) -> Result<Vec<Section>> {
+fn parse_sections(bytes: &[u8], table: usize, count: u16, image_base: u64) -> Result<Vec<Section>> {
     let mut sections = Vec::new();
     for idx in 0..count {
         let off = table + usize::from(idx) * 40;
@@ -156,11 +156,13 @@ fn section_permissions(flags: u32) -> String {
 }
 
 fn range_in_file(bytes: &[u8], offset: u64, size: u64, field: &'static str) -> Result<()> {
-    let end = offset.checked_add(size).ok_or_else(|| LoadError::Malformed {
-        format: PE,
-        field,
-        message: "range overflow".to_string(),
-    })?;
+    let end = offset
+        .checked_add(size)
+        .ok_or_else(|| LoadError::Malformed {
+            format: PE,
+            field,
+            message: "range overflow".to_string(),
+        })?;
     let end = usize::try_from(end).map_err(|_| LoadError::Malformed {
         format: PE,
         field,
@@ -190,20 +192,26 @@ fn need(bytes: &[u8], offset: usize, len: usize, field: &'static str) -> Result<
 fn u16_at(bytes: &[u8], offset: usize, field: &'static str) -> Result<u16> {
     need(bytes, offset, 2, field)?;
     Ok(u16::from_le_bytes(
-        bytes[offset..offset + 2].try_into().expect("length checked"),
+        bytes[offset..offset + 2]
+            .try_into()
+            .expect("length checked"),
     ))
 }
 
 fn u32_at(bytes: &[u8], offset: usize, field: &'static str) -> Result<u32> {
     need(bytes, offset, 4, field)?;
     Ok(u32::from_le_bytes(
-        bytes[offset..offset + 4].try_into().expect("length checked"),
+        bytes[offset..offset + 4]
+            .try_into()
+            .expect("length checked"),
     ))
 }
 
 fn u64_at(bytes: &[u8], offset: usize, field: &'static str) -> Result<u64> {
     need(bytes, offset, 8, field)?;
     Ok(u64::from_le_bytes(
-        bytes[offset..offset + 8].try_into().expect("length checked"),
+        bytes[offset..offset + 8]
+            .try_into()
+            .expect("length checked"),
     ))
 }

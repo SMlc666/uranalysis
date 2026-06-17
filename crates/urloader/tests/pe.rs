@@ -46,6 +46,7 @@ fn minimal_pe32_plus_x86_64() -> Vec<u8> {
     bytes
 }
 
+#[allow(clippy::too_many_arguments)]
 fn write_section(
     bytes: &mut [u8],
     off: usize,

@@ -163,11 +163,7 @@ fn parse_raw_sections(bytes: &[u8], header: &ElfHeader) -> Result<Vec<RawSection
     Ok(out)
 }
 
-fn normalize_sections(
-    bytes: &[u8],
-    raw: &[RawSection],
-    shstrndx: u16,
-) -> Vec<crate::Section> {
+fn normalize_sections(bytes: &[u8], raw: &[RawSection], shstrndx: u16) -> Vec<crate::Section> {
     let names = raw.get(usize::from(shstrndx));
     raw.iter()
         .enumerate()
@@ -199,15 +195,14 @@ fn parse_symbols(bytes: &[u8], raw: &[RawSection]) -> Result<Vec<crate::Symbol>>
         };
         let count = section.size / section.entsize;
         for idx in 0..count {
-            let off =
-                section
-                    .offset
-                    .checked_add(idx * section.entsize)
-                    .ok_or_else(|| LoadError::Malformed {
-                        format: ELF,
-                        field: "symbol table",
-                        message: "symbol offset overflow".to_string(),
-                    })?;
+            let off = section
+                .offset
+                .checked_add(idx * section.entsize)
+                .ok_or_else(|| LoadError::Malformed {
+                    format: ELF,
+                    field: "symbol table",
+                    message: "symbol offset overflow".to_string(),
+                })?;
             let off = usize::try_from(off).map_err(|_| LoadError::Malformed {
                 format: ELF,
                 field: "symbol table",
@@ -288,13 +283,13 @@ fn permissions(flags: u32) -> String {
 }
 
 fn checked_table_offset(base: u64, entsize: u16, idx: u16, field: &'static str) -> Result<usize> {
-    let offset =
-        base.checked_add(u64::from(entsize) * u64::from(idx))
-            .ok_or_else(|| LoadError::Malformed {
-                format: ELF,
-                field,
-                message: "table offset overflow".to_string(),
-            })?;
+    let offset = base
+        .checked_add(u64::from(entsize) * u64::from(idx))
+        .ok_or_else(|| LoadError::Malformed {
+            format: ELF,
+            field,
+            message: "table offset overflow".to_string(),
+        })?;
     usize::try_from(offset).map_err(|_| LoadError::Malformed {
         format: ELF,
         field,
@@ -303,11 +298,13 @@ fn checked_table_offset(base: u64, entsize: u16, idx: u16, field: &'static str) 
 }
 
 fn range_in_file(bytes: &[u8], offset: u64, size: u64, field: &'static str) -> Result<()> {
-    let end = offset.checked_add(size).ok_or_else(|| LoadError::Malformed {
-        format: ELF,
-        field,
-        message: "range overflow".to_string(),
-    })?;
+    let end = offset
+        .checked_add(size)
+        .ok_or_else(|| LoadError::Malformed {
+            format: ELF,
+            field,
+            message: "range overflow".to_string(),
+        })?;
     let end = usize::try_from(end).map_err(|_| LoadError::Malformed {
         format: ELF,
         field,
@@ -337,20 +334,26 @@ fn need(bytes: &[u8], offset: usize, len: usize, field: &'static str) -> Result<
 fn u16_at(bytes: &[u8], offset: usize, field: &'static str) -> Result<u16> {
     need(bytes, offset, 2, field)?;
     Ok(u16::from_le_bytes(
-        bytes[offset..offset + 2].try_into().expect("length checked"),
+        bytes[offset..offset + 2]
+            .try_into()
+            .expect("length checked"),
     ))
 }
 
 fn u32_at(bytes: &[u8], offset: usize, field: &'static str) -> Result<u32> {
     need(bytes, offset, 4, field)?;
     Ok(u32::from_le_bytes(
-        bytes[offset..offset + 4].try_into().expect("length checked"),
+        bytes[offset..offset + 4]
+            .try_into()
+            .expect("length checked"),
     ))
 }
 
 fn u64_at(bytes: &[u8], offset: usize, field: &'static str) -> Result<u64> {
     need(bytes, offset, 8, field)?;
     Ok(u64::from_le_bytes(
-        bytes[offset..offset + 8].try_into().expect("length checked"),
+        bytes[offset..offset + 8]
+            .try_into()
+            .expect("length checked"),
     ))
 }
