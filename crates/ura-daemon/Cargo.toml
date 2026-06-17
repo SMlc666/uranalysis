@@ -1,0 +1,18 @@
+[package]
+name = "ura-daemon"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "ura-daemon"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+ura-core = { path = "../ura-core" }
+
+[dev-dependencies]
+tempfile.workspace = true

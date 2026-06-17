@@ -1,0 +1,22 @@
+[package]
+name = "ura-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "ura"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+clap.workspace = true
+rustyline.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+ura-core = { path = "../ura-core" }
+
+[dev-dependencies]
+assert_cmd.workspace = true
+predicates.workspace = true
+tempfile.workspace = true
