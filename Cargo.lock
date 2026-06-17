@@ -767,6 +767,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "urloader"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "thiserror",
+]
+
+[[package]]
 name = "utf8parse"
 version = "0.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
