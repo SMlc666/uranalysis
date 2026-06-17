@@ -6,10 +6,10 @@ use std::{
 };
 
 use crate::{
-    analysis::{self, AnalysisImage},
+    analysis::{self, target::AnalysisTarget, AnalysisImage},
     model::{
-        Architecture, BinaryFormat, Diagnostic, Function, FunctionSource, Instruction, LoadProfile,
-        ProjectInfo, Section, Segment, StringRef, Symbol, Xref,
+        Diagnostic, Function, FunctionSource, Instruction, LoadProfile, ProjectInfo, Section,
+        Segment, StringRef, Symbol, Xref,
     },
     project::Project,
     store::{ProjectFile, PROJECT_SCHEMA_VERSION},
@@ -17,11 +17,26 @@ use crate::{
 };
 
 pub fn new_project(input: impl AsRef<Path>, output: impl AsRef<Path>) -> Result<()> {
+    new_project_with_options(input, output, None)
+}
+
+pub fn new_project_with_instruction_limit(
+    input: impl AsRef<Path>,
+    output: impl AsRef<Path>,
+    max_instructions: usize,
+) -> Result<()> {
+    new_project_with_options(input, output, Some(max_instructions))
+}
+
+fn new_project_with_options(
+    input: impl AsRef<Path>,
+    output: impl AsRef<Path>,
+    max_instructions: Option<usize>,
+) -> Result<()> {
     let bytes = fs::read(input)?;
     let hash = stable_hash(&bytes);
     let loaded = urloader::load(&bytes).map_err(|err| UraError::Elf(err.to_string()))?;
-    ensure_supported_analysis_target(&loaded)?;
-    let project_file = build_project_file(&hash, &loaded, &[])?;
+    let project_file = build_project_file(&hash, &loaded, &[], max_instructions)?;
     Project::create(output, project_file)?;
     Ok(())
 }
@@ -67,6 +82,10 @@ pub fn xrefs(project_path: impl AsRef<Path>, addr: u64) -> Result<Vec<Xref>> {
         .filter(|xref| xref.to_addr == addr || xref.from_addr == addr)
         .cloned()
         .collect())
+}
+
+pub fn all_xrefs(project_path: impl AsRef<Path>) -> Result<Vec<Xref>> {
+    Ok(Project::open(project_path)?.file().xrefs.clone())
 }
 
 pub fn rename(project_path: impl AsRef<Path>, addr: u64, name: &str) -> Result<()> {
@@ -159,23 +178,32 @@ fn build_project_file(
     source_hash: &str,
     loaded: &urloader::LoadedImage,
     user_functions: &[Function],
+    max_instructions: Option<usize>,
 ) -> Result<ProjectFile> {
     let segments = convert_segments(&loaded.segments);
     let sections = convert_sections(&loaded.sections);
     let symbols = convert_symbols(&loaded.symbols);
+    let target = AnalysisTarget::from_loaded(loaded)?;
     let analysis_image = AnalysisImage {
+        target,
         entry: loaded.entry,
         bytes: &loaded.bytes,
         segments: &segments,
     };
-    let analysis = analysis::run_initial_analysis(&analysis_image, user_functions)?;
+    let analysis = analysis::run_initial_analysis_with_instruction_limit(
+        &analysis_image,
+        user_functions,
+        max_instructions,
+    )?;
     Ok(ProjectFile {
         info: ProjectInfo {
             schema_version: PROJECT_SCHEMA_VERSION,
             engine_version: env!("CARGO_PKG_VERSION").to_string(),
             source_hash: source_hash.to_string(),
-            format: BinaryFormat::Elf64,
-            architecture: Architecture::Aarch64,
+            format: target.format,
+            architecture: target.architecture,
+            class: target.class,
+            endian: target.endian,
             profile: convert_profile(loaded.profile),
         },
         segments,
@@ -189,20 +217,6 @@ fn build_project_file(
         renames: Default::default(),
         diagnostics: analysis.diagnostics,
     })
-}
-
-fn ensure_supported_analysis_target(image: &urloader::LoadedImage) -> Result<()> {
-    if image.format == urloader::ImageFormat::Elf
-        && image.architecture == urloader::Architecture::Aarch64
-        && image.class == urloader::ImageClass::Bits64
-        && image.endian == urloader::Endian::Little
-    {
-        return Ok(());
-    }
-    Err(UraError::Unsupported(format!(
-        "unsupported analysis target: format={:?} architecture={:?} class={:?} endian={:?}",
-        image.format, image.architecture, image.class, image.endian
-    )))
 }
 
 fn convert_profile(profile: urloader::LoadProfile) -> LoadProfile {

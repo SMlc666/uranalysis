@@ -9,12 +9,14 @@ const ELFDATA2LSB: u8 = 1;
 const ET_REL: u16 = 1;
 const ET_EXEC: u16 = 2;
 const ET_DYN: u16 = 3;
+const EM_X86_64: u16 = 62;
 const EM_AARCH64: u16 = 183;
 const PT_LOAD: u32 = 1;
 const PF_X: u32 = 1;
 const PF_W: u32 = 2;
 const PF_R: u32 = 4;
 const SHT_SYMTAB: u32 = 2;
+const SHT_NOBITS: u32 = 8;
 const SHT_DYNSYM: u32 = 11;
 
 pub fn load(bytes: &[u8]) -> Result<LoadedImage> {
@@ -25,7 +27,7 @@ pub fn load(bytes: &[u8]) -> Result<LoadedImage> {
     let symbols = parse_symbols(bytes, &raw_sections)?;
     Ok(LoadedImage {
         format: ImageFormat::Elf,
-        architecture: Architecture::Aarch64,
+        architecture: elf_architecture(header.machine),
         class: ImageClass::Bits64,
         endian: Endian::Little,
         profile: elf_profile(header.file_type),
@@ -79,7 +81,7 @@ fn parse_header(bytes: &[u8]) -> Result<ElfHeader> {
     }
     let file_type = u16_at(bytes, 0x10, "e_type")?;
     let machine = u16_at(bytes, 0x12, "e_machine")?;
-    if machine != EM_AARCH64 {
+    if !matches!(machine, EM_AARCH64 | EM_X86_64) {
         return Err(LoadError::Unsupported {
             format: ELF,
             field: "machine",
@@ -98,6 +100,14 @@ fn parse_header(bytes: &[u8]) -> Result<ElfHeader> {
         shnum: u16_at(bytes, 0x3c, "e_shnum")?,
         shstrndx: u16_at(bytes, 0x3e, "e_shstrndx")?,
     })
+}
+
+fn elf_architecture(machine: u16) -> Architecture {
+    match machine {
+        EM_AARCH64 => Architecture::Aarch64,
+        EM_X86_64 => Architecture::X86_64,
+        other => Architecture::Unknown(other),
+    }
 }
 
 fn parse_program_headers(bytes: &[u8], header: &ElfHeader) -> Result<Vec<Segment>> {
@@ -155,7 +165,7 @@ fn parse_raw_sections(bytes: &[u8], header: &ElfHeader) -> Result<Vec<RawSection
             link: u32_at(bytes, off + 40, "sh_link")?,
             entsize: u64_at(bytes, off + 56, "sh_entsize")?,
         };
-        if section.size > 0 {
+        if section.size > 0 && section.sh_type != SHT_NOBITS {
             range_in_file(bytes, section.offset, section.size, "section file range")?;
         }
         out.push(section);

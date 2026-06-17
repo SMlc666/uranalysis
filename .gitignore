@@ -1,3 +1,5 @@
 .worktrees/
 target/
 *.ura
+tests/corpus/.cache/
+tests/corpus/generated/

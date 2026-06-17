@@ -9,15 +9,15 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     model::{
-        Architecture, BinaryFormat, Diagnostic, Function, Instruction, LoadProfile, ProjectInfo,
-        Section, Segment, StringRef, Symbol, Xref,
+        Architecture, BinaryFormat, Diagnostic, Endian, Function, ImageClass, Instruction,
+        LoadProfile, ProjectInfo, Section, Segment, StringRef, Symbol, Xref,
     },
     Result, UraError,
 };
 
 pub const PROJECT_MAGIC: [u8; 4] = *b"URA0";
 pub const PROJECT_CONTAINER_VERSION: u32 = 1;
-pub const PROJECT_SCHEMA_VERSION: i64 = 2;
+pub const PROJECT_SCHEMA_VERSION: i64 = 3;
 
 const HEADER_LEN: usize = 16;
 
@@ -43,8 +43,10 @@ impl ProjectFile {
                 schema_version: PROJECT_SCHEMA_VERSION,
                 engine_version: env!("CARGO_PKG_VERSION").to_string(),
                 source_hash: source_hash.into(),
-                format: BinaryFormat::Elf64,
+                format: BinaryFormat::Elf,
                 architecture: Architecture::Aarch64,
+                class: ImageClass::Bits64,
+                endian: Endian::Little,
                 profile: LoadProfile::StrippedLike,
             },
             segments: Vec::new(),

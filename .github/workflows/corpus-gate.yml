@@ -1,0 +1,78 @@
+name: Corpus Gate
+
+on:
+  push:
+    branches:
+      - main
+      - master
+  pull_request:
+    branches:
+      - main
+      - master
+  workflow_dispatch:
+
+jobs:
+  corpus:
+    name: Real-sample corpus gate
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Restore Rust cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: rust-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}-${{ hashFiles('Cargo.toml', 'crates/**/Cargo.toml') }}
+          restore-keys: |
+            rust-${{ runner.os }}-
+
+      - name: Restore corpus toolchain cache
+        uses: actions/cache@v4
+        with:
+          path: tests/corpus/.cache/toolchains
+          key: corpus-toolchains-${{ runner.os }}-${{ hashFiles('tests/corpus/toolchains.toml', 'tests/corpus/scripts/install-*.sh') }}
+
+      - name: Install or verify corpus toolchains
+        run: tests/corpus/scripts/install-toolchains.sh
+
+      - name: Restore corpus sample cache
+        uses: actions/cache@v4
+        with:
+          path: tests/corpus/generated
+          key: corpus-samples-${{ runner.os }}-${{ hashFiles('tests/corpus/manifest.toml', 'tests/corpus/src/**', 'tests/corpus/scripts/**') }}
+
+      - name: Build source corpus
+        run: tests/corpus/scripts/build-source-corpus.sh
+
+      - name: Fetch release corpus
+        run: tests/corpus/scripts/fetch-release-corpus.sh
+
+      - name: Build workspace
+        run: cargo build --workspace
+
+      - name: Run corpus gate
+        run: tests/corpus/scripts/run-corpus-gate.sh
+
+      - name: Write corpus summary
+        if: always()
+        run: |
+          if [ -f tests/corpus/generated/corpus-summary.md ]; then
+            cat tests/corpus/generated/corpus-summary.md >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload corpus reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: corpus-report
+          path: |
+            tests/corpus/generated/corpus-report.json
+            tests/corpus/generated/corpus-summary.md
+          if-no-files-found: warn

@@ -96,6 +96,9 @@ fn decodes_common_arithmetic_move_and_hint_forms() {
     assert_eq!(movz.text, "mov x0, #0x1");
     assert_eq!(movz.kind, InstructionKind::Move);
 
+    let movz_shifted = decode(0xd2c00020, 0x400100);
+    assert_eq!(movz_shifted.text, "mov x0, #0x100000000");
+
     let movk = decode(0xf2800041, 0x400100);
     assert_eq!(movk.text, "movk x1, #0x2");
 
