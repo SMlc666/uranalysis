@@ -177,7 +177,11 @@ fn decode_b_bl(word: u32, address: u64) -> Instruction {
         } else {
             InstructionKind::Branch
         },
-        if link { FlowKind::Call } else { FlowKind::Branch },
+        if link {
+            FlowKind::Call
+        } else {
+            FlowKind::Branch
+        },
         Some(target),
     )
 }

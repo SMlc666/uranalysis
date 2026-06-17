@@ -23,7 +23,9 @@ fn unknown_word_decodes_as_word_directive() {
 #[test]
 fn truncated_input_is_a_hard_error() {
     let decoder = Decoder::new(Architecture::Aarch64, DecodeOptions::default()).unwrap();
-    let err = decoder.decode_one(&[0xc0, 0x03, 0x5f], 0x400080).unwrap_err();
+    let err = decoder
+        .decode_one(&[0xc0, 0x03, 0x5f], 0x400080)
+        .unwrap_err();
 
     assert_eq!(err.to_string(), "expected at least 4 bytes, got 3");
 }

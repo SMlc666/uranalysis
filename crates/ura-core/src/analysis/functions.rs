@@ -10,10 +10,7 @@ pub fn discover_functions(
     let mut starts = BTreeSet::new();
     starts.insert((entry, FunctionSource::Entry));
     for insn in instructions {
-        if matches!(
-            insn.flow.as_str(),
-            "Call" | "Branch" | "ConditionalBranch"
-        ) {
+        if matches!(insn.flow.as_str(), "Call" | "Branch" | "ConditionalBranch") {
             if let Some(target) = insn.branch_target {
                 starts.insert((target, FunctionSource::BranchTarget));
             }
