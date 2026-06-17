@@ -748,6 +748,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "urdis2il"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "thiserror",
+ "urdisassembly",
+]
+
+[[package]]
 name = "urdisassembly"
 version = "0.1.0"
 dependencies = [
