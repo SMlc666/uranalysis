@@ -1,0 +1,92 @@
+[[sample]]
+id = "source_elf_aarch64"
+kind = "source"
+source = "src/common/sample.c"
+output = "generated/source/elf-aarch64/ura-sample"
+target = "aarch64-linux-gnu"
+format = "elf"
+arch = "aarch64"
+class = "bits64"
+min_instructions = 4
+max_unknown_rate = 0.50
+required_strings = ["ura-corpus-hello"]
+
+[[sample]]
+id = "source_elf_x86_64"
+kind = "source"
+source = "src/common/sample.c"
+output = "generated/source/elf-x86_64/ura-sample"
+target = "x86_64-linux-gnu"
+format = "elf"
+arch = "x86_64"
+class = "bits64"
+min_instructions = 4
+max_unknown_rate = 0.50
+required_strings = ["ura-corpus-hello"]
+
+[[sample]]
+id = "source_pe_x86_64"
+kind = "source"
+source = "src/common/sample.c"
+output = "generated/source/pe-x86_64/ura-sample.exe"
+target = "x86_64-windows-gnu"
+format = "pe"
+arch = "x86_64"
+class = "bits64"
+min_instructions = 4
+max_unknown_rate = 0.50
+required_strings = ["ura-corpus-hello"]
+
+[[sample]]
+id = "release_ripgrep_aarch64_linux"
+kind = "release"
+repo = "BurntSushi/ripgrep"
+tag = "14.1.1"
+asset = "ripgrep-14.1.1-aarch64-unknown-linux-gnu.tar.gz"
+url = "https://github.com/BurntSushi/ripgrep/releases/download/14.1.1/ripgrep-14.1.1-aarch64-unknown-linux-gnu.tar.gz"
+sha256 = "c827481c4ff4ea10c9dc7a4022c8de5db34a5737cb74484d62eb94a95841ab2f"
+archive_member = "ripgrep-14.1.1-aarch64-unknown-linux-gnu/rg"
+output = "generated/release/ripgrep-aarch64-linux/rg"
+license = "MIT OR Unlicense"
+format = "elf"
+arch = "aarch64"
+class = "bits64"
+min_instructions = 100
+max_unknown_rate = 0.98
+required_strings = []
+
+[[sample]]
+id = "release_ripgrep_x86_64_linux"
+kind = "release"
+repo = "BurntSushi/ripgrep"
+tag = "14.1.1"
+asset = "ripgrep-14.1.1-x86_64-unknown-linux-musl.tar.gz"
+url = "https://github.com/BurntSushi/ripgrep/releases/download/14.1.1/ripgrep-14.1.1-x86_64-unknown-linux-musl.tar.gz"
+sha256 = "4cf9f2741e6c465ffdb7c26f38056a59e2a2544b51f7cc128ef28337eeae4d8e"
+archive_member = "ripgrep-14.1.1-x86_64-unknown-linux-musl/rg"
+output = "generated/release/ripgrep-x86_64-linux/rg"
+license = "MIT OR Unlicense"
+format = "elf"
+arch = "x86_64"
+class = "bits64"
+min_instructions = 100
+max_unknown_rate = 0.98
+required_strings = []
+
+[[sample]]
+id = "release_ripgrep_x86_64_windows"
+kind = "release"
+repo = "BurntSushi/ripgrep"
+tag = "14.1.1"
+asset = "ripgrep-14.1.1-x86_64-pc-windows-msvc.zip"
+url = "https://github.com/BurntSushi/ripgrep/releases/download/14.1.1/ripgrep-14.1.1-x86_64-pc-windows-msvc.zip"
+sha256 = "d0f534024c42afd6cb4d38907c25cd2b249b79bbe6cc1dbee8e3e37c2b6e25a1"
+archive_member = "ripgrep-14.1.1-x86_64-pc-windows-msvc/rg.exe"
+output = "generated/release/ripgrep-x86_64-windows/rg.exe"
+license = "MIT OR Unlicense"
+format = "pe"
+arch = "x86_64"
+class = "bits64"
+min_instructions = 100
+max_unknown_rate = 0.98
+required_strings = []
