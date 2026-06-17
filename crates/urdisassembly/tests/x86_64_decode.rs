@@ -207,3 +207,18 @@ fn decodes_x86_64_push_and_pop() {
     assert_eq!(push_r8.text, "push r8");
     assert_eq!(push_r8.size, 2);
 }
+
+#[test]
+fn decodes_x86_64_multibyte_nops() {
+    let nop = decode(&[0x0f, 0x1f, 0x40, 0x00], 0x401000);
+    assert_eq!(nop.text, "nop");
+    assert_eq!(nop.size, 4);
+    assert_eq!(nop.kind, InstructionKind::System);
+    assert_eq!(nop.flow, FlowKind::Fallthrough);
+
+    let indexed_nop = decode(&[0x0f, 0x1f, 0x44, 0x00, 0x00], 0x401000);
+    assert_eq!(indexed_nop.text, "nop");
+    assert_eq!(indexed_nop.size, 5);
+    assert_eq!(indexed_nop.kind, InstructionKind::System);
+    assert_eq!(indexed_nop.flow, FlowKind::Fallthrough);
+}

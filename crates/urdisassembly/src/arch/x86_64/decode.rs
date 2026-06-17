@@ -114,6 +114,8 @@ pub fn decode_instruction(bytes: &[u8], address: u64) -> Result<Instruction> {
                     FlowKind::ConditionalBranch,
                     Some(target),
                 ))
+            } else if second == 0x1f {
+                decode_multibyte_nop(bytes, address, prefixes)
             } else {
                 Ok(unknown(opcode, address))
             }
@@ -365,6 +367,25 @@ fn decode_group83(bytes: &[u8], address: u64, prefixes: Prefixes) -> Result<Inst
         mnemonic,
         vec![rm, Operand::Immediate(imm)],
         kind,
+        FlowKind::Fallthrough,
+        None,
+    ))
+}
+
+fn decode_multibyte_nop(bytes: &[u8], address: u64, prefixes: Prefixes) -> Result<Instruction> {
+    let modrm_offset = prefixes.opcode_offset + 2;
+    require_len(bytes, modrm_offset + 1)?;
+    let modrm = parse_modrm(bytes[modrm_offset]);
+    if modrm.reg != 0 {
+        return Ok(unknown(bytes[prefixes.opcode_offset], address));
+    }
+    let (_, consumed) = parse_rm_operand(bytes, modrm_offset, prefixes.rex, 64)?;
+    Ok(base(
+        bytes[..consumed].to_vec(),
+        address,
+        "nop",
+        Vec::new(),
+        InstructionKind::System,
         FlowKind::Fallthrough,
         None,
     ))
