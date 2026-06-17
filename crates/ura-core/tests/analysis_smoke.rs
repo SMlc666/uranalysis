@@ -87,6 +87,57 @@ fn branch_and_call_xrefs_use_decoder_flow() -> Result<()> {
 }
 
 #[test]
+fn function_discovery_uses_call_targets_without_merging_callee_body() -> Result<()> {
+    let dir = tempdir()?;
+    let input = dir.path().join("sample.elf");
+    let project = dir.path().join("sample.ura");
+    let mut bytes = fixtures::minimal_elf64_aarch64_executable();
+    bytes[0x80..0x84].copy_from_slice(&0x94000002u32.to_le_bytes());
+    bytes[0x84..0x88].copy_from_slice(&0xd65f03c0u32.to_le_bytes());
+    bytes[0x88..0x8c].copy_from_slice(&0xd65f03c0u32.to_le_bytes());
+    std::fs::write(&input, bytes)?;
+
+    commands::new_project(&input, &project)?;
+    let funcs = commands::functions(&project)?;
+
+    let entry = funcs
+        .iter()
+        .find(|func| func.addr == 0x400080)
+        .expect("entry function should exist");
+    let callee = funcs
+        .iter()
+        .find(|func| func.addr == 0x400088)
+        .expect("call target function should exist");
+
+    assert_eq!(entry.start, 0x400080);
+    assert_eq!(entry.end, 0x400088);
+    assert_eq!(callee.start, 0x400088);
+    assert_eq!(callee.end, 0x40008c);
+    Ok(())
+}
+
+#[test]
+fn conditional_branch_target_stays_in_entry_function() -> Result<()> {
+    let dir = tempdir()?;
+    let input = dir.path().join("sample.elf");
+    let project = dir.path().join("sample.ura");
+    let mut bytes = fixtures::minimal_elf64_aarch64_executable();
+    bytes[0x80..0x84].copy_from_slice(&0x54000040u32.to_le_bytes());
+    bytes[0x84..0x88].copy_from_slice(&0xd65f03c0u32.to_le_bytes());
+    bytes[0x88..0x8c].copy_from_slice(&0xd65f03c0u32.to_le_bytes());
+    std::fs::write(&input, bytes)?;
+
+    commands::new_project(&input, &project)?;
+    let funcs = commands::functions(&project)?;
+
+    assert!(funcs.iter().any(|func| {
+        func.addr == 0x400080 && func.start == 0x400080 && func.end == 0x40008c
+    }));
+    assert!(!funcs.iter().any(|func| func.addr == 0x400088));
+    Ok(())
+}
+
+#[test]
 fn unknown_entry_instruction_fails_cfg_import() -> Result<()> {
     let dir = tempdir()?;
     let input = dir.path().join("sample.elf");
