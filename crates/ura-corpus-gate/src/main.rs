@@ -298,7 +298,8 @@ mod tests {
 
         let summary = render_summary(&report);
 
-        assert!(summary.contains("| Sample | OK | Instructions | Blocks | Edges | Unknown Rate | Failure |"));
+        assert!(summary
+            .contains("| Sample | OK | Instructions | Blocks | Edges | Unknown Rate | Failure |"));
         assert!(summary.contains("| sample | true | 4 | 2 | 1 | 0.0000 |  |"));
     }
 }

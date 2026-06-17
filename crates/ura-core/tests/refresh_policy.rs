@@ -2,9 +2,7 @@ mod fixtures;
 
 use tempfile::tempdir;
 use ura_core::{
-    analysis::refresh::{
-        refresh_policy, AnalysisWindow, ProjectEvent, RefreshPlan, RefreshReason,
-    },
+    analysis::refresh::{refresh_policy, AnalysisWindow, ProjectEvent, RefreshPlan, RefreshReason},
     commands,
     project::Project,
     Result,

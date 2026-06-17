@@ -197,9 +197,9 @@ fn conditional_branch_target_stays_in_entry_function() -> Result<()> {
     commands::new_project(&input, &project)?;
     let funcs = commands::functions(&project)?;
 
-    assert!(funcs.iter().any(|func| {
-        func.addr == 0x400080 && func.start == 0x400080 && func.end == 0x40008c
-    }));
+    assert!(funcs
+        .iter()
+        .any(|func| { func.addr == 0x400080 && func.start == 0x400080 && func.end == 0x40008c }));
     assert!(!funcs.iter().any(|func| func.addr == 0x400088));
     Ok(())
 }
