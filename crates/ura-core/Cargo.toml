@@ -10,7 +10,6 @@ serde.workspace = true
 serde_json.workspace = true
 rusqlite.workspace = true
 goblin.workspace = true
-capstone.workspace = true
 urdisassembly.workspace = true
 
 [dev-dependencies]
