@@ -59,3 +59,100 @@ fn loads_minimal_elf64_aarch64_executable_segments() {
         Some(&[0xc0, 0x03, 0x5f, 0xd6][..])
     );
 }
+
+fn elf_with_sections_and_symbols() -> Vec<u8> {
+    let mut bytes = minimal_elf64_aarch64_executable();
+    bytes.resize(0x1400, 0);
+
+    let shoff = 0x1000u64;
+    bytes[0x28..0x30].copy_from_slice(&shoff.to_le_bytes());
+    bytes[0x3a..0x3c].copy_from_slice(&64u16.to_le_bytes());
+    bytes[0x3c..0x3e].copy_from_slice(&5u16.to_le_bytes());
+    bytes[0x3e..0x40].copy_from_slice(&4u16.to_le_bytes());
+
+    let shstr = b"\0.text\0.symtab\0.strtab\0.shstrtab\0main\0dyn_func\0";
+    bytes[0x300..0x300 + shstr.len()].copy_from_slice(shstr);
+
+    write_shdr(&mut bytes, 1, 1, 1, 0x6, 0x400080, 0x80, 4, 0, 0, 4, 0);
+    write_shdr(&mut bytes, 2, 7, 2, 0, 0, 0x400, 24, 3, 1, 8, 24);
+    write_shdr(
+        &mut bytes,
+        3,
+        15,
+        3,
+        0,
+        0,
+        0x300,
+        shstr.len() as u64,
+        0,
+        0,
+        1,
+        0,
+    );
+    write_shdr(
+        &mut bytes,
+        4,
+        23,
+        3,
+        0,
+        0,
+        0x300,
+        shstr.len() as u64,
+        0,
+        0,
+        1,
+        0,
+    );
+
+    let sym = 0x400usize;
+    bytes[sym..sym + 4].copy_from_slice(&33u32.to_le_bytes());
+    bytes[sym + 4] = 0x12;
+    bytes[sym + 8..sym + 16].copy_from_slice(&0x400080u64.to_le_bytes());
+    bytes[sym + 16..sym + 24].copy_from_slice(&4u64.to_le_bytes());
+    bytes
+}
+
+#[allow(clippy::too_many_arguments)]
+fn write_shdr(
+    bytes: &mut [u8],
+    index: usize,
+    name: u32,
+    sh_type: u32,
+    flags: u64,
+    addr: u64,
+    offset: u64,
+    size: u64,
+    link: u32,
+    info: u32,
+    addralign: u64,
+    entsize: u64,
+) {
+    let off = 0x1000 + index * 64;
+    bytes[off..off + 4].copy_from_slice(&name.to_le_bytes());
+    bytes[off + 4..off + 8].copy_from_slice(&sh_type.to_le_bytes());
+    bytes[off + 8..off + 16].copy_from_slice(&flags.to_le_bytes());
+    bytes[off + 16..off + 24].copy_from_slice(&addr.to_le_bytes());
+    bytes[off + 24..off + 32].copy_from_slice(&offset.to_le_bytes());
+    bytes[off + 32..off + 40].copy_from_slice(&size.to_le_bytes());
+    bytes[off + 40..off + 44].copy_from_slice(&link.to_le_bytes());
+    bytes[off + 44..off + 48].copy_from_slice(&info.to_le_bytes());
+    bytes[off + 48..off + 56].copy_from_slice(&addralign.to_le_bytes());
+    bytes[off + 56..off + 64].copy_from_slice(&entsize.to_le_bytes());
+}
+
+#[test]
+fn loads_elf_sections_and_symbols() {
+    let image = load(&elf_with_sections_and_symbols()).unwrap();
+
+    assert!(image.sections.iter().any(|section| {
+        section.name == ".text" && section.addr == 0x400080 && section.offset == 0x80
+    }));
+    assert!(image.symbols.iter().any(|symbol| {
+        symbol.name == "main"
+            && symbol.addr == 0x400080
+            && symbol.size == 4
+            && symbol.kind == "Func"
+            && symbol.is_export
+            && !symbol.is_import
+    }));
+}

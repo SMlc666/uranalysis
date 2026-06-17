@@ -14,10 +14,15 @@ const PT_LOAD: u32 = 1;
 const PF_X: u32 = 1;
 const PF_W: u32 = 2;
 const PF_R: u32 = 4;
+const SHT_SYMTAB: u32 = 2;
+const SHT_DYNSYM: u32 = 11;
 
 pub fn load(bytes: &[u8]) -> Result<LoadedImage> {
     let header = parse_header(bytes)?;
     let segments = parse_program_headers(bytes, &header)?;
+    let raw_sections = parse_raw_sections(bytes, &header)?;
+    let sections = normalize_sections(bytes, &raw_sections, header.shstrndx);
+    let symbols = parse_symbols(bytes, &raw_sections)?;
     Ok(LoadedImage {
         format: ImageFormat::Elf,
         architecture: Architecture::Aarch64,
@@ -27,8 +32,8 @@ pub fn load(bytes: &[u8]) -> Result<LoadedImage> {
         entry: header.entry,
         image_base: 0,
         segments,
-        sections: Vec::new(),
-        symbols: Vec::new(),
+        sections,
+        symbols,
         imports: Vec::new(),
         exports: Vec::new(),
         diagnostics: Vec::new(),
@@ -47,6 +52,10 @@ struct ElfHeader {
     phoff: u64,
     phentsize: u16,
     phnum: u16,
+    shoff: u64,
+    shentsize: u16,
+    shnum: u16,
+    shstrndx: u16,
 }
 
 fn parse_header(bytes: &[u8]) -> Result<ElfHeader> {
@@ -84,6 +93,10 @@ fn parse_header(bytes: &[u8]) -> Result<ElfHeader> {
         phoff: u64_at(bytes, 0x20, "e_phoff")?,
         phentsize: u16_at(bytes, 0x36, "e_phentsize")?,
         phnum: u16_at(bytes, 0x38, "e_phnum")?,
+        shoff: u64_at(bytes, 0x28, "e_shoff")?,
+        shentsize: u16_at(bytes, 0x3a, "e_shentsize")?,
+        shnum: u16_at(bytes, 0x3c, "e_shnum")?,
+        shstrndx: u16_at(bytes, 0x3e, "e_shstrndx")?,
     })
 }
 
@@ -113,6 +126,148 @@ fn parse_program_headers(bytes: &[u8], header: &ElfHeader) -> Result<Vec<Segment
         });
     }
     Ok(segments)
+}
+
+#[derive(Debug, Clone)]
+struct RawSection {
+    name_offset: u32,
+    sh_type: u32,
+    flags: u64,
+    addr: u64,
+    offset: u64,
+    size: u64,
+    link: u32,
+    entsize: u64,
+}
+
+fn parse_raw_sections(bytes: &[u8], header: &ElfHeader) -> Result<Vec<RawSection>> {
+    let mut out = Vec::new();
+    for idx in 0..header.shnum {
+        let off = checked_table_offset(header.shoff, header.shentsize, idx, "section headers")?;
+        need(bytes, off, usize::from(header.shentsize), "section header")?;
+        let section = RawSection {
+            name_offset: u32_at(bytes, off, "sh_name")?,
+            sh_type: u32_at(bytes, off + 4, "sh_type")?,
+            flags: u64_at(bytes, off + 8, "sh_flags")?,
+            addr: u64_at(bytes, off + 16, "sh_addr")?,
+            offset: u64_at(bytes, off + 24, "sh_offset")?,
+            size: u64_at(bytes, off + 32, "sh_size")?,
+            link: u32_at(bytes, off + 40, "sh_link")?,
+            entsize: u64_at(bytes, off + 56, "sh_entsize")?,
+        };
+        if section.size > 0 {
+            range_in_file(bytes, section.offset, section.size, "section file range")?;
+        }
+        out.push(section);
+    }
+    Ok(out)
+}
+
+fn normalize_sections(
+    bytes: &[u8],
+    raw: &[RawSection],
+    shstrndx: u16,
+) -> Vec<crate::Section> {
+    let names = raw.get(usize::from(shstrndx));
+    raw.iter()
+        .enumerate()
+        .map(|(idx, section)| crate::Section {
+            id: idx as i64,
+            name: names
+                .and_then(|names| string_at_section(bytes, names, section.name_offset))
+                .unwrap_or_default(),
+            addr: section.addr,
+            offset: section.offset,
+            size: section.size,
+            permissions: section_permissions(section.flags),
+            flags: section.flags,
+        })
+        .collect()
+}
+
+fn parse_symbols(bytes: &[u8], raw: &[RawSection]) -> Result<Vec<crate::Symbol>> {
+    let mut symbols = Vec::new();
+    for section in raw {
+        if section.sh_type != SHT_SYMTAB && section.sh_type != SHT_DYNSYM {
+            continue;
+        }
+        if section.entsize == 0 {
+            continue;
+        }
+        let Some(strings) = raw.get(section.link as usize) else {
+            continue;
+        };
+        let count = section.size / section.entsize;
+        for idx in 0..count {
+            let off =
+                section
+                    .offset
+                    .checked_add(idx * section.entsize)
+                    .ok_or_else(|| LoadError::Malformed {
+                        format: ELF,
+                        field: "symbol table",
+                        message: "symbol offset overflow".to_string(),
+                    })?;
+            let off = usize::try_from(off).map_err(|_| LoadError::Malformed {
+                format: ELF,
+                field: "symbol table",
+                message: "symbol offset does not fit host usize".to_string(),
+            })?;
+            need(bytes, off, 24, "symbol")?;
+            let name_offset = u32_at(bytes, off, "st_name")?;
+            let info = bytes[off + 4];
+            let value = u64_at(bytes, off + 8, "st_value")?;
+            let size = u64_at(bytes, off + 16, "st_size")?;
+            if value == 0 && name_offset == 0 {
+                continue;
+            }
+            let name = string_at_section(bytes, strings, name_offset).unwrap_or_default();
+            symbols.push(crate::Symbol {
+                id: symbols.len() as i64,
+                name,
+                addr: value,
+                size,
+                kind: symbol_kind(info & 0x0f).to_string(),
+                is_import: value == 0,
+                is_export: value != 0,
+            });
+        }
+    }
+    Ok(symbols)
+}
+
+fn string_at_section(bytes: &[u8], section: &RawSection, offset: u32) -> Option<String> {
+    let start = section.offset.checked_add(u64::from(offset))? as usize;
+    let limit = section.offset.checked_add(section.size)? as usize;
+    if start >= limit || limit > bytes.len() {
+        return None;
+    }
+    let end = bytes[start..limit]
+        .iter()
+        .position(|byte| *byte == 0)
+        .map(|pos| start + pos)
+        .unwrap_or(limit);
+    Some(String::from_utf8_lossy(&bytes[start..end]).to_string())
+}
+
+fn section_permissions(flags: u64) -> String {
+    let writable = flags & 0x1 != 0;
+    let executable = flags & 0x4 != 0;
+    let mut out = String::new();
+    out.push('r');
+    out.push(if writable { 'w' } else { '-' });
+    out.push(if executable { 'x' } else { '-' });
+    out
+}
+
+fn symbol_kind(kind: u8) -> &'static str {
+    match kind {
+        1 => "Object",
+        2 => "Func",
+        3 => "Section",
+        4 => "File",
+        _ => "Unknown",
+    }
 }
 
 fn elf_profile(file_type: u16) -> LoadProfile {
