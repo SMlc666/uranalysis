@@ -16,6 +16,7 @@ const PF_X: u32 = 1;
 const PF_W: u32 = 2;
 const PF_R: u32 = 4;
 const SHT_SYMTAB: u32 = 2;
+const SHT_NOBITS: u32 = 8;
 const SHT_DYNSYM: u32 = 11;
 
 pub fn load(bytes: &[u8]) -> Result<LoadedImage> {
@@ -164,7 +165,7 @@ fn parse_raw_sections(bytes: &[u8], header: &ElfHeader) -> Result<Vec<RawSection
             link: u32_at(bytes, off + 40, "sh_link")?,
             entsize: u64_at(bytes, off + 56, "sh_entsize")?,
         };
-        if section.size > 0 {
+        if section.size > 0 && section.sh_type != SHT_NOBITS {
             range_in_file(bytes, section.offset, section.size, "section file range")?;
         }
         out.push(section);

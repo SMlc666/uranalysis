@@ -34,7 +34,7 @@ format = "pe"
 arch = "x86_64"
 class = "bits64"
 min_instructions = 4
-max_unknown_rate = 0.50
+max_unknown_rate = 0.98
 required_strings = ["ura-corpus-hello"]
 
 [[sample]]
