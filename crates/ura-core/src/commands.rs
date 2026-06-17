@@ -73,6 +73,14 @@ pub fn functions(project_path: impl AsRef<Path>) -> Result<Vec<Function>> {
     Ok(Project::open(project_path)?.file().functions.clone())
 }
 
+pub fn basic_blocks(project_path: impl AsRef<Path>) -> Result<Vec<crate::model::BasicBlock>> {
+    Ok(Project::open(project_path)?.file().basic_blocks.clone())
+}
+
+pub fn cfg_edges(project_path: impl AsRef<Path>) -> Result<Vec<crate::model::CfgEdge>> {
+    Ok(Project::open(project_path)?.file().cfg_edges.clone())
+}
+
 pub fn xrefs(project_path: impl AsRef<Path>, addr: u64) -> Result<Vec<Xref>> {
     let project = Project::open(project_path)?;
     Ok(project
@@ -211,8 +219,8 @@ fn build_project_file(
         sections,
         symbols,
         instructions: analysis.instructions,
-        basic_blocks: Vec::new(),
-        cfg_edges: Vec::new(),
+        basic_blocks: analysis.basic_blocks,
+        cfg_edges: analysis.cfg_edges,
         functions: analysis.functions,
         xrefs: analysis.xrefs,
         strings: analysis.strings,

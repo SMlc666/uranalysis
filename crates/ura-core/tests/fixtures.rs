@@ -46,5 +46,6 @@ pub fn minimal_pe32_plus_x86_64() -> Vec<u8> {
     bytes[text + 16..text + 20].copy_from_slice(&0x200u32.to_le_bytes());
     bytes[text + 20..text + 24].copy_from_slice(&0x200u32.to_le_bytes());
     bytes[text + 36..text + 40].copy_from_slice(&0x6000_0020u32.to_le_bytes());
+    bytes[0x200] = 0xc3;
     bytes
 }

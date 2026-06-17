@@ -5,6 +5,8 @@ use crate::model::{FlowKind, Function, FunctionSource, Instruction};
 pub fn discover_functions(
     entry: u64,
     instructions: &[Instruction],
+    _basic_blocks: &[crate::model::BasicBlock],
+    _cfg_edges: &[crate::model::CfgEdge],
     user_functions: &[Function],
 ) -> Vec<Function> {
     let mut starts = BTreeSet::new();

@@ -2,7 +2,11 @@ use std::collections::{HashMap, HashSet};
 
 use crate::model::{FlowKind, Instruction, InstructionKind, StringRef, Xref, XrefKind};
 
-pub fn build_xrefs(instructions: &[Instruction], strings: &[StringRef]) -> Vec<Xref> {
+pub fn build_xrefs(
+    instructions: &[Instruction],
+    strings: &[StringRef],
+    _cfg_edges: &[crate::model::CfgEdge],
+) -> Vec<Xref> {
     let mut out = Vec::new();
     let strings_by_operand = strings_by_operand(strings);
     for insn in instructions {
@@ -68,7 +72,7 @@ mod tests {
         let instructions = vec![instruction("mov x0, #0x10")];
         let strings = vec![string_ref(0x1), string_ref(0x10)];
 
-        let xrefs = build_xrefs(&instructions, &strings);
+        let xrefs = build_xrefs(&instructions, &strings, &[]);
 
         assert_eq!(xrefs.len(), 1);
         assert_eq!(xrefs[0].to_addr, 0x10);

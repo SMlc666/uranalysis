@@ -97,8 +97,8 @@ fn project_schema_v4_persists_source_bytes_and_graph_fields() -> Result<()> {
 
     assert_eq!(project.schema_version()?, 4);
     assert_eq!(project.file().source_bytes, bytes);
-    assert!(project.file().basic_blocks.is_empty());
-    assert!(project.file().cfg_edges.is_empty());
+    assert!(!project.file().basic_blocks.is_empty());
+    assert!(!project.file().cfg_edges.is_empty());
     Ok(())
 }
 
