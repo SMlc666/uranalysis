@@ -81,7 +81,10 @@ fn unknown_instruction_is_recorded_and_diagnosed() -> Result<()> {
     let diagnostics = commands::diagnostics(&project)?;
 
     assert_eq!(disasm[0].text, ".word 0xffffffff");
-    assert_eq!(disasm[0].decode_status, "Unknown");
+    assert_eq!(
+        disasm[0].decode_status,
+        ura_core::model::DecodeStatus::Unknown
+    );
     assert!(diagnostics
         .iter()
         .any(|diag| diag.addr == Some(0x400080) && diag.message.contains("unknown instruction")));

@@ -2,12 +2,25 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum BinaryFormat {
-    Elf64,
+    Elf,
+    Pe,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Architecture {
     Aarch64,
+    X86_64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ImageClass {
+    Bits32,
+    Bits64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Endian {
+    Little,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -26,6 +39,8 @@ pub struct ProjectInfo {
     pub source_hash: String,
     pub format: BinaryFormat,
     pub architecture: Architecture,
+    pub class: ImageClass,
+    pub endian: Endian,
     pub profile: LoadProfile,
 }
 
@@ -69,14 +84,48 @@ pub struct Instruction {
     pub mnemonic: String,
     pub operands: String,
     pub text: String,
-    pub kind: String,
-    pub flow: String,
+    pub kind: InstructionKind,
+    pub flow: FlowKind,
     pub fallthrough: Option<u64>,
     pub branch_target: Option<u64>,
-    pub decode_status: String,
+    pub decode_status: DecodeStatus,
     pub decoder: String,
     pub decoder_version: String,
     pub function_addr: Option<u64>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum InstructionKind {
+    Branch,
+    Call,
+    Return,
+    Compare,
+    Load,
+    Store,
+    Address,
+    Arithmetic,
+    Logical,
+    Move,
+    System,
+    Unknown,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum FlowKind {
+    Fallthrough,
+    Branch,
+    ConditionalBranch,
+    Call,
+    Return,
+    IndirectBranch,
+    IndirectCall,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum DecodeStatus {
+    Complete,
+    Partial,
+    Unknown,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

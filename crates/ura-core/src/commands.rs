@@ -8,8 +8,8 @@ use std::{
 use crate::{
     analysis::{self, AnalysisImage},
     model::{
-        Architecture, BinaryFormat, Diagnostic, Function, FunctionSource, Instruction, LoadProfile,
-        ProjectInfo, Section, Segment, StringRef, Symbol, Xref,
+        Architecture, BinaryFormat, Diagnostic, Endian, Function, FunctionSource, ImageClass,
+        Instruction, LoadProfile, ProjectInfo, Section, Segment, StringRef, Symbol, Xref,
     },
     project::Project,
     store::{ProjectFile, PROJECT_SCHEMA_VERSION},
@@ -174,8 +174,10 @@ fn build_project_file(
             schema_version: PROJECT_SCHEMA_VERSION,
             engine_version: env!("CARGO_PKG_VERSION").to_string(),
             source_hash: source_hash.to_string(),
-            format: BinaryFormat::Elf64,
+            format: BinaryFormat::Elf,
             architecture: Architecture::Aarch64,
+            class: ImageClass::Bits64,
+            endian: Endian::Little,
             profile: convert_profile(loaded.profile),
         },
         segments,

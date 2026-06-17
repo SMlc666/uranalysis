@@ -1,10 +1,11 @@
-use crate::model::{Instruction, StringRef, Xref, XrefKind};
+use crate::model::{FlowKind, Instruction, InstructionKind, StringRef, Xref, XrefKind};
 
 pub fn build_xrefs(instructions: &[Instruction], strings: &[StringRef]) -> Vec<Xref> {
     let mut out = Vec::new();
     for insn in instructions {
         if let Some(target) = insn.branch_target {
-            let kind = if insn.flow == "Call" || insn.flow == "IndirectCall" || insn.kind == "Call"
+            let kind = if matches!(insn.flow, FlowKind::Call | FlowKind::IndirectCall)
+                || insn.kind == InstructionKind::Call
             {
                 XrefKind::Call
             } else {
