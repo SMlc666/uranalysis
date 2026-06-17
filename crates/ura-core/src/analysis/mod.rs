@@ -2,6 +2,7 @@ pub mod diagnostics;
 pub mod disasm;
 pub mod functions;
 pub mod strings;
+pub mod target;
 pub mod xrefs;
 
 use crate::{
@@ -10,6 +11,7 @@ use crate::{
 };
 
 pub struct AnalysisImage<'a> {
+    pub target: target::AnalysisTarget,
     pub entry: u64,
     pub bytes: &'a [u8],
     pub segments: &'a [Segment],

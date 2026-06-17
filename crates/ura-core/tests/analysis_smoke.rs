@@ -92,16 +92,18 @@ fn unknown_instruction_is_recorded_and_diagnosed() -> Result<()> {
 }
 
 #[test]
-fn pe_input_is_rejected_before_analysis() -> Result<()> {
+fn pe_x86_64_input_creates_project_and_records_target() -> Result<()> {
     let dir = tempdir()?;
     let input = dir.path().join("sample.exe");
     let project = dir.path().join("sample.ura");
     std::fs::write(&input, fixtures::minimal_pe32_plus_x86_64())?;
 
-    let err = commands::new_project(&input, &project)
-        .unwrap_err()
-        .to_string();
+    commands::new_project(&input, &project)?;
+    let info = commands::info(&project)?;
 
-    assert!(err.contains("unsupported analysis target"), "{err}");
+    assert_eq!(info.format, ura_core::model::BinaryFormat::Pe);
+    assert_eq!(info.architecture, ura_core::model::Architecture::X86_64);
+    assert_eq!(info.class, ura_core::model::ImageClass::Bits64);
+    assert_eq!(info.endian, ura_core::model::Endian::Little);
     Ok(())
 }

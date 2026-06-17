@@ -5,6 +5,13 @@ use crate::{
 };
 
 pub fn linear_disassemble(image: &AnalysisImage<'_>) -> Result<Vec<Instruction>> {
+    match image.target.architecture {
+        crate::model::Architecture::Aarch64 => disassemble_aarch64(image),
+        crate::model::Architecture::X86_64 => disassemble_x86_64(image),
+    }
+}
+
+fn disassemble_aarch64(image: &AnalysisImage<'_>) -> Result<Vec<Instruction>> {
     let decoder = urdisassembly::Decoder::new(
         urdisassembly::Architecture::Aarch64,
         urdisassembly::DecodeOptions::default(),
@@ -22,32 +29,89 @@ pub fn linear_disassemble(image: &AnalysisImage<'_>) -> Result<Vec<Instruction>>
             let decoded = decoder
                 .decode_one(chunk, addr)
                 .map_err(|err| UraError::Analysis(err.to_string()))?;
-            let operands = decoded.operand_text();
-            let fallthrough = match decoded.flow {
-                urdisassembly::FlowKind::Branch
-                | urdisassembly::FlowKind::Return
-                | urdisassembly::FlowKind::IndirectBranch => None,
-                _ => Some(addr + u64::from(decoded.size)),
-            };
-            out.push(Instruction {
-                addr: decoded.address,
-                size: decoded.size,
-                bytes: decoded.bytes,
-                mnemonic: decoded.mnemonic,
-                operands,
-                text: decoded.text,
-                kind: convert_kind(decoded.kind),
-                flow: convert_flow(decoded.flow),
-                fallthrough,
-                branch_target: decoded.branch_target,
-                decode_status: convert_status(decoded.status),
-                decoder: "urdisassembly/aarch64".to_string(),
-                decoder_version: env!("CARGO_PKG_VERSION").to_string(),
-                function_addr: None,
-            });
+            out.push(convert_instruction(decoded, "urdisassembly/aarch64"));
         }
     }
     Ok(out)
+}
+
+fn disassemble_x86_64(image: &AnalysisImage<'_>) -> Result<Vec<Instruction>> {
+    let decoder = urdisassembly::Decoder::new(
+        urdisassembly::Architecture::X86_64,
+        urdisassembly::DecodeOptions::default(),
+    )
+    .map_err(|err| UraError::Analysis(err.to_string()))?;
+
+    let mut out = Vec::new();
+    for (start, end) in image.executable_ranges() {
+        let mut addr = start;
+        while addr < end {
+            let remaining = (end - addr).min(15) as usize;
+            if remaining == 0 {
+                break;
+            }
+            let Some(bytes) = image.bytes_at(addr, remaining) else {
+                break;
+            };
+            match decoder.decode_one(bytes, addr) {
+                Ok(decoded) => {
+                    let size = u64::from(decoded.size.max(1));
+                    out.push(convert_instruction(decoded, "urdisassembly/x86_64"));
+                    addr = addr.saturating_add(size);
+                }
+                Err(_) => {
+                    out.push(unknown_byte_instruction(addr, bytes[0]));
+                    addr = addr.saturating_add(1);
+                }
+            }
+        }
+    }
+    Ok(out)
+}
+
+fn convert_instruction(decoded: urdisassembly::Instruction, decoder: &str) -> Instruction {
+    let operands = decoded.operand_text();
+    let fallthrough = match decoded.flow {
+        urdisassembly::FlowKind::Branch
+        | urdisassembly::FlowKind::Return
+        | urdisassembly::FlowKind::IndirectBranch => None,
+        _ => Some(decoded.address + u64::from(decoded.size)),
+    };
+    Instruction {
+        addr: decoded.address,
+        size: decoded.size,
+        bytes: decoded.bytes,
+        mnemonic: decoded.mnemonic,
+        operands,
+        text: decoded.text,
+        kind: convert_kind(decoded.kind),
+        flow: convert_flow(decoded.flow),
+        fallthrough,
+        branch_target: decoded.branch_target,
+        decode_status: convert_status(decoded.status),
+        decoder: decoder.to_string(),
+        decoder_version: env!("CARGO_PKG_VERSION").to_string(),
+        function_addr: None,
+    }
+}
+
+fn unknown_byte_instruction(addr: u64, byte: u8) -> Instruction {
+    Instruction {
+        addr,
+        size: 1,
+        bytes: vec![byte],
+        mnemonic: ".byte".to_string(),
+        operands: format!("0x{byte:02x}"),
+        text: format!(".byte 0x{byte:02x}"),
+        kind: InstructionKind::Unknown,
+        flow: FlowKind::Fallthrough,
+        fallthrough: Some(addr + 1),
+        branch_target: None,
+        decode_status: DecodeStatus::Unknown,
+        decoder: "urdisassembly/x86_64".to_string(),
+        decoder_version: env!("CARGO_PKG_VERSION").to_string(),
+        function_addr: None,
+    }
 }
 
 fn convert_kind(kind: urdisassembly::InstructionKind) -> InstructionKind {

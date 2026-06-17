@@ -6,10 +6,10 @@ use std::{
 };
 
 use crate::{
-    analysis::{self, AnalysisImage},
+    analysis::{self, target::AnalysisTarget, AnalysisImage},
     model::{
-        Architecture, BinaryFormat, Diagnostic, Endian, Function, FunctionSource, ImageClass,
-        Instruction, LoadProfile, ProjectInfo, Section, Segment, StringRef, Symbol, Xref,
+        Diagnostic, Function, FunctionSource, Instruction, LoadProfile, ProjectInfo, Section,
+        Segment, StringRef, Symbol, Xref,
     },
     project::Project,
     store::{ProjectFile, PROJECT_SCHEMA_VERSION},
@@ -20,7 +20,6 @@ pub fn new_project(input: impl AsRef<Path>, output: impl AsRef<Path>) -> Result<
     let bytes = fs::read(input)?;
     let hash = stable_hash(&bytes);
     let loaded = urloader::load(&bytes).map_err(|err| UraError::Elf(err.to_string()))?;
-    ensure_supported_analysis_target(&loaded)?;
     let project_file = build_project_file(&hash, &loaded, &[])?;
     Project::create(output, project_file)?;
     Ok(())
@@ -163,7 +162,9 @@ fn build_project_file(
     let segments = convert_segments(&loaded.segments);
     let sections = convert_sections(&loaded.sections);
     let symbols = convert_symbols(&loaded.symbols);
+    let target = AnalysisTarget::from_loaded(loaded)?;
     let analysis_image = AnalysisImage {
+        target,
         entry: loaded.entry,
         bytes: &loaded.bytes,
         segments: &segments,
@@ -174,10 +175,10 @@ fn build_project_file(
             schema_version: PROJECT_SCHEMA_VERSION,
             engine_version: env!("CARGO_PKG_VERSION").to_string(),
             source_hash: source_hash.to_string(),
-            format: BinaryFormat::Elf,
-            architecture: Architecture::Aarch64,
-            class: ImageClass::Bits64,
-            endian: Endian::Little,
+            format: target.format,
+            architecture: target.architecture,
+            class: target.class,
+            endian: target.endian,
             profile: convert_profile(loaded.profile),
         },
         segments,
@@ -191,20 +192,6 @@ fn build_project_file(
         renames: Default::default(),
         diagnostics: analysis.diagnostics,
     })
-}
-
-fn ensure_supported_analysis_target(image: &urloader::LoadedImage) -> Result<()> {
-    if image.format == urloader::ImageFormat::Elf
-        && image.architecture == urloader::Architecture::Aarch64
-        && image.class == urloader::ImageClass::Bits64
-        && image.endian == urloader::Endian::Little
-    {
-        return Ok(());
-    }
-    Err(UraError::Unsupported(format!(
-        "unsupported analysis target: format={:?} architecture={:?} class={:?} endian={:?}",
-        image.format, image.architecture, image.class, image.endian
-    )))
 }
 
 fn convert_profile(profile: urloader::LoadProfile) -> LoadProfile {
