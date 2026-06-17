@@ -1,6 +1,7 @@
 use crate::{
+    arch::aarch64,
     error::{DecodeError, Result},
-    model::{Architecture, DecodeOptions, Endian},
+    model::{Architecture, DecodeOptions, Endian, Instruction},
 };
 
 #[derive(Debug, Clone)]
@@ -25,6 +26,13 @@ impl Decoder {
 
     pub fn options(&self) -> DecodeOptions {
         self.options
+    }
+
+    pub fn decode_one(&self, bytes: &[u8], address: u64) -> Result<Instruction> {
+        let word = Self::require_word(bytes)?;
+        match self.architecture {
+            Architecture::Aarch64 => Ok(aarch64::decode::decode_word(word, address)),
+        }
     }
 
     pub fn require_word(bytes: &[u8]) -> Result<u32> {
