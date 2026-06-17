@@ -139,6 +139,18 @@ fn decodes_x86_64_mov_register_forms() {
     assert_eq!(mov_r8.text, "mov r8, r9");
     assert_eq!(register_name(&mov_r8.operands[0]), "r8");
     assert_eq!(register_name(&mov_r8.operands[1]), "r9");
+
+    let movsx = decode(&[0x0f, 0xbe, 0x00], 0x401000);
+    assert_eq!(movsx.text, "movsx eax, [rax]");
+    assert_eq!(movsx.size, 3);
+    assert_eq!(movsx.kind, InstructionKind::Load);
+    assert_eq!(register_name(&movsx.operands[0]), "eax");
+
+    let movzx = decode(&[0x0f, 0xb6, 0x40, 0x01], 0x401000);
+    assert_eq!(movzx.text, "movzx eax, [rax+0x1]");
+    assert_eq!(movzx.size, 4);
+    assert_eq!(movzx.kind, InstructionKind::Load);
+    assert_eq!(register_name(&movzx.operands[0]), "eax");
 }
 
 #[test]

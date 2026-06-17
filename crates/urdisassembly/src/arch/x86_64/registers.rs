@@ -1,5 +1,33 @@
 use crate::model::Register;
 
+pub fn reg8(index: u8, rex_present: bool) -> Register {
+    let name = match index & 0x0f {
+        0 => "al",
+        1 => "cl",
+        2 => "dl",
+        3 => "bl",
+        4 if rex_present => "spl",
+        4 => "ah",
+        5 if rex_present => "bpl",
+        5 => "ch",
+        6 if rex_present => "sil",
+        6 => "dh",
+        7 if rex_present => "dil",
+        7 => "bh",
+        8 => "r8b",
+        9 => "r9b",
+        10 => "r10b",
+        11 => "r11b",
+        12 => "r12b",
+        13 => "r13b",
+        14 => "r14b",
+        _ => "r15b",
+    };
+    Register {
+        name: name.to_string(),
+    }
+}
+
 pub fn reg32(index: u8) -> Register {
     let name = match index & 0x0f {
         0 => "eax",
