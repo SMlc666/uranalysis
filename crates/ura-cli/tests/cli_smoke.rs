@@ -53,3 +53,29 @@ fn cli_creates_project_and_prints_info() {
         .success()
         .stdout(predicates::str::contains("Aarch64"));
 }
+
+#[test]
+fn cli_reanalyze_rebuilds_stale_cache() -> Result<(), Box<dyn std::error::Error>> {
+    let dir = tempdir()?;
+    let input = dir.path().join("sample.elf");
+    let project = dir.path().join("sample.ura");
+    std::fs::write(&input, minimal_elf64_aarch64_executable())?;
+
+    Command::cargo_bin("ura")?
+        .args(["new", input.to_str().unwrap(), "-o", project.to_str().unwrap()])
+        .assert()
+        .success();
+
+    let mut stored = urastore::load_project(&project)?;
+    stored.cache.state.functions.clear();
+    urastore::save_project(&project, &stored)?;
+
+    Command::cargo_bin("ura")?
+        .args(["analyze", project.to_str().unwrap()])
+        .assert()
+        .success();
+
+    let rebuilt = urastore::load_project(&project)?;
+    assert!(!rebuilt.cache.state.functions.is_empty());
+    Ok(())
+}

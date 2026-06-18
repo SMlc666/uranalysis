@@ -41,7 +41,9 @@ fn daemon_opens_project_and_writes_comment() {
     let input = dir.path().join("sample.elf");
     let project = dir.path().join("sample.ura");
     std::fs::write(&input, minimal_elf64_aarch64_executable()).unwrap();
-    ura_core::commands::new_project(&input, &project).unwrap();
+    let mut project_handle = ura_cli::SessionProject::create(&input, &project).unwrap();
+    project_handle.refresh().unwrap();
+    project_handle.save().unwrap();
 
     let port = free_port();
     let addr = format!("127.0.0.1:{port}");
@@ -85,9 +87,10 @@ fn daemon_opens_project_and_writes_comment() {
     );
     let response = recv(&mut reader);
     assert_eq!(response["ok"], true);
+    let stored = urastore::load_project(&project).unwrap();
     assert_eq!(
-        ura_core::commands::comments(&project, 0x400080).unwrap(),
-        vec!["daemon comment".to_string()]
+        stored.user_truth.facts.comments.get(&0x400080),
+        Some(&"daemon comment".to_string())
     );
 
     child.kill().unwrap();

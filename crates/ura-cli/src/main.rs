@@ -4,7 +4,7 @@ use std::path::PathBuf;
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
-use ura_cli::shell;
+use ura_cli::{shell, SessionProject};
 
 #[derive(Parser)]
 #[command(name = "ura")]
@@ -88,10 +88,27 @@ enum Command {
 fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.command {
-        Command::New { input, output } => ura_core::commands::new_project(input, output)?,
-        Command::Analyze { project } => ura_core::commands::reanalyze(project)?,
+        Command::New { input, output } => {
+            let mut project = SessionProject::create(&input, &output)?;
+            project.refresh()?;
+            project.save()?;
+        }
+        Command::Analyze { project } => {
+            let mut project = SessionProject::load(&project)?;
+            project.force_reanalyze()?;
+            project.save()?;
+        }
         Command::Info { project, json } => {
-            let info = ura_core::commands::info(project)?;
+            let project = SessionProject::load(&project)?;
+            let info = serde_json::json!({
+                "format": project.stored.source.format,
+                "architecture": project.stored.source.architecture,
+                "profile": project.stored.source.profile,
+                "entry": project.stored.source.entry,
+                "functions": project.session.state.functions.len(),
+                "xrefs": project.session.state.xrefs.len(),
+                "diagnostics": project.session.state.diagnostics.len(),
+            });
             if json {
                 output::print_json(&info)?;
             } else {
@@ -99,7 +116,8 @@ fn main() -> Result<()> {
             }
         }
         Command::Funcs { project, json } => {
-            let funcs = ura_core::commands::functions(project)?;
+            let project = SessionProject::load(&project)?;
+            let funcs = project.session.state.functions;
             if json {
                 output::print_json(&funcs)?;
             } else {
@@ -112,7 +130,17 @@ fn main() -> Result<()> {
             count,
             json,
         } => {
-            let rows = ura_core::commands::disasm(project, parse_addr(&addr)?, count)?;
+            let project = SessionProject::load(&project)?;
+            let addr = parse_addr(&addr)?;
+            let rows = project
+                .session
+                .state
+                .instructions
+                .iter()
+                .filter(|insn| insn.addr >= addr)
+                .take(count)
+                .cloned()
+                .collect::<Vec<_>>();
             if json {
                 output::print_json(&rows)?;
             } else {
@@ -124,7 +152,16 @@ fn main() -> Result<()> {
             addr,
             json,
         } => {
-            let rows = ura_core::commands::xrefs(project, parse_addr(&addr)?)?;
+            let addr = parse_addr(&addr)?;
+            let project = SessionProject::load(&project)?;
+            let rows = project
+                .session
+                .state
+                .xrefs
+                .iter()
+                .filter(|xref| xref.to_addr == addr || xref.from_addr == addr)
+                .cloned()
+                .collect::<Vec<_>>();
             if json {
                 output::print_json(&rows)?;
             } else {
@@ -136,7 +173,16 @@ fn main() -> Result<()> {
             filter,
             json,
         } => {
-            let rows = ura_core::commands::strings(project, filter.as_deref())?;
+            let project = SessionProject::load(&project)?;
+            let filter = filter.unwrap_or_default();
+            let rows = project
+                .session
+                .state
+                .strings
+                .iter()
+                .filter(|s| s.value.contains(&filter))
+                .cloned()
+                .collect::<Vec<_>>();
             if json {
                 output::print_json(&rows)?;
             } else {
@@ -144,7 +190,8 @@ fn main() -> Result<()> {
             }
         }
         Command::Diagnostics { project, json } => {
-            let rows = ura_core::commands::diagnostics(project)?;
+            let project = SessionProject::load(&project)?;
+            let rows = project.session.state.diagnostics;
             if json {
                 output::print_json(&rows)?;
             } else {
@@ -155,14 +202,28 @@ fn main() -> Result<()> {
             project,
             addr,
             name,
-        } => ura_core::commands::rename(project, parse_addr(&addr)?, &name)?,
+        } => {
+            let mut project = SessionProject::load(&project)?;
+            project.session.rename(parse_addr(&addr)?, &name)?;
+            project.refresh()?;
+            project.save()?;
+        }
         Command::Comment {
             project,
             addr,
             text,
-        } => ura_core::commands::comment(project, parse_addr(&addr)?, &text)?,
+        } => {
+            let mut project = SessionProject::load(&project)?;
+            project.session.comment(parse_addr(&addr)?, &text)?;
+            project.refresh()?;
+            project.save()?;
+        }
         Command::MakeFunc { project, addr } => {
-            ura_core::commands::make_function(project, parse_addr(&addr)?)?
+            let mut project = SessionProject::load(&project)?;
+            let addr = parse_addr(&addr)?;
+            project.session.update_manual_function_range(addr, addr, addr + 4)?;
+            project.refresh()?;
+            project.save()?;
         }
         Command::SetFuncRange {
             project,
@@ -170,12 +231,15 @@ fn main() -> Result<()> {
             start,
             end,
         } => {
-            ura_core::commands::set_function_range(
-                project,
-                parse_addr(&func_addr)?,
+            let mut project = SessionProject::load(&project)?;
+            let func_addr = parse_addr(&func_addr)?;
+            project.session.update_manual_function_range(
+                func_addr,
                 parse_addr(&start)?,
                 parse_addr(&end)?,
             )?;
+            project.refresh()?;
+            project.save()?;
         }
         Command::Shell { project } => shell::run(project)?,
     }

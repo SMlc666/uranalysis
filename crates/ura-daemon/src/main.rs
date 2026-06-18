@@ -7,8 +7,13 @@ use std::{
     path::PathBuf,
 };
 
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use protocol::{Request, Response};
+
+struct SessionProject {
+    stored: urastore::StoredProject,
+    session: ura_core::analysis::session::AnalysisSession,
+}
 
 fn main() -> Result<()> {
     let addr = std::env::args()
@@ -38,6 +43,38 @@ fn handle_client(stream: TcpStream) -> Result<()> {
     Ok(())
 }
 
+fn load_session_project(path: &PathBuf) -> Result<SessionProject> {
+    let stored = urastore::load_project(path)?;
+    let loaded = urloader::load(&stored.source.source_bytes).map_err(|err| anyhow!(err.to_string()))?;
+    let session = ura_core::analysis::session::AnalysisSession::from_parts(
+        ura_core::analysis::session::AnalysisInputs {
+            loaded,
+            user_facts: stored.user_truth.facts.clone(),
+        },
+        stored.cache.state.clone(),
+        stored
+            .cache_metadata
+            .is_stale_for(&stored.source, &stored.user_truth),
+    );
+    Ok(SessionProject { stored, session })
+}
+
+fn save_session_project(path: &PathBuf, project: &mut SessionProject) -> Result<()> {
+    if project.stored.user_truth.facts != project.session.inputs.user_facts {
+        project.stored.user_truth.revision += 1;
+    }
+    project.stored.user_truth.facts = project.session.inputs.user_facts.clone();
+    project.stored.cache.state = project.session.state.clone();
+    project.stored.cache_metadata = urastore::CacheMetadata::fresh(
+        env!("CARGO_PKG_VERSION"),
+        "kernel-v1",
+        &project.stored.source.source_hash,
+        project.stored.user_truth.revision,
+    );
+    urastore::save_project(path, &project.stored)?;
+    Ok(())
+}
+
 fn handle_request(
     request: Request,
     sessions: &mut HashMap<u64, PathBuf>,
@@ -59,30 +96,51 @@ fn handle_request(
             serde_json::to_string(&Response::ok(id, serde_json::json!({ "closed": true }))).unwrap()
         }
         Request::GetInfo { id, session_id } => with_project(id, session_id, sessions, |path| {
-            serde_json::to_value(ura_core::commands::info(path)?).map_err(anyhow::Error::from)
+            let project = load_session_project(path)?;
+            Ok(serde_json::json!({
+                "format": project.stored.source.format,
+                "architecture": project.stored.source.architecture,
+                "profile": project.stored.source.profile,
+                "entry": project.stored.source.entry,
+            }))
         }),
-        Request::ListFunctions { id, session_id } => {
-            with_project(id, session_id, sessions, |path| {
-                serde_json::to_value(ura_core::commands::functions(path)?)
-                    .map_err(anyhow::Error::from)
-            })
-        }
+        Request::ListFunctions { id, session_id } => with_project(id, session_id, sessions, |path| {
+            let project = load_session_project(path)?;
+            serde_json::to_value(project.session.state.functions).map_err(anyhow::Error::from)
+        }),
         Request::GetDisassembly {
             id,
             session_id,
             addr,
             count,
         } => with_project(id, session_id, sessions, |path| {
-            serde_json::to_value(ura_core::commands::disasm(path, addr, count)?)
-                .map_err(anyhow::Error::from)
+            let project = load_session_project(path)?;
+            let rows = project
+                .session
+                .state
+                .instructions
+                .iter()
+                .filter(|insn| insn.addr >= addr)
+                .take(count)
+                .cloned()
+                .collect::<Vec<_>>();
+            serde_json::to_value(rows).map_err(anyhow::Error::from)
         }),
         Request::ListXrefs {
             id,
             session_id,
             addr,
         } => with_project(id, session_id, sessions, |path| {
-            serde_json::to_value(ura_core::commands::xrefs(path, addr)?)
-                .map_err(anyhow::Error::from)
+            let project = load_session_project(path)?;
+            let rows = project
+                .session
+                .state
+                .xrefs
+                .iter()
+                .filter(|xref| xref.to_addr == addr || xref.from_addr == addr)
+                .cloned()
+                .collect::<Vec<_>>();
+            serde_json::to_value(rows).map_err(anyhow::Error::from)
         }),
         Request::RenameSymbol {
             id,
@@ -90,7 +148,10 @@ fn handle_request(
             addr,
             name,
         } => with_project(id, session_id, sessions, |path| {
-            ura_core::commands::rename(path, addr, &name)?;
+            let mut project = load_session_project(path)?;
+            project.session.rename(addr, &name)?;
+            project.session.refresh()?;
+            save_session_project(path, &mut project)?;
             Ok(serde_json::json!({ "renamed": true }))
         }),
         Request::SetComment {
@@ -99,7 +160,10 @@ fn handle_request(
             addr,
             text,
         } => with_project(id, session_id, sessions, |path| {
-            ura_core::commands::comment(path, addr, &text)?;
+            let mut project = load_session_project(path)?;
+            project.session.comment(addr, &text)?;
+            project.session.refresh()?;
+            save_session_project(path, &mut project)?;
             Ok(serde_json::json!({ "commented": true }))
         }),
         Request::MakeFunction {
@@ -107,7 +171,12 @@ fn handle_request(
             session_id,
             addr,
         } => with_project(id, session_id, sessions, |path| {
-            ura_core::commands::make_function(path, addr)?;
+            let mut project = load_session_project(path)?;
+            project
+                .session
+                .update_manual_function_range(addr, addr, addr + 4)?;
+            project.session.refresh()?;
+            save_session_project(path, &mut project)?;
             Ok(serde_json::json!({ "made_function": true }))
         }),
         Request::SetFunctionRange {
@@ -117,11 +186,24 @@ fn handle_request(
             start,
             end,
         } => with_project(id, session_id, sessions, |path| {
-            ura_core::commands::set_function_range(path, function_addr, start, end)?;
+            let mut project = load_session_project(path)?;
+            project
+                .session
+                .update_manual_function_range(function_addr, start, end)?;
+            project.session.refresh()?;
+            save_session_project(path, &mut project)?;
             Ok(serde_json::json!({ "range_set": true }))
         }),
         Request::Reanalyze { id, session_id } => with_project(id, session_id, sessions, |path| {
-            ura_core::commands::reanalyze(path)?;
+            let mut project = load_session_project(path)?;
+            project
+                .session
+                .mark_dirty(ura_core::analysis::invalidation::DirtyInputs {
+                    source_bytes: true,
+                    ..Default::default()
+                });
+            project.session.refresh()?;
+            save_session_project(path, &mut project)?;
             Ok(serde_json::json!({ "reanalyzed": true }))
         }),
     }

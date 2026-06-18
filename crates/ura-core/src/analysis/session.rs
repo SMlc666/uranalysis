@@ -53,6 +53,15 @@ impl AnalysisSession {
         }
     }
 
+    pub fn from_parts(inputs: AnalysisInputs, state: AnalysisState, stale: bool) -> Self {
+        let mut session = Self::new(inputs);
+        session.state = state;
+        if !stale {
+            session.dirty = DirtyInputs::default();
+        }
+        session
+    }
+
     pub fn mark_dirty(&mut self, dirty: DirtyInputs) {
         self.dirty = dirty;
     }

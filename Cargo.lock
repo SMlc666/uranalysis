@@ -813,6 +813,8 @@ dependencies = [
  "serde_json",
  "tempfile",
  "ura-core",
+ "urastore",
+ "urloader",
 ]
 
 [[package]]
@@ -848,6 +850,20 @@ dependencies = [
  "serde",
  "serde_json",
  "tempfile",
+ "ura-cli",
+ "ura-core",
+ "urastore",
+ "urloader",
+]
+
+[[package]]
+name = "urastore"
+version = "0.1.0"
+dependencies = [
+ "bincode",
+ "serde",
+ "tempfile",
+ "thiserror",
  "ura-core",
 ]
 
