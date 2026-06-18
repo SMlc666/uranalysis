@@ -12,13 +12,13 @@ fn decode(bytes: &[u8], address: u64) -> urcodec::Instruction {
 
 #[test]
 fn constructs_x86_64_decoder_and_decodes_unknown_byte() {
-    let insn = decode(&[0xcc], 0x401000);
+    let insn = decode(&[0xd6], 0x401000);
 
     assert_eq!(insn.address, 0x401000);
     assert_eq!(insn.size, 1);
-    assert_eq!(insn.bytes, vec![0xcc]);
+    assert_eq!(insn.bytes, vec![0xd6]);
     assert_eq!(insn.mnemonic, ".byte");
-    assert_eq!(insn.text, ".byte 0xcc");
+    assert_eq!(insn.text, ".byte 0xd6");
     assert_eq!(insn.kind, InstructionKind::Unknown);
     assert_eq!(insn.flow, FlowKind::Fallthrough);
     assert_eq!(insn.branch_target, None);
@@ -63,6 +63,17 @@ fn decodes_x86_64_returns_calls_and_jumps() {
     let jmp_rel32 = decode(&[0xe9, 0xfb, 0xff, 0xff, 0xff], 0x401010);
     assert_eq!(jmp_rel32.text, "jmp 0x401010");
     assert_eq!(jmp_rel32.branch_target, Some(0x401010));
+}
+
+#[test]
+fn decodes_x86_64_int3() {
+    let int3 = decode(&[0xcc], 0x401000);
+
+    assert_eq!(int3.text, "int3");
+    assert_eq!(int3.size, 1);
+    assert_eq!(int3.kind, InstructionKind::System);
+    assert_eq!(int3.flow, FlowKind::Fallthrough);
+    assert_eq!(int3.status, DecodeStatus::Complete);
 }
 
 #[test]
@@ -339,4 +350,32 @@ fn decodes_x86_64_multibyte_nops() {
     assert_eq!(indexed_nop.size, 5);
     assert_eq!(indexed_nop.kind, InstructionKind::System);
     assert_eq!(indexed_nop.flow, FlowKind::Fallthrough);
+}
+
+#[test]
+fn decodes_x86_64_sse_move_and_xor_forms() {
+    let movups_store = decode(&[0x0f, 0x11, 0x24, 0x24], 0x401000);
+    assert_eq!(movups_store.text, "movups [rsp], xmm4");
+    assert_eq!(movups_store.size, 4);
+    assert_eq!(movups_store.kind, InstructionKind::Store);
+
+    let movups_load = decode(&[0x0f, 0x10, 0x44, 0x24, 0x40], 0x401000);
+    assert_eq!(movups_load.text, "movups xmm0, [rsp+0x40]");
+    assert_eq!(movups_load.size, 5);
+    assert_eq!(movups_load.kind, InstructionKind::Load);
+
+    let movaps_load = decode(&[0x0f, 0x28, 0x84, 0x24, 0x80, 0x00, 0x00, 0x00], 0x401000);
+    assert_eq!(movaps_load.text, "movaps xmm0, [rsp+0x80]");
+    assert_eq!(movaps_load.size, 8);
+    assert_eq!(movaps_load.kind, InstructionKind::Load);
+
+    let movaps_store = decode(&[0x0f, 0x29, 0x44, 0x24, 0x20], 0x401000);
+    assert_eq!(movaps_store.text, "movaps [rsp+0x20], xmm0");
+    assert_eq!(movaps_store.size, 5);
+    assert_eq!(movaps_store.kind, InstructionKind::Store);
+
+    let xorps = decode(&[0x0f, 0x57, 0xc0], 0x401000);
+    assert_eq!(xorps.text, "xorps xmm0, xmm0");
+    assert_eq!(xorps.size, 3);
+    assert_eq!(xorps.kind, InstructionKind::Logical);
 }

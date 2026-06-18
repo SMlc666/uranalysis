@@ -19,6 +19,6 @@ The first declarative forms cover `ret` and `call rel32`. These forms drive deco
 | Logical | `and`, `or`, `xor`, `not` | Partial | Implemented | Implemented | Yes | Not measured | Common 64-bit GPR, imm8/imm32 group, and `f7 /2` forms only. |
 | Indirect control flow | `call r/m64`, `jmp r/m64` | Partial | Implemented | Implemented | Yes | Not measured | Near indirect `ff /2` and `ff /4` forms only. |
 | Stack | `push`, `pop` | Partial | Implemented | Implemented | Yes | Not measured | 64-bit GPR forms and `ff /6` only. |
-| SSE/AVX | `movaps`, `vaddps` | Not implemented | Not implemented | Not implemented | No | Not measured | Out of first scope. |
-| System and privileged | `syscall`, `rdmsr`, `wrmsr` | Not implemented | Not implemented | Not implemented | No | Not measured | Out of first scope. |
+| SSE/AVX | `movups`, `movaps`, `xorps`, `vaddps` | Partial | Implemented | Implemented | Yes | Not measured | Basic legacy XMM `movups`, `movaps`, and `xorps` forms only; AVX remains out of scope. |
+| System and privileged | `int3`, `syscall`, `rdmsr`, `wrmsr` | Partial | Implemented | Implemented | Yes | Not measured | `int3` only; privileged/system instructions remain out of first scope. |
 | Segment/TLS | `fs:`, `gs:` | Not implemented | Not implemented | Not implemented | No | Not measured | Out of first scope. |

@@ -79,3 +79,9 @@ pub fn reg64(index: u8) -> Register {
         name: name.to_string(),
     }
 }
+
+pub fn xmm(index: u8) -> Register {
+    Register {
+        name: format!("xmm{}", index & 0x0f),
+    }
+}

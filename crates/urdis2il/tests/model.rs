@@ -21,7 +21,7 @@ fn il_registers_are_scoped_by_architecture_and_width() {
 #[test]
 fn unknown_instruction_lifts_to_unsupported_statement() {
     let decoder = Decoder::new(Architecture::X86_64, DecodeOptions::default()).unwrap();
-    let insn = decoder.decode_one(&[0xcc], 0x401000).unwrap();
+    let insn = decoder.decode_one(&[0xd6], 0x401000).unwrap();
     assert_eq!(insn.status, DecodeStatus::Unknown);
     assert_eq!(insn.kind, InstructionKind::Unknown);
     assert_eq!(insn.flow, FlowKind::Fallthrough);
