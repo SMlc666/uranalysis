@@ -810,12 +810,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "urcodec"
+version = "0.1.0"
+dependencies = [
+ "goblin",
+ "serde",
+ "tempfile",
+ "thiserror",
+]
+
+[[package]]
 name = "urdis2il"
 version = "0.1.0"
 dependencies = [
  "serde",
  "thiserror",
- "urdisassembly",
+ "urcodec",
 ]
 
 [[package]]

@@ -5,9 +5,9 @@ use crate::{
     Result,
 };
 
-const ARCH: urdisassembly::Architecture = urdisassembly::Architecture::X86_64;
+const ARCH: urcodec::Architecture = urcodec::Architecture::X86_64;
 
-pub(crate) fn lift(instruction: &urdisassembly::Instruction) -> Result<IlInstruction> {
+pub(crate) fn lift(instruction: &urcodec::Instruction) -> Result<IlInstruction> {
     let mut statements = Vec::new();
     let mut terminator = None;
     match instruction.mnemonic.as_str() {
@@ -65,24 +65,24 @@ pub(crate) fn lift(instruction: &urdisassembly::Instruction) -> Result<IlInstruc
     })
 }
 
-fn lift_mov(instruction: &urdisassembly::Instruction, statements: &mut Vec<IlStmt>) {
+fn lift_mov(instruction: &urcodec::Instruction, statements: &mut Vec<IlStmt>) {
     if let [dst, src] = instruction.operands.as_slice() {
         match (dst, src) {
-            (urdisassembly::Operand::Register(dst), urdisassembly::Operand::Memory(mem)) => {
+            (urcodec::Operand::Register(dst), urcodec::Operand::Memory(mem)) => {
                 statements.push(IlStmt::Load {
                     dst: reg_location(ARCH, &dst.name, 64),
                     address: memory_address(ARCH, mem),
                     size: mem.width_bits.unwrap_or(64),
                 });
             }
-            (urdisassembly::Operand::Memory(mem), urdisassembly::Operand::Register(src)) => {
+            (urcodec::Operand::Memory(mem), urcodec::Operand::Register(src)) => {
                 statements.push(IlStmt::Store {
                     address: memory_address(ARCH, mem),
                     value: reg_expr(ARCH, &src.name, 64),
                     size: mem.width_bits.unwrap_or(64),
                 });
             }
-            (urdisassembly::Operand::Register(dst), src) => {
+            (urcodec::Operand::Register(dst), src) => {
                 statements.push(IlStmt::Assign {
                     dst: reg_location(ARCH, &dst.name, 64),
                     src: operand_expr(src),
@@ -93,8 +93,8 @@ fn lift_mov(instruction: &urdisassembly::Instruction, statements: &mut Vec<IlStm
     }
 }
 
-fn lift_lea(instruction: &urdisassembly::Instruction, statements: &mut Vec<IlStmt>) {
-    if let [urdisassembly::Operand::Register(dst), urdisassembly::Operand::Memory(mem)] =
+fn lift_lea(instruction: &urcodec::Instruction, statements: &mut Vec<IlStmt>) {
+    if let [urcodec::Operand::Register(dst), urcodec::Operand::Memory(mem)] =
         instruction.operands.as_slice()
     {
         statements.push(IlStmt::Assign {
@@ -104,8 +104,8 @@ fn lift_lea(instruction: &urdisassembly::Instruction, statements: &mut Vec<IlStm
     }
 }
 
-fn lift_assignment_op(instruction: &urdisassembly::Instruction, statements: &mut Vec<IlStmt>) {
-    if let [urdisassembly::Operand::Register(dst), src] = instruction.operands.as_slice() {
+fn lift_assignment_op(instruction: &urcodec::Instruction, statements: &mut Vec<IlStmt>) {
+    if let [urcodec::Operand::Register(dst), src] = instruction.operands.as_slice() {
         let lhs = reg_expr(ARCH, &dst.name, 64);
         let rhs = operand_expr(src);
         let expr = match instruction.mnemonic.as_str() {
@@ -122,7 +122,7 @@ fn lift_assignment_op(instruction: &urdisassembly::Instruction, statements: &mut
     }
 }
 
-fn lift_flags(instruction: &urdisassembly::Instruction, statements: &mut Vec<IlStmt>) {
+fn lift_flags(instruction: &urcodec::Instruction, statements: &mut Vec<IlStmt>) {
     let name = match instruction.mnemonic.as_str() {
         "add" => "x86_add_flags",
         "sub" | "cmp" => "x86_sub_flags",
@@ -138,7 +138,7 @@ fn lift_flags(instruction: &urdisassembly::Instruction, statements: &mut Vec<IlS
     });
 }
 
-fn lift_push(instruction: &urdisassembly::Instruction, statements: &mut Vec<IlStmt>) {
+fn lift_push(instruction: &urcodec::Instruction, statements: &mut Vec<IlStmt>) {
     let rsp = reg_expr(ARCH, "rsp", 64);
     let new_rsp = IlExpr::Sub(Box::new(rsp), Box::new(const_expr(8, 64)));
     statements.push(IlStmt::Assign {
@@ -154,8 +154,8 @@ fn lift_push(instruction: &urdisassembly::Instruction, statements: &mut Vec<IlSt
     }
 }
 
-fn lift_pop(instruction: &urdisassembly::Instruction, statements: &mut Vec<IlStmt>) {
-    if let Some(urdisassembly::Operand::Register(dst)) = instruction.operands.first() {
+fn lift_pop(instruction: &urcodec::Instruction, statements: &mut Vec<IlStmt>) {
+    if let Some(urcodec::Operand::Register(dst)) = instruction.operands.first() {
         statements.push(IlStmt::Load {
             dst: reg_location(ARCH, &dst.name, 64),
             address: reg_expr(ARCH, "rsp", 64),
@@ -171,17 +171,17 @@ fn lift_pop(instruction: &urdisassembly::Instruction, statements: &mut Vec<IlStm
     }
 }
 
-fn operand_expr(operand: &urdisassembly::Operand) -> IlExpr {
+fn operand_expr(operand: &urcodec::Operand) -> IlExpr {
     match operand {
-        urdisassembly::Operand::Register(reg) => reg_expr(ARCH, &reg.name, 64),
-        urdisassembly::Operand::Immediate(value) => const_expr(*value as u64, 64),
-        urdisassembly::Operand::AbsoluteAddress(addr) => const_expr(*addr, 64),
-        urdisassembly::Operand::Memory(mem) => memory_address(ARCH, mem),
-        urdisassembly::Operand::Condition(cond) => const_expr(condition_code(cond), 8),
+        urcodec::Operand::Register(reg) => reg_expr(ARCH, &reg.name, 64),
+        urcodec::Operand::Immediate(value) => const_expr(*value as u64, 64),
+        urcodec::Operand::AbsoluteAddress(addr) => const_expr(*addr, 64),
+        urcodec::Operand::Memory(mem) => memory_address(ARCH, mem),
+        urcodec::Operand::Condition(cond) => const_expr(condition_code(cond), 8),
     }
 }
 
-fn target_expr(instruction: &urdisassembly::Instruction) -> IlExpr {
+fn target_expr(instruction: &urcodec::Instruction) -> IlExpr {
     instruction
         .branch_target
         .map(|target| const_expr(target, 64))

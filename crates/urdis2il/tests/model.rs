@@ -1,7 +1,5 @@
+use urcodec::{Architecture, DecodeOptions, DecodeStatus, Decoder, FlowKind, InstructionKind};
 use urdis2il::{IlExpr, IlLocation, IlReg, IlStmt, Lifter};
-use urdisassembly::{
-    Architecture, DecodeOptions, DecodeStatus, Decoder, FlowKind, InstructionKind,
-};
 
 #[test]
 fn il_registers_are_scoped_by_architecture_and_width() {
