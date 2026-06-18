@@ -4,11 +4,15 @@ The CI corpus gate records sample-level codec totals, unknown rates, and unknown
 
 ## Codec Seed Forms
 
-The first declarative forms cover `ret` and `call rel32`. These forms drive decode compatibility, encode, canonical text, text parsing, and roundtrip tests from one form table.
+The current declarative seed forms cover `ret`, `ret imm16`, `retf`,
+`call rel32`, register `call r/m64`, `jmp rel8/rel32`, register `jmp r/m64`,
+`jcc rel8/rel32`, `loop*`/`jrcxz`, and `mov r64, imm64`. These forms now drive
+decode, encode, canonical text, text parsing, and roundtrip tests from one
+form table.
 
 | Encoding group | Representative mnemonics | Decode | Format | Flow semantics | Golden tests | Corpus evidence | Notes |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| Return | `ret`, `ret imm16`, `retf`, `iret` | Partial | Implemented | Implemented | Yes | Corpus-driven | Near return, near return with stack adjustment, far return, and interrupt return forms only. |
+| Return | `ret`, `ret imm16`, `retf`, `iret` | Implemented | Implemented | Implemented | Yes | Corpus-driven | Declarative forms own near return, near return with stack adjustment, and far return. Interrupt return stays outside the form table. |
 | Relative call | `call rel32` | Implemented | Implemented | Implemented | Yes | Not measured | Direct relative call only. |
 | Relative jump | `jmp rel8`, `jmp rel32` | Implemented | Implemented | Implemented | Yes | Not measured | Direct relative jump only. |
 | Conditional jump | `jcc rel8`, `jcc rel32`, `loop`, `loopcc`, `jrcxz` | Implemented | Implemented | Implemented | Yes | Corpus-driven | Common condition mnemonics, loop-count branches, and `jrcxz` covered. |
@@ -18,7 +22,7 @@ The first declarative forms cover `ret` and `call rel32`. These forms drive deco
 | Arithmetic | `add`, `adc`, `sbb`, `sub`, `xadd`, `inc`, `dec`, `neg`, `mul`, `imul`, `div`, `idiv`, `cwde`, `cdqe`, `cdq`, `cqo` | Partial | Implemented | Implemented | Yes | Corpus-driven | Common 64-bit and byte GPR forms, accumulator imm32 forms, AL imm8 forms, byte/imm8/imm32 group, selected lock-prefixed atomics, two-operand and immediate `imul`, accumulator sign-extension forms, `fe /0`-`/1`, `f6`/`f7`, and `ff /0`-`/1` forms only. |
 | Compare and test | `cmp`, `cmpxchg`, `test`, `cmps`, `scas`, `bt`, `bsf`, `bsr`, `setcc` | Partial | Implemented | Implemented | Yes | Corpus-driven | Common 64-bit and byte GPR forms, `cmp al/eax/rax, imm`, `test al/eax/rax, imm`, byte `test`, byte/imm8/imm32 group, selected implicit string compare/scan forms, `f6`/`f7 /0`, selected lock-prefixed atomics, `cmpxchg r/m16/32/64, r16/32/64`, `bt r/m, r`, `bt r/m, imm8`, `bsf r, r/m`, `bsr r, r/m`, and `setcc r/m8` forms only. |
 | Logical | `and`, `or`, `xor`, `not`, `rol`, `ror`, `rcl`, `rcr`, `shl`, `shr`, `sar`, `bts`, `btr`, `btc`, `cmc` | Partial | Implemented | Implemented | Yes | Corpus-driven | Common 64-bit and byte GPR forms, accumulator imm32 forms, AL imm8 forms, byte/imm8/imm32 group, shift imm8 groups, implicit-count-one and CL-count shift groups, carry-flag complement, bit-test register and immediate mutation forms, and `f6`/`f7 /2` forms only. |
-| Indirect control flow | `call r/m64`, `jmp r/m64` | Partial | Implemented | Implemented | Yes | Not measured | Near indirect `ff /2` and `ff /4` forms only. |
+| Indirect control flow | `call r/m64`, `jmp r/m64` | Partial | Implemented | Implemented | Yes | Not measured | Declarative forms currently own the register `ff /2` and `ff /4` seeds; memory operands still fall back to the legacy decoder. |
 | Stack | `push`, `pop`, `pushfq`, `popfq`, `enter`, `leave` | Partial | Implemented | Implemented | Yes | Corpus-driven | 64-bit GPR forms, `ff /6`, flags push/pop, and stack-frame setup/teardown forms only. |
 | SSE/AVX | `movups`, `movaps`, `andps`, `andpd`, `orps`, `orpd`, `xorps`, `addps`, `addpd`, `addss`, `addsd`, `subps`, `subpd`, `subss`, `divps`, `divpd`, `divss`, `divsd`, `mulps`, `mulsd`, `ucomiss`, `ucomisd`, `comiss`, `comisd`, `cmpps`, `movd`, `movq`, `pcmpeqb`, `pcmpgtb`, `punpcklbw`, `pand`, `pxor`, `por`, `psubd`, `psubq`, `pshufd`, `pshuflw`, `pshufhw`, `psrlq`, `psrldq`, `psllq`, `pslldq`, `vmovapd`, `vmovsd`, `vmovd`, `vmovq`, `vmovdqa`, `vmovdqu`, `vmovntdq`, `vpmovmskb`, `vpand`, `vpor`, `vpxor`, `vpaddq`, `vaddsd`, `vdivsd`, `vmulps`, `vmulsd`, `vsubsd`, `vpsubd`, `vpsubq`, `vcomisd`, `vcvtdq2pd`, `vfmsub213sd`, `vfmadd231sd`, `vinsertf128`, `vpsrlq`, `vpsllq`, `vzeroupper` | Partial | Implemented | Implemented | Yes | Corpus-driven | Basic legacy XMM forms plus corpus-driven 2-byte and 3-byte VEX.128/VEX.256 decode for selected AVX move, arithmetic, FMA, compare, logical, shuffle, mask, conversion, packed-shift immediate, packed integer, insert, and cleanup forms only. |
 | MMX | `movd`, `movq`, `cvtpi2ps`, `cvtps2pi`, `pcmpeqb`, `pcmpgtb`, `punpcklbw`, `pand`, `pavgb`, `pmaddwd`, `psllw`, `psrlq`, `psllq`, `paddw`, `psubd`, `psubq`, `por`, `pxor`, `pshufw`, `pmovmskb` | Partial | Implemented | Implemented | Yes | Corpus-driven | Corpus-driven legacy MMX register/memory forms plus selected packed integer, packed-shift, conversion, and shuffle immediate forms only; 3DNow remains out of scope. |

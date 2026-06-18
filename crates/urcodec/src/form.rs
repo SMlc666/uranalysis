@@ -1,4 +1,7 @@
-use crate::model::{Architecture, FlowKind, Instruction, InstructionKind};
+use crate::{
+    error::DecodeError,
+    model::{Architecture, FlowKind, Instruction, InstructionKind},
+};
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct FormId {
@@ -37,6 +40,7 @@ pub struct InstructionForm {
     mnemonic: &'static str,
     kind: InstructionKind,
     flow: FlowKind,
+    decode: fn(&[u8], u64) -> Result<Option<Instruction>, DecodeError>,
     encode: fn(&Instruction) -> Option<Vec<u8>>,
     parse: fn(&str, u64) -> Option<Instruction>,
 }
@@ -47,6 +51,7 @@ impl InstructionForm {
         mnemonic: &'static str,
         kind: InstructionKind,
         flow: FlowKind,
+        decode: fn(&[u8], u64) -> Result<Option<Instruction>, DecodeError>,
         encode: fn(&Instruction) -> Option<Vec<u8>>,
         parse: fn(&str, u64) -> Option<Instruction>,
     ) -> Self {
@@ -55,6 +60,7 @@ impl InstructionForm {
             mnemonic,
             kind,
             flow,
+            decode,
             encode,
             parse,
         }
@@ -74,6 +80,10 @@ impl InstructionForm {
 
     pub fn flow(&self) -> FlowKind {
         self.flow
+    }
+
+    pub fn decode(&self, bytes: &[u8], address: u64) -> Result<Option<Instruction>, DecodeError> {
+        (self.decode)(bytes, address)
     }
 
     pub fn encode(&self, instruction: &Instruction) -> Option<Vec<u8>> {

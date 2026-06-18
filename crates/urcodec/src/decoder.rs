@@ -31,10 +31,20 @@ impl Decoder {
     pub fn decode_one(&self, bytes: &[u8], address: u64) -> Result<Instruction> {
         match self.architecture {
             Architecture::Aarch64 => {
-                let word = Self::require_word(bytes)?;
-                Ok(aarch64::decode::decode_word(word, address))
+                if let Some(instruction) = aarch64::forms::decode(bytes, address)? {
+                    Ok(instruction)
+                } else {
+                    let word = Self::require_word(bytes)?;
+                    Ok(aarch64::decode::decode_word(word, address))
+                }
             }
-            Architecture::X86_64 => x86_64::decode::decode_instruction(bytes, address),
+            Architecture::X86_64 => {
+                if let Some(instruction) = x86_64::forms::decode(bytes, address)? {
+                    Ok(instruction)
+                } else {
+                    x86_64::decode::decode_instruction(bytes, address)
+                }
+            }
         }
     }
 

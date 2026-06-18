@@ -4,7 +4,11 @@ The CI corpus gate records sample-level codec totals, unknown rates, and unknown
 
 ## Codec Seed Forms
 
-The first declarative forms cover `ret` and `b imm26`. These forms drive decode compatibility, encode, canonical text, text parsing, and roundtrip tests from one form table.
+The current declarative seed forms cover `nop`, `ret`, `br`, `blr`, `b`, `bl`,
+`b.cond`, `cbz/cbnz`, `tbz/tbnz`, `adr/adrp`, `add/sub/cmp/cmn immediate`,
+`mov`/`movk` move-wide seeds, logical immediate seeds, and bitfield shift
+aliases. These forms now drive decode, encode, canonical text, text parsing,
+and roundtrip tests from one form table.
 
 | Encoding group | Representative mnemonics | Decode | Format | Flow semantics | Golden tests | Corpus evidence | Notes |
 | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -21,10 +25,10 @@ The first declarative forms cover `ret` and `b imm26`. These forms drive decode 
 | Add/sub immediate | `add`, `adds`, `sub`, `subs`, `cmp`, `cmn` | Implemented | Implemented | Implemented | Yes | Not measured | Immediate shift supported. |
 | Add/sub shifted register | `add`, `adds`, `sub`, `subs`, `cmp`, `cmn` | Partial | Partial | Implemented | Yes | Corpus-driven | Register forms and explicit shifted-register operands are covered. |
 | Logical shifted register | `and`, `orr`, `eor`, `ands`, `mov` | Partial | Partial | Implemented | Yes | Not measured | Shift display is not emitted in first pass. |
-| Move wide | `movz`, `movn`, `movk`, `mov` | Partial | Implemented | Implemented | Yes | Not measured | `movz` is displayed as `mov`. |
+| Move wide | `movz`, `movn`, `movk`, `mov` | Implemented | Implemented | Implemented | Yes | Not measured | Form ownership currently covers the `mov`/`movk` seed path plus decode for `movn`. `movz` is displayed as `mov`. |
 | Conditional select | `csel`, `cset` | Partial | Implemented | Implemented | Yes | Corpus-driven | Common select and zero-register set aliases are covered. |
-| Logical immediate | `and`, `orr`, `eor`, `ands`, `mov` | Partial | Partial | Implemented | Yes | Corpus-driven | Includes bitmask immediate decode and `orr zr, #imm` as `mov`. |
-| Bitfield aliases | `lsl`, `lsr`, `asr` | Partial | Partial | Implemented | Yes | Corpus-driven | Common `ubfm`/`sbfm` shift aliases are covered. |
+| Logical immediate | `and`, `orr`, `eor`, `ands`, `mov` | Implemented | Implemented | Implemented | Yes | Corpus-driven | Includes bitmask immediate decode, encode, text parse, and `orr zr, #imm` as `mov`. |
+| Bitfield aliases | `lsl`, `lsr`, `asr` | Implemented | Implemented | Implemented | Yes | Corpus-driven | Common `ubfm`/`sbfm` shift aliases now roundtrip through the form table. |
 | Data processing register | `add`, `sub`, `mul`, `lsl`, `lsr` | Partial | Partial | Implemented | Limited | Corpus-driven | Logical shifted register subset and `lsr` register alias are covered. |
 | System hints and exceptions | `nop`, `brk` | Partial | Implemented | Implemented | Yes | Corpus-driven | Other hints and system instructions remain unknown. |
 | SIMD/FP | `fmov`, `fadd`, `ldr q0`, `ldp q0`, `movi` | Partial | Partial | Implemented | Limited | Corpus-driven | Only `q` load/store pair and zero `movi v*.2d` forms are covered. |

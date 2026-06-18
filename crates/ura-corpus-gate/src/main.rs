@@ -25,6 +25,8 @@ struct Sample {
     class: String,
     min_instructions: usize,
     max_unknown_rate: f64,
+    #[serde(default)]
+    unknown_family_budgets: BTreeMap<String, usize>,
     required_strings: Vec<String>,
 }
 
@@ -32,6 +34,7 @@ struct Sample {
 struct Report {
     ok: bool,
     samples: Vec<SampleReport>,
+    unknown_family_counts: Vec<UnknownFamilyCountReport>,
     unknown_clusters: Vec<UnknownClusterReport>,
 }
 
@@ -53,8 +56,17 @@ struct SampleReport {
     xref_count: usize,
     diagnostic_count: usize,
     cfg_failure_count: usize,
+    unknown_family_counts: Vec<UnknownFamilyCountReport>,
     unknown_clusters: Vec<UnknownClusterReport>,
     failure_reason: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct UnknownFamilyCountReport {
+    sample_id: String,
+    architecture: String,
+    candidate_family: String,
+    count: usize,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -86,10 +98,12 @@ fn main() -> Result<()> {
     }
 
     let ok = reports.iter().all(|report| report.ok);
+    let unknown_family_counts = aggregate_unknown_family_counts(&reports);
     let unknown_clusters = aggregate_unknown_clusters(&reports);
     let report = Report {
         ok,
         samples: reports,
+        unknown_family_counts,
         unknown_clusters,
     };
     write_file(&args.report, &serde_json::to_string_pretty(&report)?)?;
@@ -156,6 +170,7 @@ fn run_sample(root: &Path, sample: &Sample) -> SampleReport {
             xref_count: 0,
             diagnostic_count: 0,
             cfg_failure_count: 1,
+            unknown_family_counts: Vec::new(),
             unknown_clusters: Vec::new(),
             failure_reason: Some(err.to_string()),
         },
@@ -202,6 +217,12 @@ fn analyze_sample(root: &Path, sample: &Sample) -> Result<SampleReport> {
     };
     let unknown_clusters =
         collect_unknown_clusters(&sample.id, &detected_architecture, instructions);
+    let unknown_family_counts =
+        collect_unknown_family_counts(&sample.id, &detected_architecture, &unknown_clusters);
+    let family_count_map = unknown_family_counts
+        .iter()
+        .map(|entry| (entry.candidate_family.clone(), entry.count))
+        .collect::<BTreeMap<_, _>>();
 
     let mut failures = Vec::new();
     if detected_format != sample.format {
@@ -235,6 +256,7 @@ fn analyze_sample(root: &Path, sample: &Sample) -> Result<SampleReport> {
             sample.max_unknown_rate, unknown_rate
         ));
     }
+    failures.extend(validate_family_budgets(sample, &family_count_map));
     for required in &sample.required_strings {
         if !strings.iter().any(|s| s.value.contains(required)) {
             failures.push(format!("required string not found: {required}"));
@@ -259,6 +281,7 @@ fn analyze_sample(root: &Path, sample: &Sample) -> Result<SampleReport> {
         xref_count: xrefs.len(),
         diagnostic_count: diagnostics.len(),
         cfg_failure_count,
+        unknown_family_counts,
         unknown_clusters,
         failure_reason: if ok { None } else { Some(failures.join("; ")) },
     })
@@ -342,6 +365,73 @@ fn aggregate_unknown_clusters(reports: &[SampleReport]) -> Vec<UnknownClusterRep
             .into_values()
             .map(UnknownClusterAccumulator::finish),
     )
+}
+
+fn collect_unknown_family_counts(
+    sample_id: &str,
+    architecture: &str,
+    clusters: &[UnknownClusterReport],
+) -> Vec<UnknownFamilyCountReport> {
+    let mut counts = BTreeMap::<String, usize>::new();
+    for cluster in clusters {
+        *counts.entry(cluster.candidate_family.clone()).or_default() += cluster.count;
+    }
+    counts
+        .into_iter()
+        .map(|(candidate_family, count)| UnknownFamilyCountReport {
+            sample_id: sample_id.to_string(),
+            architecture: architecture.to_string(),
+            candidate_family,
+            count,
+        })
+        .collect()
+}
+
+fn aggregate_unknown_family_counts(reports: &[SampleReport]) -> Vec<UnknownFamilyCountReport> {
+    let mut counts = BTreeMap::<(String, String), (usize, BTreeSet<String>)>::new();
+    for report in reports {
+        for family in &report.unknown_family_counts {
+            let key = (family.architecture.clone(), family.candidate_family.clone());
+            let entry = counts.entry(key).or_insert_with(|| (0, BTreeSet::new()));
+            entry.0 += family.count;
+            entry.1.insert(family.sample_id.clone());
+        }
+    }
+    let mut out = counts
+        .into_iter()
+        .map(
+            |((architecture, candidate_family), (count, samples))| UnknownFamilyCountReport {
+                sample_id: samples.into_iter().collect::<Vec<_>>().join(","),
+                architecture,
+                candidate_family,
+                count,
+            },
+        )
+        .collect::<Vec<_>>();
+    out.sort_by(|left, right| {
+        right
+            .count
+            .cmp(&left.count)
+            .then_with(|| left.architecture.cmp(&right.architecture))
+            .then_with(|| left.candidate_family.cmp(&right.candidate_family))
+    });
+    out
+}
+
+fn validate_family_budgets(
+    sample: &Sample,
+    family_counts: &BTreeMap<String, usize>,
+) -> Vec<String> {
+    let mut failures = Vec::new();
+    for (family, max_count) in &sample.unknown_family_budgets {
+        let actual = family_counts.get(family).copied().unwrap_or(0);
+        if actual > *max_count {
+            failures.push(format!(
+                "unknown family budget expected {family} <= {max_count} got {actual}"
+            ));
+        }
+    }
+    failures
 }
 
 #[derive(Debug)]
@@ -472,6 +562,15 @@ fn render_summary(report: &Report) -> String {
             sample.failure_reason.clone().unwrap_or_default()
         ));
     }
+    out.push_str("\n## Unknown Family Counts\n\n");
+    out.push_str("| Samples | Architecture | Candidate Family | Count |\n");
+    out.push_str("| --- | --- | --- | ---: |\n");
+    for family in &report.unknown_family_counts {
+        out.push_str(&format!(
+            "| {} | {} | {} | {} |\n",
+            family.sample_id, family.architecture, family.candidate_family, family.count
+        ));
+    }
     out.push_str("\n## Unknown Instruction Clusters\n\n");
     out.push_str(
         "| Architecture | Bytes | Context Bytes | Decoder | Count | Samples | First Address | Candidate Family |\n",
@@ -509,6 +608,7 @@ mod tests {
     fn summary_includes_cfg_metrics() {
         let report = Report {
             ok: true,
+            unknown_family_counts: Vec::new(),
             unknown_clusters: Vec::new(),
             samples: vec![SampleReport {
                 id: "sample".to_string(),
@@ -527,6 +627,7 @@ mod tests {
                 xref_count: 1,
                 diagnostic_count: 0,
                 cfg_failure_count: 0,
+                unknown_family_counts: Vec::new(),
                 unknown_clusters: Vec::new(),
                 failure_reason: None,
             }],
@@ -543,6 +644,7 @@ mod tests {
     fn summary_includes_unknown_cluster_section() {
         let report = Report {
             ok: true,
+            unknown_family_counts: Vec::new(),
             samples: Vec::new(),
             unknown_clusters: Vec::new(),
         };
@@ -605,6 +707,67 @@ mod tests {
         assert!(two_byte_clusters
             .iter()
             .any(|cluster| cluster.context_bytes == "0f 85"));
+    }
+
+    #[test]
+    fn family_budget_failure_is_reported() {
+        let sample = Sample {
+            id: "sample".to_string(),
+            kind: "source".to_string(),
+            output: PathBuf::from("generated/sample"),
+            format: "elf".to_string(),
+            arch: "x86_64".to_string(),
+            class: "bits64".to_string(),
+            min_instructions: 1,
+            max_unknown_rate: 1.0,
+            unknown_family_budgets: BTreeMap::from([("x86_64_two_byte_opcode".to_string(), 0)]),
+            required_strings: Vec::new(),
+        };
+        let family_counts = BTreeMap::from([("x86_64_two_byte_opcode".to_string(), 3usize)]);
+        let failures = validate_family_budgets(&sample, &family_counts);
+
+        assert_eq!(
+            failures,
+            vec!["unknown family budget expected x86_64_two_byte_opcode <= 0 got 3".to_string()]
+        );
+    }
+
+    #[test]
+    fn summary_includes_unknown_family_counts_section() {
+        let report = Report {
+            ok: true,
+            unknown_family_counts: vec![UnknownFamilyCountReport {
+                sample_id: "sample".to_string(),
+                architecture: "x86_64".to_string(),
+                candidate_family: "x86_64_two_byte_opcode".to_string(),
+                count: 2,
+            }],
+            samples: vec![SampleReport {
+                id: "sample".to_string(),
+                kind: "source".to_string(),
+                ok: true,
+                detected_format: Some("elf".to_string()),
+                detected_architecture: Some("x86_64".to_string()),
+                detected_class: Some("bits64".to_string()),
+                decoded_instruction_count: 4,
+                basic_block_count: 2,
+                cfg_edge_count: 1,
+                unknown_instruction_count: 2,
+                unknown_rate: 0.5,
+                string_count: 0,
+                function_count: 1,
+                xref_count: 1,
+                diagnostic_count: 0,
+                cfg_failure_count: 0,
+                unknown_family_counts: Vec::new(),
+                unknown_clusters: Vec::new(),
+                failure_reason: None,
+            }],
+            unknown_clusters: Vec::new(),
+        };
+
+        let summary = render_summary(&report);
+        assert!(summary.contains("## Unknown Family Counts"));
     }
 
     fn instruction(
