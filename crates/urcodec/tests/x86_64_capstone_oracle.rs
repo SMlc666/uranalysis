@@ -343,7 +343,7 @@ fn urcodec_operand_shapes(operands: &[Operand]) -> Vec<OperandShape> {
     operands
         .iter()
         .map(|operand| match operand {
-            Operand::Register(_) => OperandShape::Reg,
+            Operand::Register(_) | Operand::ShiftedRegister(_) => OperandShape::Reg,
             Operand::Memory(_) => OperandShape::Mem,
             Operand::Immediate(_) | Operand::AbsoluteAddress(_) | Operand::Condition(_) => {
                 OperandShape::Imm

@@ -144,6 +144,15 @@ pub(crate) fn lift(instruction: &urcodec::Instruction) -> Result<IlInstruction> 
 fn operand_expr(operand: &urcodec::Operand) -> IlExpr {
     match operand {
         urcodec::Operand::Register(reg) => reg_expr(ARCH, &reg.name, 64),
+        urcodec::Operand::ShiftedRegister(reg) => {
+            let value = reg_expr(ARCH, &reg.register.name, 64);
+            let amount = const_expr(u64::from(reg.amount), 8);
+            match reg.shift.as_str() {
+                "lsl" => IlExpr::Shl(Box::new(value), Box::new(amount)),
+                "lsr" | "asr" => IlExpr::Shr(Box::new(value), Box::new(amount)),
+                _ => value,
+            }
+        }
         urcodec::Operand::Immediate(value) => const_expr(*value as u64, 64),
         urcodec::Operand::AbsoluteAddress(addr) => const_expr(*addr, 64),
         urcodec::Operand::Memory(mem) => memory_address(ARCH, mem),

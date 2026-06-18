@@ -110,6 +110,10 @@ fn decodes_common_register_arithmetic_and_bit_shifts() {
     assert_eq!(add.text, "add x8, x9, x8");
     assert_eq!(add.kind, InstructionKind::Arithmetic);
 
+    let add_shifted = decode(0x8b41fc21, 0x400100);
+    assert_eq!(add_shifted.text, "add x1, x1, x1, lsr #0x3f");
+    assert_eq!(add_shifted.kind, InstructionKind::Arithmetic);
+
     let cmp_w = decode(0x6b09011f, 0x400100);
     assert_eq!(cmp_w.text, "cmp w8, w9");
     assert_eq!(cmp_w.kind, InstructionKind::Compare);

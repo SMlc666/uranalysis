@@ -51,6 +51,7 @@ impl Instruction {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Operand {
     Register(Register),
+    ShiftedRegister(ShiftedRegisterOperand),
     Immediate(i64),
     AbsoluteAddress(u64),
     Memory(MemoryOperand),
@@ -60,6 +61,13 @@ pub enum Operand {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Register {
     pub name: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ShiftedRegisterOperand {
+    pub register: Register,
+    pub shift: String,
+    pub amount: u8,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

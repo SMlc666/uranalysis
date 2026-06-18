@@ -20,6 +20,9 @@ pub fn render_operands(operands: &[Operand]) -> String {
 pub fn render_operand(operand: &Operand) -> String {
     match operand {
         Operand::Register(reg) => reg.name.clone(),
+        Operand::ShiftedRegister(reg) => {
+            format!("{}, {} 0x{:x}", reg.register.name, reg.shift, reg.amount)
+        }
         Operand::Immediate(value) => format!("0x{:x}", *value as u64),
         Operand::AbsoluteAddress(addr) => format!("0x{addr:x}"),
         Operand::Memory(mem) => render_memory(mem),

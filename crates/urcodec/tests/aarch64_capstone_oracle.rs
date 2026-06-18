@@ -137,6 +137,13 @@ const CASES: &[OracleCase] = &[
         operands: &[OperandShape::Reg, OperandShape::Reg, OperandShape::Reg],
     },
     OracleCase {
+        name: "add_lsr_shifted_register",
+        word: 0x8b41fc21,
+        urcodec_text: "add x1, x1, x1, lsr #0x3f",
+        mnemonic: "add",
+        operands: &[OperandShape::Reg, OperandShape::Reg, OperandShape::Reg],
+    },
+    OracleCase {
         name: "cmp_w_shifted_register",
         word: 0x6b09011f,
         urcodec_text: "cmp w8, w9",
@@ -307,7 +314,7 @@ fn urcodec_operand_shapes(operands: &[Operand]) -> Vec<OperandShape> {
     operands
         .iter()
         .map(|operand| match operand {
-            Operand::Register(_) => OperandShape::Reg,
+            Operand::Register(_) | Operand::ShiftedRegister(_) => OperandShape::Reg,
             Operand::Memory(_) => OperandShape::Mem,
             Operand::Immediate(_) | Operand::AbsoluteAddress(_) | Operand::Condition(_) => {
                 OperandShape::Imm

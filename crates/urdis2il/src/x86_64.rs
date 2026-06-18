@@ -174,6 +174,7 @@ fn lift_pop(instruction: &urcodec::Instruction, statements: &mut Vec<IlStmt>) {
 fn operand_expr(operand: &urcodec::Operand) -> IlExpr {
     match operand {
         urcodec::Operand::Register(reg) => reg_expr(ARCH, &reg.name, 64),
+        urcodec::Operand::ShiftedRegister(reg) => reg_expr(ARCH, &reg.register.name, 64),
         urcodec::Operand::Immediate(value) => const_expr(*value as u64, 64),
         urcodec::Operand::AbsoluteAddress(addr) => const_expr(*addr, 64),
         urcodec::Operand::Memory(mem) => memory_address(ARCH, mem),

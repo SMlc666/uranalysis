@@ -437,7 +437,7 @@ fn decode_add_sub_shifted_register(word: u32, address: u64) -> Instruction {
     let set_flags = bits(word, 29, 29) == 1;
     let shift = bits(word, 22, 23);
     let imm6 = bits(word, 10, 15);
-    if shift != 0 || imm6 != 0 {
+    if shift == 0b11 || (!is_64 && imm6 >= 32) {
         return unknown(word, address);
     }
 
@@ -459,6 +459,20 @@ fn decode_add_sub_shifted_register(word: u32, address: u64) -> Instruction {
     } else {
         crate::arch::aarch64::registers::w_or_zr(rm)
     };
+    let src2 = if imm6 == 0 && shift == 0 {
+        Operand::Register(src2)
+    } else {
+        let shift = match shift {
+            0b00 => "lsl",
+            0b01 => "lsr",
+            _ => "asr",
+        };
+        Operand::ShiftedRegister(crate::model::ShiftedRegisterOperand {
+            register: src2,
+            shift: shift.to_string(),
+            amount: imm6 as u8,
+        })
+    };
     let mnemonic = match (sub, set_flags, rd == 31) {
         (true, true, true) => "cmp",
         (false, true, true) => "cmn",
@@ -468,13 +482,9 @@ fn decode_add_sub_shifted_register(word: u32, address: u64) -> Instruction {
         (false, false, _) => "add",
     };
     let operands = if matches!(mnemonic, "cmp" | "cmn") {
-        vec![Operand::Register(src1), Operand::Register(src2)]
+        vec![Operand::Register(src1), src2]
     } else {
-        vec![
-            Operand::Register(dst),
-            Operand::Register(src1),
-            Operand::Register(src2),
-        ]
+        vec![Operand::Register(dst), Operand::Register(src1), src2]
     };
     base(
         word,

@@ -14,6 +14,6 @@ pub use error::{DecodeError, EncodeError, Result, TextError};
 pub use form::{FormId, InstructionForm};
 pub use model::{
     Architecture, DecodeOptions, DecodeStatus, Endian, FlowKind, Instruction, InstructionKind,
-    MemoryOperand, Operand, Register,
+    MemoryOperand, Operand, Register, ShiftedRegisterOperand,
 };
 pub use text::{format_instruction, TextOptions, TextParser};

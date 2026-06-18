@@ -79,6 +79,24 @@ fn lifts_aarch64_load_store_and_add() {
             ),
         }
     );
+
+    let shifted_add = lift(0x8b41fc21, 0x400100);
+    assert_eq!(
+        shifted_add.statements[0],
+        IlStmt::Assign {
+            dst: reg("x1"),
+            src: IlExpr::Add(
+                Box::new(reg_expr("x1")),
+                Box::new(IlExpr::Shr(
+                    Box::new(reg_expr("x1")),
+                    Box::new(IlExpr::Const {
+                        value: 63,
+                        width_bits: 8,
+                    }),
+                )),
+            ),
+        }
+    );
 }
 
 #[test]

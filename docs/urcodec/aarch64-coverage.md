@@ -19,7 +19,7 @@ The first declarative forms cover `ret` and `b imm26`. These forms drive decode 
 | Load/store register offset | `ldr`, `str` | Partial | Partial | Implemented | Yes | Corpus-driven | `uxtw` register-index forms are covered. |
 | Load/store pair | `ldp`, `stp` | Partial | Partial | Implemented | Yes | Corpus-driven | 32-bit/64-bit GPR and `q` vector signed-offset forms, plus GPR pre/post-index forms. |
 | Add/sub immediate | `add`, `adds`, `sub`, `subs`, `cmp`, `cmn` | Implemented | Implemented | Implemented | Yes | Not measured | Immediate shift supported. |
-| Add/sub shifted register | `add`, `adds`, `sub`, `subs`, `cmp`, `cmn` | Partial | Partial | Implemented | Yes | Corpus-driven | No-shift register forms only. |
+| Add/sub shifted register | `add`, `adds`, `sub`, `subs`, `cmp`, `cmn` | Partial | Partial | Implemented | Yes | Corpus-driven | Register forms and explicit shifted-register operands are covered. |
 | Logical shifted register | `and`, `orr`, `eor`, `ands`, `mov` | Partial | Partial | Implemented | Yes | Not measured | Shift display is not emitted in first pass. |
 | Move wide | `movz`, `movn`, `movk`, `mov` | Partial | Implemented | Implemented | Yes | Not measured | `movz` is displayed as `mov`. |
 | Conditional select | `csel`, `cset` | Partial | Implemented | Implemented | Yes | Corpus-driven | Common select and zero-register set aliases are covered. |
