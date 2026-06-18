@@ -48,6 +48,24 @@ fn decodes_x86_64_returns_calls_and_jumps() {
     assert_eq!(ret.kind, InstructionKind::Return);
     assert_eq!(ret.flow, FlowKind::Return);
 
+    let ret_imm = decode(&[0xc2, 0xc2, 0x00], 0x401000);
+    assert_eq!(ret_imm.text, "ret 0xc2");
+    assert_eq!(ret_imm.size, 3);
+    assert_eq!(ret_imm.kind, InstructionKind::Return);
+    assert_eq!(ret_imm.flow, FlowKind::Return);
+
+    let retf_imm = decode(&[0xca, 0x10, 0x00], 0x401000);
+    assert_eq!(retf_imm.text, "retf 0x10");
+    assert_eq!(retf_imm.size, 3);
+    assert_eq!(retf_imm.kind, InstructionKind::Return);
+    assert_eq!(retf_imm.flow, FlowKind::Return);
+
+    let retf = decode(&[0xcb], 0x401000);
+    assert_eq!(retf.text, "retf");
+    assert_eq!(retf.size, 1);
+    assert_eq!(retf.kind, InstructionKind::Return);
+    assert_eq!(retf.flow, FlowKind::Return);
+
     let call = decode(&[0xe8, 0x05, 0x00, 0x00, 0x00], 0x401000);
     assert_eq!(call.text, "call 0x40100a");
     assert_eq!(call.size, 5);
@@ -112,6 +130,16 @@ fn decodes_x86_64_system_0f_forms() {
     assert_eq!(cpuid.text, "cpuid");
     assert_eq!(cpuid.size, 2);
     assert_eq!(cpuid.kind, InstructionKind::System);
+
+    let iretd = decode(&[0xcf], 0x401000);
+    assert_eq!(iretd.text, "iretd");
+    assert_eq!(iretd.size, 1);
+    assert_eq!(iretd.kind, InstructionKind::System);
+
+    let iretq = decode(&[0x48, 0xcf], 0x401000);
+    assert_eq!(iretq.text, "iretq");
+    assert_eq!(iretq.size, 2);
+    assert_eq!(iretq.kind, InstructionKind::System);
 }
 
 #[test]
@@ -827,6 +855,19 @@ fn decodes_x86_64_push_and_pop() {
     let push_r8 = decode(&[0x41, 0x50], 0x401000);
     assert_eq!(push_r8.text, "push r8");
     assert_eq!(push_r8.size, 2);
+}
+
+#[test]
+fn decodes_x86_64_stack_frame_forms() {
+    let enter = decode(&[0xc8, 0x3c, 0x01, 0x01], 0x401000);
+    assert_eq!(enter.text, "enter 0x13c, 0x1");
+    assert_eq!(enter.size, 4);
+    assert_eq!(enter.kind, InstructionKind::Store);
+
+    let leave = decode(&[0xc9], 0x401000);
+    assert_eq!(leave.text, "leave");
+    assert_eq!(leave.size, 1);
+    assert_eq!(leave.kind, InstructionKind::Load);
 }
 
 #[test]

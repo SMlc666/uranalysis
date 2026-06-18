@@ -46,10 +46,71 @@ pub fn decode_instruction(bytes: &[u8], address: u64) -> Result<Instruction> {
     let opcode_offset = prefixes.opcode_offset;
     let opcode = bytes[opcode_offset];
     match opcode {
+        0xc2 => {
+            let size = opcode_offset + 3;
+            let imm = i64::from(read_u16(bytes, opcode_offset + 1)?);
+            Ok(base(
+                bytes[..size].to_vec(),
+                address,
+                "ret",
+                vec![Operand::Immediate(imm)],
+                InstructionKind::Return,
+                FlowKind::Return,
+                None,
+            ))
+        }
         0xc3 => Ok(base(
             bytes[..opcode_offset + 1].to_vec(),
             address,
             "ret",
+            Vec::new(),
+            InstructionKind::Return,
+            FlowKind::Return,
+            None,
+        )),
+        0xc8 => {
+            let size = opcode_offset + 4;
+            let frame_size = i64::from(read_u16(bytes, opcode_offset + 1)?);
+            let nesting_level = i64::from(read_u8(bytes, opcode_offset + 3)?);
+            Ok(base(
+                bytes[..size].to_vec(),
+                address,
+                "enter",
+                vec![
+                    Operand::Immediate(frame_size),
+                    Operand::Immediate(nesting_level),
+                ],
+                InstructionKind::Store,
+                FlowKind::Fallthrough,
+                None,
+            ))
+        }
+        0xc9 => Ok(base(
+            bytes[..opcode_offset + 1].to_vec(),
+            address,
+            "leave",
+            Vec::new(),
+            InstructionKind::Load,
+            FlowKind::Fallthrough,
+            None,
+        )),
+        0xca => {
+            let size = opcode_offset + 3;
+            let imm = i64::from(read_u16(bytes, opcode_offset + 1)?);
+            Ok(base(
+                bytes[..size].to_vec(),
+                address,
+                "retf",
+                vec![Operand::Immediate(imm)],
+                InstructionKind::Return,
+                FlowKind::Return,
+                None,
+            ))
+        }
+        0xcb => Ok(base(
+            bytes[..opcode_offset + 1].to_vec(),
+            address,
+            "retf",
             Vec::new(),
             InstructionKind::Return,
             FlowKind::Return,
@@ -77,6 +138,15 @@ pub fn decode_instruction(bytes: &[u8], address: u64) -> Result<Instruction> {
                 None,
             ))
         }
+        0xcf => Ok(base(
+            bytes[..opcode_offset + 1].to_vec(),
+            address,
+            if prefixes.rex.w { "iretq" } else { "iretd" },
+            Vec::new(),
+            InstructionKind::System,
+            FlowKind::Return,
+            None,
+        )),
         0x90 => Ok(base(
             bytes[..opcode_offset + 1].to_vec(),
             address,
@@ -2458,6 +2528,11 @@ fn read_u8(bytes: &[u8], offset: usize) -> Result<u8> {
 fn read_i16(bytes: &[u8], offset: usize) -> Result<i16> {
     require_len(bytes, offset + 2)?;
     Ok(i16::from_le_bytes([bytes[offset], bytes[offset + 1]]))
+}
+
+fn read_u16(bytes: &[u8], offset: usize) -> Result<u16> {
+    require_len(bytes, offset + 2)?;
+    Ok(u16::from_le_bytes([bytes[offset], bytes[offset + 1]]))
 }
 
 fn read_i32(bytes: &[u8], offset: usize) -> Result<i32> {
