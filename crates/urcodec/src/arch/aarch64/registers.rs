@@ -21,6 +21,12 @@ pub fn q(reg: u32) -> Register {
     }
 }
 
+pub fn v_lane(reg: u32, lane: &str) -> Register {
+    Register {
+        name: format!("v{reg}.{lane}"),
+    }
+}
+
 pub fn x_or_sp(reg: u32) -> Register {
     Register {
         name: if reg == 31 {
@@ -70,6 +76,7 @@ mod tests {
         assert_eq!(x(0).name, "x0");
         assert_eq!(w(1).name, "w1");
         assert_eq!(q(2).name, "q2");
+        assert_eq!(v_lane(3, "2d").name, "v3.2d");
         assert_eq!(x(30).name, "lr");
     }
 

@@ -125,6 +125,14 @@ fn decodes_common_register_arithmetic_and_bit_shifts() {
     let lsr_reg = decode(0x9ac82528, 0x400100);
     assert_eq!(lsr_reg.text, "lsr x8, x9, x8");
     assert_eq!(lsr_reg.kind, InstructionKind::Logical);
+
+    let lsl_imm = decode(0xd37ffae8, 0x400100);
+    assert_eq!(lsl_imm.text, "lsl x8, x23, #0x1");
+    assert_eq!(lsl_imm.kind, InstructionKind::Logical);
+
+    let asr_imm = decode(0x9341fc21, 0x400100);
+    assert_eq!(asr_imm.text, "asr x1, x1, #0x1");
+    assert_eq!(asr_imm.kind, InstructionKind::Logical);
 }
 
 #[test]
@@ -174,6 +182,10 @@ fn decodes_common_load_store_forms() {
     let stp_q = decode(0xad008740, 0x400100);
     assert_eq!(stp_q.text, "stp q0, q1, [x26, #0x10]");
     assert_eq!(stp_q.kind, InstructionKind::Store);
+
+    let ldr_reg_offset = decode(0xf8695b29, 0x400100);
+    assert_eq!(ldr_reg_offset.text, "ldr x9, [x25, w9, uxtw #0x3]");
+    assert_eq!(ldr_reg_offset.kind, InstructionKind::Load);
 }
 
 #[test]
@@ -193,4 +205,30 @@ fn decodes_common_logical_immediate_forms() {
     let mov = decode(0xb24107ec, 0x400100);
     assert_eq!(mov.text, "mov x12, #-0x7fffffffffffffff");
     assert_eq!(mov.kind, InstructionKind::Move);
+}
+
+#[test]
+fn decodes_common_conditional_select_forms() {
+    let csel = decode(0x9a983101, 0x400100);
+    assert_eq!(csel.text, "csel x1, x8, x24, lo");
+    assert_eq!(csel.kind, InstructionKind::Move);
+
+    let csel_zero = decode(0x9a8103f6, 0x400100);
+    assert_eq!(csel_zero.text, "csel x22, xzr, x1, eq");
+    assert_eq!(csel_zero.kind, InstructionKind::Move);
+
+    let cset = decode(0x1a9f17e8, 0x400100);
+    assert_eq!(cset.text, "cset w8, eq");
+    assert_eq!(cset.kind, InstructionKind::Move);
+}
+
+#[test]
+fn decodes_zero_vector_move_immediate() {
+    let movi_v0 = decode(0x6f00e400, 0x400100);
+    assert_eq!(movi_v0.text, "movi v0.2d, #0x0");
+    assert_eq!(movi_v0.kind, InstructionKind::Move);
+
+    let movi_v2 = decode(0x6f00e402, 0x400100);
+    assert_eq!(movi_v2.text, "movi v2.2d, #0x0");
+    assert_eq!(movi_v2.kind, InstructionKind::Move);
 }

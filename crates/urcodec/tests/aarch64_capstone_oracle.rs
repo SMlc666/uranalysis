@@ -10,6 +10,9 @@ enum OperandShape {
 
 const ORR_IMMEDIATE_ALIAS_SHAPES: &[OperandShape] =
     &[OperandShape::Reg, OperandShape::Reg, OperandShape::Imm];
+const CSEL_CAPSTONE_SHAPES: &[OperandShape] =
+    &[OperandShape::Reg, OperandShape::Reg, OperandShape::Reg];
+const CSET_CAPSTONE_SHAPES: &[OperandShape] = &[OperandShape::Reg];
 
 #[derive(Debug)]
 struct OracleCase {
@@ -162,6 +165,20 @@ const CASES: &[OracleCase] = &[
         operands: &[OperandShape::Reg, OperandShape::Reg, OperandShape::Reg],
     },
     OracleCase {
+        name: "lsl_imm_alias",
+        word: 0xd37ffae8,
+        urcodec_text: "lsl x8, x23, #0x1",
+        mnemonic: "lsl",
+        operands: &[OperandShape::Reg, OperandShape::Reg, OperandShape::Imm],
+    },
+    OracleCase {
+        name: "asr_imm_alias",
+        word: 0x9341fc21,
+        urcodec_text: "asr x1, x1, #0x1",
+        mnemonic: "asr",
+        operands: &[OperandShape::Reg, OperandShape::Reg, OperandShape::Imm],
+    },
+    OracleCase {
         name: "stur_unscaled",
         word: 0xb806b349,
         urcodec_text: "stur w9, [x26, #0x6b]",
@@ -218,6 +235,13 @@ const CASES: &[OracleCase] = &[
         operands: &[OperandShape::Reg, OperandShape::Reg, OperandShape::Mem],
     },
     OracleCase {
+        name: "ldr_register_offset",
+        word: 0xf8695b29,
+        urcodec_text: "ldr x9, [x25, w9, uxtw #0x3]",
+        mnemonic: "ldr",
+        operands: &[OperandShape::Reg, OperandShape::Mem],
+    },
+    OracleCase {
         name: "brk",
         word: 0xd4200020,
         urcodec_text: "brk #0x1",
@@ -236,6 +260,32 @@ const CASES: &[OracleCase] = &[
         word: 0xb24107ec,
         urcodec_text: "mov x12, #-0x7fffffffffffffff",
         mnemonic: "mov",
+        operands: &[OperandShape::Reg, OperandShape::Imm],
+    },
+    OracleCase {
+        name: "csel",
+        word: 0x9a983101,
+        urcodec_text: "csel x1, x8, x24, lo",
+        mnemonic: "csel",
+        operands: &[
+            OperandShape::Reg,
+            OperandShape::Reg,
+            OperandShape::Reg,
+            OperandShape::Imm,
+        ],
+    },
+    OracleCase {
+        name: "cset",
+        word: 0x1a9f17e8,
+        urcodec_text: "cset w8, eq",
+        mnemonic: "cset",
+        operands: &[OperandShape::Reg, OperandShape::Imm],
+    },
+    OracleCase {
+        name: "movi_zero_v0",
+        word: 0x6f00e400,
+        urcodec_text: "movi v0.2d, #0x0",
+        mnemonic: "movi",
         operands: &[OperandShape::Reg, OperandShape::Imm],
     },
 ];
@@ -310,6 +360,10 @@ fn expected_capstone_mnemonic(case: &OracleCase) -> &'static str {
 fn expected_capstone_operands(case: &OracleCase) -> &'static [OperandShape] {
     if case.name == "mov_logical_immediate_alias" {
         ORR_IMMEDIATE_ALIAS_SHAPES
+    } else if case.name == "csel" {
+        CSEL_CAPSTONE_SHAPES
+    } else if case.name == "cset" {
+        CSET_CAPSTONE_SHAPES
     } else {
         case.operands
     }

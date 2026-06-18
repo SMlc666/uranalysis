@@ -33,6 +33,18 @@ fn render_memory(mem: &MemoryOperand) -> String {
         .as_ref()
         .map(|reg| reg.name.as_str())
         .unwrap_or("unknown");
+    if let Some(index) = &mem.index {
+        let extend = if index.name.starts_with('w') {
+            "uxtw"
+        } else {
+            "lsl"
+        };
+        let shift = mem.scale.trailing_zeros();
+        if shift == 0 {
+            return format!("[{base}, {}, {extend}]", index.name);
+        }
+        return format!("[{base}, {}, {extend} #0x{shift:x}]", index.name);
+    }
     if mem.offset == 0 && !mem.writeback && !mem.post_index {
         format!("[{base}]")
     } else if mem.post_index {
