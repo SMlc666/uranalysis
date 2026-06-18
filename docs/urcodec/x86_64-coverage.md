@@ -1,6 +1,6 @@
 # X86-64 Coverage Matrix
 
-The CI corpus gate records sample-level codec totals and unknown rates. Per-encoding corpus attribution is still not measured in this matrix.
+The CI corpus gate records sample-level codec totals, unknown rates, and unknown-instruction clusters by architecture, bytes, decoder, sample, and first address. Per-encoding-family attribution is still heuristic in this matrix.
 
 ## Codec Seed Forms
 

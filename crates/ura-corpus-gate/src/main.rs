@@ -1,4 +1,5 @@
 use std::{
+    collections::{BTreeMap, BTreeSet},
     fs,
     path::{Path, PathBuf},
 };
@@ -31,6 +32,7 @@ struct Sample {
 struct Report {
     ok: bool,
     samples: Vec<SampleReport>,
+    unknown_clusters: Vec<UnknownClusterReport>,
 }
 
 #[derive(Debug, Serialize)]
@@ -51,7 +53,19 @@ struct SampleReport {
     xref_count: usize,
     diagnostic_count: usize,
     cfg_failure_count: usize,
+    unknown_clusters: Vec<UnknownClusterReport>,
     failure_reason: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct UnknownClusterReport {
+    architecture: String,
+    bytes: String,
+    decoder: String,
+    count: usize,
+    samples: Vec<String>,
+    first_address: u64,
+    candidate_family: String,
 }
 
 fn main() -> Result<()> {
@@ -71,9 +85,11 @@ fn main() -> Result<()> {
     }
 
     let ok = reports.iter().all(|report| report.ok);
+    let unknown_clusters = aggregate_unknown_clusters(&reports);
     let report = Report {
         ok,
         samples: reports,
+        unknown_clusters,
     };
     write_file(&args.report, &serde_json::to_string_pretty(&report)?)?;
     write_file(&args.summary, &render_summary(&report))?;
@@ -139,6 +155,7 @@ fn run_sample(root: &Path, sample: &Sample) -> SampleReport {
             xref_count: 0,
             diagnostic_count: 0,
             cfg_failure_count: 1,
+            unknown_clusters: Vec::new(),
             failure_reason: Some(err.to_string()),
         },
     }
@@ -178,6 +195,8 @@ fn analyze_sample(root: &Path, sample: &Sample) -> Result<SampleReport> {
     } else {
         unknown as f64 / instructions.len() as f64
     };
+    let unknown_clusters =
+        collect_unknown_clusters(&sample.id, &detected_architecture, &instructions);
 
     let mut failures = Vec::new();
     if detected_format != sample.format {
@@ -235,8 +254,162 @@ fn analyze_sample(root: &Path, sample: &Sample) -> Result<SampleReport> {
         xref_count: xrefs.len(),
         diagnostic_count: diagnostics.len(),
         cfg_failure_count: 0,
+        unknown_clusters,
         failure_reason: if ok { None } else { Some(failures.join("; ")) },
     })
+}
+
+fn collect_unknown_clusters(
+    sample_id: &str,
+    architecture: &str,
+    instructions: &[ura_core::model::Instruction],
+) -> Vec<UnknownClusterReport> {
+    let mut clusters =
+        BTreeMap::<(String, String, String, String), UnknownClusterAccumulator>::new();
+    for instruction in instructions {
+        if instruction.decode_status != ura_core::model::DecodeStatus::Unknown {
+            continue;
+        }
+        let bytes = format_bytes(&instruction.bytes);
+        let candidate_family = candidate_family(architecture, &instruction.bytes);
+        let key = (
+            architecture.to_string(),
+            bytes.clone(),
+            instruction.decoder.clone(),
+            candidate_family.clone(),
+        );
+        let entry = clusters
+            .entry(key)
+            .or_insert_with(|| UnknownClusterAccumulator {
+                architecture: architecture.to_string(),
+                bytes,
+                decoder: instruction.decoder.clone(),
+                count: 0,
+                samples: BTreeSet::new(),
+                first_address: instruction.addr,
+                candidate_family,
+            });
+        entry.count += 1;
+        entry.samples.insert(sample_id.to_string());
+        entry.first_address = entry.first_address.min(instruction.addr);
+    }
+    sorted_unknown_clusters(
+        clusters
+            .into_values()
+            .map(UnknownClusterAccumulator::finish),
+    )
+}
+
+fn aggregate_unknown_clusters(reports: &[SampleReport]) -> Vec<UnknownClusterReport> {
+    let mut clusters =
+        BTreeMap::<(String, String, String, String), UnknownClusterAccumulator>::new();
+    for report in reports {
+        for cluster in &report.unknown_clusters {
+            let key = (
+                cluster.architecture.clone(),
+                cluster.bytes.clone(),
+                cluster.decoder.clone(),
+                cluster.candidate_family.clone(),
+            );
+            let entry = clusters
+                .entry(key)
+                .or_insert_with(|| UnknownClusterAccumulator {
+                    architecture: cluster.architecture.clone(),
+                    bytes: cluster.bytes.clone(),
+                    decoder: cluster.decoder.clone(),
+                    count: 0,
+                    samples: BTreeSet::new(),
+                    first_address: cluster.first_address,
+                    candidate_family: cluster.candidate_family.clone(),
+                });
+            entry.count += cluster.count;
+            entry.samples.extend(cluster.samples.iter().cloned());
+            entry.first_address = entry.first_address.min(cluster.first_address);
+        }
+    }
+    sorted_unknown_clusters(
+        clusters
+            .into_values()
+            .map(UnknownClusterAccumulator::finish),
+    )
+}
+
+#[derive(Debug)]
+struct UnknownClusterAccumulator {
+    architecture: String,
+    bytes: String,
+    decoder: String,
+    count: usize,
+    samples: BTreeSet<String>,
+    first_address: u64,
+    candidate_family: String,
+}
+
+impl UnknownClusterAccumulator {
+    fn finish(self) -> UnknownClusterReport {
+        UnknownClusterReport {
+            architecture: self.architecture,
+            bytes: self.bytes,
+            decoder: self.decoder,
+            count: self.count,
+            samples: self.samples.into_iter().collect(),
+            first_address: self.first_address,
+            candidate_family: self.candidate_family,
+        }
+    }
+}
+
+fn sorted_unknown_clusters(
+    clusters: impl IntoIterator<Item = UnknownClusterReport>,
+) -> Vec<UnknownClusterReport> {
+    let mut clusters = clusters.into_iter().collect::<Vec<_>>();
+    clusters.sort_by(|left, right| {
+        right
+            .count
+            .cmp(&left.count)
+            .then_with(|| left.architecture.cmp(&right.architecture))
+            .then_with(|| left.bytes.cmp(&right.bytes))
+            .then_with(|| left.decoder.cmp(&right.decoder))
+    });
+    clusters
+}
+
+fn format_bytes(bytes: &[u8]) -> String {
+    if bytes.is_empty() {
+        return "(empty)".to_string();
+    }
+    bytes
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn candidate_family(architecture: &str, bytes: &[u8]) -> String {
+    match architecture {
+        "aarch64" => candidate_aarch64_family(bytes),
+        "x86_64" => candidate_x86_64_family(bytes),
+        other => format!("{other}_unknown_encoding"),
+    }
+}
+
+fn candidate_aarch64_family(bytes: &[u8]) -> String {
+    let Ok(word_bytes) = <[u8; 4]>::try_from(bytes) else {
+        return "aarch64_malformed_fixed_width".to_string();
+    };
+    let word = u32::from_le_bytes(word_bytes);
+    format!("aarch64_encoding_group_0x{:02x}", (word >> 25) & 0x7f)
+}
+
+fn candidate_x86_64_family(bytes: &[u8]) -> String {
+    match bytes.first().copied() {
+        Some(0x0f) => "x86_64_two_byte_opcode".to_string(),
+        Some(0x26 | 0x2e | 0x36 | 0x3e | 0x64 | 0x65 | 0x66 | 0x67 | 0xf2 | 0xf3 | 0x40..=0x4f) => {
+            "x86_64_prefix_or_prefixed_opcode".to_string()
+        }
+        Some(_) => "x86_64_unknown_opcode_or_prefix".to_string(),
+        None => "x86_64_empty_decode".to_string(),
+    }
 }
 
 fn render_summary(report: &Report) -> String {
@@ -254,6 +427,23 @@ fn render_summary(report: &Report) -> String {
             sample.cfg_edge_count,
             sample.unknown_rate,
             sample.failure_reason.clone().unwrap_or_default()
+        ));
+    }
+    out.push_str("\n## Unknown Instruction Clusters\n\n");
+    out.push_str(
+        "| Architecture | Bytes | Decoder | Count | Samples | First Address | Candidate Family |\n",
+    );
+    out.push_str("| --- | --- | --- | ---: | --- | --- | --- |\n");
+    for cluster in &report.unknown_clusters {
+        out.push_str(&format!(
+            "| {} | `{}` | {} | {} | {} | 0x{:x} | {} |\n",
+            cluster.architecture,
+            cluster.bytes,
+            cluster.decoder,
+            cluster.count,
+            cluster.samples.join(","),
+            cluster.first_address,
+            cluster.candidate_family
         ));
     }
     out
@@ -275,6 +465,7 @@ mod tests {
     fn summary_includes_cfg_metrics() {
         let report = Report {
             ok: true,
+            unknown_clusters: Vec::new(),
             samples: vec![SampleReport {
                 id: "sample".to_string(),
                 kind: "source".to_string(),
@@ -292,6 +483,7 @@ mod tests {
                 xref_count: 1,
                 diagnostic_count: 0,
                 cfg_failure_count: 0,
+                unknown_clusters: Vec::new(),
                 failure_reason: None,
             }],
         };
@@ -301,5 +493,75 @@ mod tests {
         assert!(summary
             .contains("| Sample | OK | Instructions | Blocks | Edges | Unknown Rate | Failure |"));
         assert!(summary.contains("| sample | true | 4 | 2 | 1 | 0.0000 |  |"));
+    }
+
+    #[test]
+    fn summary_includes_unknown_cluster_section() {
+        let report = Report {
+            ok: true,
+            samples: Vec::new(),
+            unknown_clusters: Vec::new(),
+        };
+
+        let summary = render_summary(&report);
+
+        assert!(summary.contains("## Unknown Instruction Clusters"));
+        assert!(summary.contains(
+            "| Architecture | Bytes | Decoder | Count | Samples | First Address | Candidate Family |"
+        ));
+    }
+
+    #[test]
+    fn unknown_clusters_group_by_architecture_decoder_and_bytes() {
+        let instructions = vec![
+            instruction(0x1000, &[0xff], ura_core::model::DecodeStatus::Unknown),
+            instruction(0x1001, &[0xff], ura_core::model::DecodeStatus::Unknown),
+            instruction(0x1002, &[0xc3], ura_core::model::DecodeStatus::Complete),
+        ];
+
+        let clusters = collect_unknown_clusters("sample", "x86_64", &instructions);
+
+        assert_eq!(clusters.len(), 1);
+        assert_eq!(clusters[0].architecture, "x86_64");
+        assert_eq!(clusters[0].bytes, "ff");
+        assert_eq!(clusters[0].decoder, "urcodec/x86_64");
+        assert_eq!(clusters[0].count, 2);
+        assert_eq!(clusters[0].samples, vec!["sample".to_string()]);
+        assert_eq!(clusters[0].first_address, 0x1000);
+        assert_eq!(
+            clusters[0].candidate_family,
+            "x86_64_unknown_opcode_or_prefix"
+        );
+    }
+
+    fn instruction(
+        addr: u64,
+        bytes: &[u8],
+        decode_status: ura_core::model::DecodeStatus,
+    ) -> ura_core::model::Instruction {
+        ura_core::model::Instruction {
+            addr,
+            size: bytes.len() as u8,
+            bytes: bytes.to_vec(),
+            mnemonic: if decode_status == ura_core::model::DecodeStatus::Unknown {
+                ".byte".to_string()
+            } else {
+                "ret".to_string()
+            },
+            operands: String::new(),
+            text: String::new(),
+            kind: if decode_status == ura_core::model::DecodeStatus::Unknown {
+                ura_core::model::InstructionKind::Unknown
+            } else {
+                ura_core::model::InstructionKind::Return
+            },
+            flow: ura_core::model::FlowKind::Fallthrough,
+            fallthrough: Some(addr + bytes.len() as u64),
+            branch_target: None,
+            decode_status,
+            decoder: "urcodec/x86_64".to_string(),
+            decoder_version: "test".to_string(),
+            function_addr: None,
+        }
     }
 }
