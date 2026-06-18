@@ -267,6 +267,22 @@ fn decodes_x86_64_c7_mov_imm32_forms() {
 }
 
 #[test]
+fn decodes_x86_64_operand_size_prefixed_c7_mov_imm16_forms() {
+    let mov_mem = decode(
+        &[0x66, 0xc7, 0x84, 0x24, 0x90, 0x00, 0x00, 0x00, 0x34, 0x12],
+        0x401000,
+    );
+    assert_eq!(mov_mem.text, "mov [rsp+0x90], 0x1234");
+    assert_eq!(mov_mem.size, 10);
+    assert_eq!(mov_mem.kind, InstructionKind::Store);
+
+    let mem = memory_operand(&mov_mem.operands[0]);
+    assert_eq!(mem.base.as_ref().unwrap().name, "rsp");
+    assert_eq!(mem.offset, 0x90);
+    assert_eq!(mem.width_bits, Some(16));
+}
+
+#[test]
 fn decodes_x86_64_group_f7_forms() {
     let test = decode(&[0x48, 0xf7, 0xc0, 0x34, 0x12, 0x00, 0x00], 0x401000);
     assert_eq!(test.text, "test rax, 0x1234");
@@ -350,6 +366,15 @@ fn decodes_x86_64_multibyte_nops() {
     assert_eq!(indexed_nop.size, 5);
     assert_eq!(indexed_nop.kind, InstructionKind::System);
     assert_eq!(indexed_nop.flow, FlowKind::Fallthrough);
+
+    let prefixed_nop = decode(
+        &[0x66, 0x0f, 0x1f, 0x84, 0x00, 0x00, 0x00, 0x00, 0x00],
+        0x401000,
+    );
+    assert_eq!(prefixed_nop.text, "nop");
+    assert_eq!(prefixed_nop.size, 9);
+    assert_eq!(prefixed_nop.kind, InstructionKind::System);
+    assert_eq!(prefixed_nop.flow, FlowKind::Fallthrough);
 }
 
 #[test]

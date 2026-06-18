@@ -19,6 +19,7 @@ struct Rex {
 #[derive(Debug, Clone, Copy)]
 struct Prefixes {
     rex: Rex,
+    operand_size_override: bool,
     opcode_offset: usize,
 }
 
@@ -306,7 +307,7 @@ pub fn decode_instruction(bytes: &[u8], address: u64) -> Result<Instruction> {
         ),
         0x81 => decode_group1_imm32(bytes, address, prefixes),
         0x83 => decode_group1_imm8(bytes, address, prefixes),
-        0xc7 => decode_mov_imm32_rm(bytes, address, prefixes),
+        0xc7 => decode_mov_imm_rm(bytes, address, prefixes),
         0xf7 => decode_group_f7(bytes, address, prefixes),
         0xff => decode_group_ff(bytes, address, prefixes),
         0x50..=0x57 => Ok(base(
@@ -424,16 +425,31 @@ fn decode_group1_imm32(bytes: &[u8], address: u64, prefixes: Prefixes) -> Result
     ))
 }
 
-fn decode_mov_imm32_rm(bytes: &[u8], address: u64, prefixes: Prefixes) -> Result<Instruction> {
+fn decode_mov_imm_rm(bytes: &[u8], address: u64, prefixes: Prefixes) -> Result<Instruction> {
     let modrm_offset = prefixes.opcode_offset + 1;
-    require_len(bytes, modrm_offset + 5)?;
+    require_len(bytes, modrm_offset + 1)?;
     let modrm = parse_modrm(bytes[modrm_offset]);
     if modrm.reg != 0 {
         return Ok(unknown(bytes[prefixes.opcode_offset], address));
     }
-    let (rm, consumed_without_imm) = parse_rm_operand(bytes, modrm_offset, prefixes.rex, 64)?;
-    let imm = i64::from(read_i32(bytes, consumed_without_imm)?);
-    let consumed = consumed_without_imm + 4;
+    let width_bits = if prefixes.operand_size_override {
+        16
+    } else {
+        64
+    };
+    let (rm, consumed_without_imm) =
+        parse_rm_operand(bytes, modrm_offset, prefixes.rex, width_bits)?;
+    let (imm, consumed) = if prefixes.operand_size_override {
+        (
+            i64::from(read_i16(bytes, consumed_without_imm)?),
+            consumed_without_imm + 2,
+        )
+    } else {
+        (
+            i64::from(read_i32(bytes, consumed_without_imm)?),
+            consumed_without_imm + 4,
+        )
+    };
     let kind = if matches!(rm, Operand::Memory(_)) {
         InstructionKind::Store
     } else {
@@ -632,9 +648,18 @@ fn parse_prefixes(bytes: &[u8]) -> Result<Prefixes> {
     require_len(bytes, 1)?;
     let mut offset = 0;
     let mut rex = Rex::default();
+    let mut operand_size_override = false;
     while offset < bytes.len() {
         let byte = bytes[offset];
-        if (0x40..=0x4f).contains(&byte) {
+        if byte == 0x66 {
+            operand_size_override = true;
+            offset += 1;
+        } else if matches!(
+            byte,
+            0x26 | 0x2e | 0x36 | 0x3e | 0x64 | 0x65 | 0x67 | 0xf2 | 0xf3
+        ) {
+            offset += 1;
+        } else if (0x40..=0x4f).contains(&byte) {
             rex = Rex {
                 present: true,
                 w: byte & 0x08 != 0,
@@ -655,6 +680,7 @@ fn parse_prefixes(bytes: &[u8]) -> Result<Prefixes> {
     }
     Ok(Prefixes {
         rex,
+        operand_size_override,
         opcode_offset: offset,
     })
 }
@@ -684,6 +710,11 @@ fn require_len(bytes: &[u8], expected: usize) -> Result<()> {
 fn read_i8(bytes: &[u8], offset: usize) -> Result<i8> {
     require_len(bytes, offset + 1)?;
     Ok(bytes[offset] as i8)
+}
+
+fn read_i16(bytes: &[u8], offset: usize) -> Result<i16> {
+    require_len(bytes, offset + 2)?;
+    Ok(i16::from_le_bytes([bytes[offset], bytes[offset + 1]]))
 }
 
 fn read_i32(bytes: &[u8], offset: usize) -> Result<i32> {
