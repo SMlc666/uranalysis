@@ -16,3 +16,17 @@ impl DirtyInputs {
         }
     }
 }
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RefreshReason {
+    ManualFunctionAdded { addr: u64 },
+    ManualFunctionRangeChanged { addr: u64, start: u64, end: u64 },
+    SourceBytesChanged,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AnalysisWindow {
+    pub start: u64,
+    pub end: u64,
+    pub reason: RefreshReason,
+}

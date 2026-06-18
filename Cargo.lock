@@ -840,6 +840,7 @@ dependencies = [
  "tempfile",
  "toml",
  "ura-core",
+ "urloader",
 ]
 
 [[package]]

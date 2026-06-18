@@ -4,7 +4,6 @@ pub mod disasm;
 pub mod functions;
 pub mod invalidation;
 pub mod pass;
-pub mod refresh;
 pub mod scheduler;
 pub mod session;
 pub mod strings;
@@ -91,10 +90,10 @@ pub fn run_initial_analysis_with_instruction_limit(
 ) -> Result<AnalysisOutput> {
     let instructions = disasm::linear_disassemble_with_limit(image, max_instructions)?;
     let strings = strings::extract_strings(image);
-    let window = refresh::AnalysisWindow {
+    let window = invalidation::AnalysisWindow {
         start: image.entry,
         end: image.entry.saturating_add(4),
-        reason: refresh::RefreshReason::SourceBytesChanged,
+        reason: invalidation::RefreshReason::SourceBytesChanged,
     };
     let mut diagnostics = diagnostics::collect_diagnostics(&instructions);
     let cfg = match cfg::build_cfg(&instructions, &[image.entry], window) {
@@ -140,6 +139,14 @@ pub fn build_state_from_loaded(
     loaded: &urloader::LoadedImage,
     user_facts: &UserFacts,
 ) -> Result<AnalysisState> {
+    build_state_from_loaded_with_instruction_limit(loaded, user_facts, None)
+}
+
+pub fn build_state_from_loaded_with_instruction_limit(
+    loaded: &urloader::LoadedImage,
+    user_facts: &UserFacts,
+    max_instructions: Option<usize>,
+) -> Result<AnalysisState> {
     let segments = segments_from_loaded(&loaded.segments);
     let target = target::AnalysisTarget::from_loaded(loaded)?;
     let image = AnalysisImage {
@@ -149,7 +156,7 @@ pub fn build_state_from_loaded(
         segments: &segments,
     };
     let user_functions = functions::manual_functions_from_facts(user_facts);
-    let output = run_initial_analysis(&image, &user_functions)?;
+    let output = run_initial_analysis_with_instruction_limit(&image, &user_functions, max_instructions)?;
 
     Ok(AnalysisState {
         instructions: output.instructions,

@@ -25,6 +25,7 @@ pub fn minimal_elf64_aarch64_executable() -> Vec<u8> {
     bytes
 }
 
+#[allow(dead_code)]
 pub fn load_minimal_aarch64_image() -> urloader::LoadedImage {
     urloader::load(&minimal_elf64_aarch64_executable()).expect("fixture should load")
 }

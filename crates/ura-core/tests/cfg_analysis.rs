@@ -1,7 +1,7 @@
 use ura_core::{
     analysis::{
         cfg::build_cfg,
-        refresh::{AnalysisWindow, RefreshReason},
+        invalidation::{AnalysisWindow, RefreshReason},
     },
     model::{CfgEdgeKind, DecodeStatus, FlowKind, Instruction, InstructionKind},
     Result,
