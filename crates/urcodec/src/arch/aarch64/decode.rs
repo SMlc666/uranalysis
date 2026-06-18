@@ -60,9 +60,24 @@ const PATTERNS: &[Pattern] = &[
         decode: decode_add_sub_imm,
     },
     Pattern {
+        mask: 0x1f00_0000,
+        value: 0x0b00_0000,
+        decode: decode_add_sub_shifted_register,
+    },
+    Pattern {
         mask: 0x1f80_0000,
         value: 0x1280_0000,
         decode: decode_move_wide,
+    },
+    Pattern {
+        mask: 0xffc0_0000,
+        value: 0x5300_0000,
+        decode: decode_lsr_immediate_alias,
+    },
+    Pattern {
+        mask: 0xffc0_0000,
+        value: 0xd340_0000,
+        decode: decode_lsr_immediate_alias,
     },
     Pattern {
         mask: 0x1f00_0000,
@@ -70,14 +85,34 @@ const PATTERNS: &[Pattern] = &[
         decode: decode_logical_shifted_register,
     },
     Pattern {
+        mask: 0x7fe0_fc00,
+        value: 0x1ac0_2400,
+        decode: decode_lsr_register,
+    },
+    Pattern {
+        mask: 0x7f80_0000,
+        value: 0x2900_0000,
+        decode: decode_load_store_pair_offset,
+    },
+    Pattern {
         mask: 0x3b00_0000,
         value: 0x3900_0000,
         decode: decode_load_store_unsigned,
     },
     Pattern {
+        mask: 0x3b20_0c00,
+        value: 0x3800_0000,
+        decode: decode_load_store_unscaled,
+    },
+    Pattern {
         mask: 0x3b20_0400,
         value: 0x3800_0400,
         decode: decode_load_store_unscaled,
+    },
+    Pattern {
+        mask: 0xffe0_001f,
+        value: 0xd420_0000,
+        decode: decode_brk,
     },
     Pattern {
         mask: 0x7c00_0000,
@@ -361,6 +396,66 @@ fn decode_add_sub_imm(word: u32, address: u64) -> Instruction {
     )
 }
 
+fn decode_add_sub_shifted_register(word: u32, address: u64) -> Instruction {
+    let is_64 = bits(word, 31, 31) == 1;
+    let sub = bits(word, 30, 30) == 1;
+    let set_flags = bits(word, 29, 29) == 1;
+    let shift = bits(word, 22, 23);
+    let imm6 = bits(word, 10, 15);
+    if shift != 0 || imm6 != 0 {
+        return unknown(word, address);
+    }
+
+    let rm = bits(word, 16, 20);
+    let rn = bits(word, 5, 9);
+    let rd = bits(word, 0, 4);
+    let dst = if is_64 {
+        crate::arch::aarch64::registers::x_or_zr(rd)
+    } else {
+        crate::arch::aarch64::registers::w_or_zr(rd)
+    };
+    let src1 = if is_64 {
+        crate::arch::aarch64::registers::x_or_zr(rn)
+    } else {
+        crate::arch::aarch64::registers::w_or_zr(rn)
+    };
+    let src2 = if is_64 {
+        crate::arch::aarch64::registers::x_or_zr(rm)
+    } else {
+        crate::arch::aarch64::registers::w_or_zr(rm)
+    };
+    let mnemonic = match (sub, set_flags, rd == 31) {
+        (true, true, true) => "cmp",
+        (false, true, true) => "cmn",
+        (true, true, false) => "subs",
+        (false, true, false) => "adds",
+        (true, false, _) => "sub",
+        (false, false, _) => "add",
+    };
+    let operands = if matches!(mnemonic, "cmp" | "cmn") {
+        vec![Operand::Register(src1), Operand::Register(src2)]
+    } else {
+        vec![
+            Operand::Register(dst),
+            Operand::Register(src1),
+            Operand::Register(src2),
+        ]
+    };
+    base(
+        word,
+        address,
+        mnemonic,
+        operands,
+        if matches!(mnemonic, "cmp" | "cmn") {
+            InstructionKind::Compare
+        } else {
+            InstructionKind::Arithmetic
+        },
+        FlowKind::Fallthrough,
+        None,
+    )
+}
+
 fn decode_move_wide(word: u32, address: u64) -> Instruction {
     let is_64 = bits(word, 31, 31) == 1;
     let opc = bits(word, 29, 30);
@@ -384,6 +479,42 @@ fn decode_move_wide(word: u32, address: u64) -> Instruction {
         mnemonic,
         vec![Operand::Register(reg), Operand::Immediate(imm)],
         InstructionKind::Move,
+        FlowKind::Fallthrough,
+        None,
+    )
+}
+
+fn decode_lsr_immediate_alias(word: u32, address: u64) -> Instruction {
+    let is_64 = bits(word, 31, 31) == 1;
+    let immr = bits(word, 16, 21);
+    let imms = bits(word, 10, 15);
+    let width = if is_64 { 64 } else { 32 };
+    if imms != width - 1 {
+        return unknown(word, address);
+    }
+
+    let rn = bits(word, 5, 9);
+    let rd = bits(word, 0, 4);
+    let dst = if is_64 {
+        crate::arch::aarch64::registers::x_or_zr(rd)
+    } else {
+        crate::arch::aarch64::registers::w_or_zr(rd)
+    };
+    let src = if is_64 {
+        crate::arch::aarch64::registers::x_or_zr(rn)
+    } else {
+        crate::arch::aarch64::registers::w_or_zr(rn)
+    };
+    base(
+        word,
+        address,
+        "lsr",
+        vec![
+            Operand::Register(dst),
+            Operand::Register(src),
+            Operand::Immediate(i64::from(immr)),
+        ],
+        InstructionKind::Logical,
         FlowKind::Fallthrough,
         None,
     )
@@ -444,6 +575,41 @@ fn decode_logical_shifted_register(word: u32, address: u64) -> Instruction {
     )
 }
 
+fn decode_lsr_register(word: u32, address: u64) -> Instruction {
+    let is_64 = bits(word, 31, 31) == 1;
+    let rm = bits(word, 16, 20);
+    let rn = bits(word, 5, 9);
+    let rd = bits(word, 0, 4);
+    let dst = if is_64 {
+        crate::arch::aarch64::registers::x_or_zr(rd)
+    } else {
+        crate::arch::aarch64::registers::w_or_zr(rd)
+    };
+    let src = if is_64 {
+        crate::arch::aarch64::registers::x_or_zr(rn)
+    } else {
+        crate::arch::aarch64::registers::w_or_zr(rn)
+    };
+    let shift = if is_64 {
+        crate::arch::aarch64::registers::x_or_zr(rm)
+    } else {
+        crate::arch::aarch64::registers::w_or_zr(rm)
+    };
+    base(
+        word,
+        address,
+        "lsr",
+        vec![
+            Operand::Register(dst),
+            Operand::Register(src),
+            Operand::Register(shift),
+        ],
+        InstructionKind::Logical,
+        FlowKind::Fallthrough,
+        None,
+    )
+}
+
 fn access_size_bytes(word: u32) -> i64 {
     1i64 << bits(word, 30, 31)
 }
@@ -453,6 +619,22 @@ fn access_register(word: u32, rt: u32) -> crate::model::Register {
         crate::arch::aarch64::registers::x(rt)
     } else {
         crate::arch::aarch64::registers::w(rt)
+    }
+}
+
+fn pair_access_size_bytes(word: u32) -> i64 {
+    if bits(word, 31, 31) == 1 {
+        8
+    } else {
+        4
+    }
+}
+
+fn pair_access_register(word: u32, rt: u32) -> crate::model::Register {
+    if bits(word, 31, 31) == 1 {
+        crate::arch::aarch64::registers::x_or_zr(rt)
+    } else {
+        crate::arch::aarch64::registers::w_or_zr(rt)
     }
 }
 
@@ -485,6 +667,38 @@ fn decode_load_store_unsigned(word: u32, address: u64) -> Instruction {
     )
 }
 
+fn decode_load_store_pair_offset(word: u32, address: u64) -> Instruction {
+    let load = bits(word, 22, 22) == 1;
+    let imm = sign_extend(bits(word, 15, 21), 7) * pair_access_size_bytes(word);
+    let rt2 = bits(word, 10, 14);
+    let rn = bits(word, 5, 9);
+    let rt = bits(word, 0, 4);
+    let reg = pair_access_register(word, rt);
+    let reg2 = pair_access_register(word, rt2);
+    let base_reg = crate::arch::aarch64::registers::x_or_sp(rn);
+    base(
+        word,
+        address,
+        if load { "ldp" } else { "stp" },
+        vec![
+            Operand::Register(reg),
+            Operand::Register(reg2),
+            Operand::Memory(crate::model::MemoryOperand::base_offset(
+                base_reg,
+                imm,
+                Some((pair_access_size_bytes(word) * 8) as u16),
+            )),
+        ],
+        if load {
+            InstructionKind::Load
+        } else {
+            InstructionKind::Store
+        },
+        FlowKind::Fallthrough,
+        None,
+    )
+}
+
 fn decode_load_store_unscaled(word: u32, address: u64) -> Instruction {
     let load = bits(word, 22, 22) == 1;
     let post_index = bits(word, 10, 11) == 0b01;
@@ -505,16 +719,35 @@ fn decode_load_store_unscaled(word: u32, address: u64) -> Instruction {
     if post_index {
         memory = memory.with_post_index();
     }
+    let mnemonic = match (load, pre_index || post_index) {
+        (true, true) => "ldr",
+        (false, true) => "str",
+        (true, false) => "ldur",
+        (false, false) => "stur",
+    };
     base(
         word,
         address,
-        if load { "ldr" } else { "str" },
+        mnemonic,
         vec![Operand::Register(reg), Operand::Memory(memory)],
         if load {
             InstructionKind::Load
         } else {
             InstructionKind::Store
         },
+        FlowKind::Fallthrough,
+        None,
+    )
+}
+
+fn decode_brk(word: u32, address: u64) -> Instruction {
+    let imm = bits(word, 5, 20);
+    base(
+        word,
+        address,
+        "brk",
+        vec![Operand::Immediate(i64::from(imm))],
+        InstructionKind::System,
         FlowKind::Fallthrough,
         None,
     )

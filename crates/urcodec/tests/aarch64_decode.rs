@@ -105,6 +105,29 @@ fn decodes_common_arithmetic_move_and_hint_forms() {
 }
 
 #[test]
+fn decodes_common_register_arithmetic_and_bit_shifts() {
+    let add = decode(0x8b080128, 0x400100);
+    assert_eq!(add.text, "add x8, x9, x8");
+    assert_eq!(add.kind, InstructionKind::Arithmetic);
+
+    let cmp_w = decode(0x6b09011f, 0x400100);
+    assert_eq!(cmp_w.text, "cmp w8, w9");
+    assert_eq!(cmp_w.kind, InstructionKind::Compare);
+
+    let cmp_x = decode(0xeb09011f, 0x400100);
+    assert_eq!(cmp_x.text, "cmp x8, x9");
+    assert_eq!(cmp_x.kind, InstructionKind::Compare);
+
+    let lsr_imm = decode(0x53067d09, 0x400100);
+    assert_eq!(lsr_imm.text, "lsr w9, w8, #0x6");
+    assert_eq!(lsr_imm.kind, InstructionKind::Logical);
+
+    let lsr_reg = decode(0x9ac82528, 0x400100);
+    assert_eq!(lsr_reg.text, "lsr x8, x9, x8");
+    assert_eq!(lsr_reg.kind, InstructionKind::Logical);
+}
+
+#[test]
 fn decodes_common_load_store_forms() {
     let ldr = decode(0xf9400420, 0x400100);
     assert_eq!(ldr.text, "ldr x0, [x1, #0x8]");
@@ -119,4 +142,28 @@ fn decodes_common_load_store_forms() {
 
     let str_post = decode(0xf8008422, 0x400100);
     assert_eq!(str_post.text, "str x2, [x1], #0x8");
+
+    let stur = decode(0xb806b349, 0x400100);
+    assert_eq!(stur.text, "stur w9, [x26, #0x6b]");
+    assert_eq!(stur.kind, InstructionKind::Store);
+
+    let stp = decode(0xa9122748, 0x400100);
+    assert_eq!(stp.text, "stp x8, x9, [x26, #0x120]");
+    assert_eq!(stp.kind, InstructionKind::Store);
+
+    let stp_xzr = decode(0xa901ff5f, 0x400100);
+    assert_eq!(stp_xzr.text, "stp xzr, xzr, [x26, #0x18]");
+    assert_eq!(stp_xzr.kind, InstructionKind::Store);
+
+    let ldp = decode(0xa9522748, 0x400100);
+    assert_eq!(ldp.text, "ldp x8, x9, [x26, #0x120]");
+    assert_eq!(ldp.kind, InstructionKind::Load);
+}
+
+#[test]
+fn decodes_breakpoint_system_instruction() {
+    let brk = decode(0xd4200020, 0x400100);
+    assert_eq!(brk.text, "brk #0x1");
+    assert_eq!(brk.kind, InstructionKind::System);
+    assert_eq!(brk.flow, FlowKind::Fallthrough);
 }
