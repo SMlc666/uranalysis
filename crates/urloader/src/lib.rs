@@ -2,11 +2,15 @@ mod elf;
 mod error;
 mod model;
 mod pe;
+mod view;
 
-pub use error::{LoadError, Result};
+pub use error::{LoadError, Result, ViewBuildError};
 pub use model::{
-    Architecture, Diagnostic, Endian, Export, FormatDetails, ImageClass, ImageFormat, Import,
-    LoadProfile, LoadedImage, Section, Segment, Symbol,
+    Architecture, BinaryTarget, BinaryView, CapabilitySet, Diagnostic, Endian, Export,
+    FormatDetails, ImageClass, ImageFormat, Import, LineEntry, LoaderDiagnostic, LoadProfile,
+    LoadedImage, MappedRange, MetadataConfidence, NormalizedExport, NormalizedImport,
+    NormalizedRelocation, NormalizedSymbol, RawImage, RawSection, RawSegment, Section, Segment,
+    Symbol, UnwindView, ViewSection,
 };
 
 pub fn load(bytes: &[u8]) -> Result<LoadedImage> {

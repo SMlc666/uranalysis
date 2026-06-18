@@ -24,3 +24,11 @@ pub enum LoadError {
         message: String,
     },
 }
+
+#[derive(Debug, Error, PartialEq, Eq)]
+pub enum ViewBuildError {
+    #[error("front-end view missing executable mapping")]
+    MissingExecutableMapping,
+    #[error("front-end view missing analysis entry")]
+    MissingAnalysisEntry,
+}
