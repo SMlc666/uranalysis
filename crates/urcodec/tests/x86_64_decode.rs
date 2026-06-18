@@ -360,6 +360,16 @@ fn decodes_x86_64_arithmetic_and_logical_forms() {
     assert_eq!(xadd.size, 8);
     assert_eq!(xadd.kind, InstructionKind::Arithmetic);
 
+    let imul_reg = decode(&[0x0f, 0xaf, 0xd0], 0x401000);
+    assert_eq!(imul_reg.text, "imul edx, eax");
+    assert_eq!(imul_reg.size, 3);
+    assert_eq!(imul_reg.kind, InstructionKind::Arithmetic);
+
+    let imul_mem = decode(&[0x48, 0x0f, 0xaf, 0x08], 0x401000);
+    assert_eq!(imul_mem.text, "imul rcx, [rax]");
+    assert_eq!(imul_mem.size, 4);
+    assert_eq!(imul_mem.kind, InstructionKind::Arithmetic);
+
     let cmp_byte_reg = decode(&[0x38, 0xc8], 0x401000);
     assert_eq!(cmp_byte_reg.text, "cmp al, cl");
     assert_eq!(cmp_byte_reg.size, 2);
@@ -379,6 +389,36 @@ fn decodes_x86_64_arithmetic_and_logical_forms() {
     assert_eq!(bsf_mem.text, "bsf rcx, [rax]");
     assert_eq!(bsf_mem.size, 4);
     assert_eq!(bsf_mem.kind, InstructionKind::Logical);
+
+    let movzx_word = decode(&[0x0f, 0xb7, 0x07], 0x401000);
+    assert_eq!(movzx_word.text, "movzx eax, [rdi]");
+    assert_eq!(movzx_word.size, 3);
+    assert_eq!(movzx_word.kind, InstructionKind::Load);
+
+    let movzx_word_64 = decode(&[0x48, 0x0f, 0xb7, 0x07], 0x401000);
+    assert_eq!(movzx_word_64.text, "movzx rax, [rdi]");
+    assert_eq!(movzx_word_64.size, 4);
+    assert_eq!(movzx_word_64.kind, InstructionKind::Load);
+
+    let bt_imm = decode(&[0x0f, 0xba, 0xe0, 0x09], 0x401000);
+    assert_eq!(bt_imm.text, "bt eax, 0x9");
+    assert_eq!(bt_imm.size, 4);
+    assert_eq!(bt_imm.kind, InstructionKind::Compare);
+
+    let bts_imm = decode(&[0x0f, 0xba, 0x2b, 0x08], 0x401000);
+    assert_eq!(bts_imm.text, "bts [rbx], 0x8");
+    assert_eq!(bts_imm.size, 4);
+    assert_eq!(bts_imm.kind, InstructionKind::Logical);
+
+    let btr_imm = decode(&[0x0f, 0xba, 0x33, 0x07], 0x401000);
+    assert_eq!(btr_imm.text, "btr [rbx], 0x7");
+    assert_eq!(btr_imm.size, 4);
+    assert_eq!(btr_imm.kind, InstructionKind::Logical);
+
+    let btc_imm = decode(&[0x0f, 0xba, 0x3b, 0x0c], 0x401000);
+    assert_eq!(btc_imm.text, "btc [rbx], 0xc");
+    assert_eq!(btc_imm.size, 4);
+    assert_eq!(btc_imm.kind, InstructionKind::Logical);
 
     let xor_imm = decode(&[0x48, 0x83, 0xf0, 0x7f], 0x401000);
     assert_eq!(xor_imm.text, "xor rax, 0x7f");
@@ -652,6 +692,41 @@ fn decodes_x86_64_sse_move_and_xor_forms() {
     assert_eq!(mulsd.text, "mulsd xmm4, xmm2");
     assert_eq!(mulsd.size, 4);
     assert_eq!(mulsd.kind, InstructionKind::Arithmetic);
+
+    let addps = decode(&[0x0f, 0x58, 0xc1], 0x401000);
+    assert_eq!(addps.text, "addps xmm0, xmm1");
+    assert_eq!(addps.size, 3);
+    assert_eq!(addps.kind, InstructionKind::Arithmetic);
+
+    let addsd = decode(&[0xf2, 0x0f, 0x58, 0xc3], 0x401000);
+    assert_eq!(addsd.text, "addsd xmm0, xmm3");
+    assert_eq!(addsd.size, 4);
+    assert_eq!(addsd.kind, InstructionKind::Arithmetic);
+
+    let subps = decode(&[0x0f, 0x5c, 0xe6], 0x401000);
+    assert_eq!(subps.text, "subps xmm4, xmm6");
+    assert_eq!(subps.size, 3);
+    assert_eq!(subps.kind, InstructionKind::Arithmetic);
+
+    let divps = decode(&[0x0f, 0x5e, 0xca], 0x401000);
+    assert_eq!(divps.text, "divps xmm1, xmm2");
+    assert_eq!(divps.size, 3);
+    assert_eq!(divps.kind, InstructionKind::Arithmetic);
+
+    let andps = decode(&[0x0f, 0x54, 0xc1], 0x401000);
+    assert_eq!(andps.text, "andps xmm0, xmm1");
+    assert_eq!(andps.size, 3);
+    assert_eq!(andps.kind, InstructionKind::Logical);
+
+    let ucomiss = decode(&[0x0f, 0x2e, 0xc1], 0x401000);
+    assert_eq!(ucomiss.text, "ucomiss xmm0, xmm1");
+    assert_eq!(ucomiss.size, 3);
+    assert_eq!(ucomiss.kind, InstructionKind::Compare);
+
+    let comisd = decode(&[0x66, 0x0f, 0x2f, 0xc1], 0x401000);
+    assert_eq!(comisd.text, "comisd xmm0, xmm1");
+    assert_eq!(comisd.size, 4);
+    assert_eq!(comisd.kind, InstructionKind::Compare);
 }
 
 #[test]
@@ -691,6 +766,16 @@ fn decodes_x86_64_mmx_forms() {
     assert_eq!(movd.size, 3);
     assert_eq!(movd.kind, InstructionKind::Move);
 
+    let movd_to_mmx = decode(&[0x0f, 0x6e, 0xc0], 0x401000);
+    assert_eq!(movd_to_mmx.text, "movd mm0, eax");
+    assert_eq!(movd_to_mmx.size, 3);
+    assert_eq!(movd_to_mmx.kind, InstructionKind::Move);
+
+    let movd_to_xmm = decode(&[0x66, 0x0f, 0x6e, 0xc0], 0x401000);
+    assert_eq!(movd_to_xmm.text, "movd xmm0, eax");
+    assert_eq!(movd_to_xmm.size, 4);
+    assert_eq!(movd_to_xmm.kind, InstructionKind::Move);
+
     let movq = decode(&[0x66, 0x48, 0x0f, 0x7e, 0xc1], 0x401000);
     assert_eq!(movq.text, "movq rcx, xmm0");
     assert_eq!(movq.size, 5);
@@ -725,6 +810,26 @@ fn decodes_x86_64_mmx_forms() {
     assert_eq!(pslldq.text, "pslldq xmm2, 0xa");
     assert_eq!(pslldq.size, 5);
     assert_eq!(pslldq.kind, InstructionKind::Logical);
+
+    let por = decode(&[0x0f, 0xeb, 0xeb], 0x401000);
+    assert_eq!(por.text, "por mm5, mm3");
+    assert_eq!(por.size, 3);
+    assert_eq!(por.kind, InstructionKind::Logical);
+
+    let pxor = decode(&[0x66, 0x0f, 0xef, 0xc0], 0x401000);
+    assert_eq!(pxor.text, "pxor xmm0, xmm0");
+    assert_eq!(pxor.size, 4);
+    assert_eq!(pxor.kind, InstructionKind::Logical);
+
+    let pshufw = decode(&[0x0f, 0x70, 0xc1, 0x1b], 0x401000);
+    assert_eq!(pshufw.text, "pshufw mm0, mm1, 0x1b");
+    assert_eq!(pshufw.size, 4);
+    assert_eq!(pshufw.kind, InstructionKind::Move);
+
+    let pshufd = decode(&[0x66, 0x0f, 0x70, 0xc1, 0x1b], 0x401000);
+    assert_eq!(pshufd.text, "pshufd xmm0, xmm1, 0x1b");
+    assert_eq!(pshufd.size, 5);
+    assert_eq!(pshufd.kind, InstructionKind::Move);
 }
 
 #[test]

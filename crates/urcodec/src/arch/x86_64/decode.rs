@@ -192,6 +192,10 @@ pub fn decode_instruction(bytes: &[u8], address: u64) -> Result<Instruction> {
                 decode_0f01_system(bytes, address, prefixes)
             } else if second == 0x6f || second == 0x7f {
                 decode_mmx_move(bytes, address, prefixes, second)
+            } else if second == 0x6e {
+                decode_movd_movq_to_vector(bytes, address, prefixes)
+            } else if second == 0x70 {
+                decode_packed_shuffle(bytes, address, prefixes)
             } else if second == 0x7e {
                 decode_movd_movq(bytes, address, prefixes)
             } else if second == 0x74 {
@@ -208,12 +212,28 @@ pub fn decode_instruction(bytes: &[u8], address: u64) -> Result<Instruction> {
                 decode_xadd(bytes, address, prefixes, default_operand_width(prefixes))
             } else if second == 0x73 {
                 decode_packed_shift_imm(bytes, address, prefixes)
-            } else if matches!(second, 0xd7 | 0xe0 | 0xf1 | 0xf5 | 0xfd) {
+            } else if matches!(second, 0xd7 | 0xe0 | 0xeb | 0xef | 0xf1 | 0xf5 | 0xfd) {
                 decode_mmx_opcode(bytes, address, prefixes, second)
             } else if second == 0xa3 {
                 decode_bt(bytes, address, prefixes)
+            } else if second == 0xba {
+                decode_bit_test_imm(bytes, address, prefixes)
             } else if matches!(second, 0x10 | 0x11 | 0x28 | 0x29) {
                 decode_sse_move(bytes, address, prefixes, second)
+            } else if matches!(second, 0x2e | 0x2f) {
+                decode_sse_compare_unordered(bytes, address, prefixes, second)
+            } else if matches!(second, 0x54 | 0x58 | 0x5c | 0x5e) {
+                decode_sse_binary(
+                    bytes,
+                    address,
+                    prefixes,
+                    mnemonic_for_sse_binary(second, prefixes),
+                    if second == 0x54 {
+                        InstructionKind::Logical
+                    } else {
+                        InstructionKind::Arithmetic
+                    },
+                )
             } else if second == 0x59 {
                 let mnemonic = if prefixes.repeat_prefix == Some(0xf2) {
                     "mulsd"
@@ -233,6 +253,10 @@ pub fn decode_instruction(bytes: &[u8], address: u64) -> Result<Instruction> {
                 decode_sse_compare(bytes, address, prefixes)
             } else if (0x90..=0x9f).contains(&second) {
                 decode_setcc(bytes, address, prefixes, second)
+            } else if second == 0xaf {
+                decode_imul_rm(bytes, address, prefixes)
+            } else if second == 0xb7 {
+                decode_movzx_word(bytes, address, prefixes)
             } else if second == 0xb6 || second == 0xbe {
                 decode_mov_extend(bytes, address, prefixes, second)
             } else {
@@ -1391,6 +1415,33 @@ fn decode_bt(bytes: &[u8], address: u64, prefixes: Prefixes) -> Result<Instructi
     ))
 }
 
+fn decode_bit_test_imm(bytes: &[u8], address: u64, prefixes: Prefixes) -> Result<Instruction> {
+    let modrm_offset = prefixes.opcode_offset + 2;
+    require_len(bytes, modrm_offset + 1)?;
+    let modrm = parse_modrm(bytes[modrm_offset]);
+    let (mnemonic, kind) = match modrm.reg {
+        0b100 => ("bt", InstructionKind::Compare),
+        0b101 => ("bts", InstructionKind::Logical),
+        0b110 => ("btr", InstructionKind::Logical),
+        0b111 => ("btc", InstructionKind::Logical),
+        _ => return Ok(unknown(bytes[prefixes.opcode_offset], address)),
+    };
+    let width_bits = default_operand_width(prefixes);
+    let (rm, consumed_without_imm) =
+        parse_rm_operand(bytes, modrm_offset, prefixes.rex, width_bits)?;
+    let imm = i64::from(read_u8(bytes, consumed_without_imm)?);
+    let consumed = consumed_without_imm + 1;
+    Ok(base(
+        bytes[..consumed].to_vec(),
+        address,
+        mnemonic,
+        vec![rm, Operand::Immediate(imm)],
+        kind,
+        FlowKind::Fallthrough,
+        None,
+    ))
+}
+
 fn decode_mov_extend(
     bytes: &[u8],
     address: u64,
@@ -1422,6 +1473,60 @@ fn decode_mov_extend(
         } else {
             InstructionKind::Move
         },
+        FlowKind::Fallthrough,
+        None,
+    ))
+}
+
+fn decode_movzx_word(bytes: &[u8], address: u64, prefixes: Prefixes) -> Result<Instruction> {
+    let modrm_offset = prefixes.opcode_offset + 2;
+    require_len(bytes, modrm_offset + 1)?;
+    let modrm = parse_modrm(bytes[modrm_offset]);
+    let dst = Operand::Register(reg_for_width(
+        extend_reg(modrm.reg, prefixes.rex.r),
+        default_operand_width(prefixes),
+        prefixes.rex.present,
+    ));
+    let (src, consumed) = if modrm.mode == 0b11 {
+        (
+            Operand::Register(reg16(extend_reg(modrm.rm, prefixes.rex.b))),
+            modrm_offset + 1,
+        )
+    } else {
+        parse_rm_operand(bytes, modrm_offset, prefixes.rex, 16)?
+    };
+    Ok(base(
+        bytes[..consumed].to_vec(),
+        address,
+        "movzx",
+        vec![dst, src.clone()],
+        if matches!(src, Operand::Memory(_)) {
+            InstructionKind::Load
+        } else {
+            InstructionKind::Move
+        },
+        FlowKind::Fallthrough,
+        None,
+    ))
+}
+
+fn decode_imul_rm(bytes: &[u8], address: u64, prefixes: Prefixes) -> Result<Instruction> {
+    let modrm_offset = prefixes.opcode_offset + 2;
+    require_len(bytes, modrm_offset + 1)?;
+    let modrm = parse_modrm(bytes[modrm_offset]);
+    let width_bits = default_operand_width(prefixes);
+    let dst = Operand::Register(reg_for_width(
+        extend_reg(modrm.reg, prefixes.rex.r),
+        width_bits,
+        prefixes.rex.present,
+    ));
+    let (src, consumed) = parse_rm_operand(bytes, modrm_offset, prefixes.rex, width_bits)?;
+    Ok(base(
+        bytes[..consumed].to_vec(),
+        address,
+        "imul",
+        vec![dst, src],
+        InstructionKind::Arithmetic,
         FlowKind::Fallthrough,
         None,
     ))
@@ -1566,6 +1671,37 @@ fn decode_movd_movq(bytes: &[u8], address: u64, prefixes: Prefixes) -> Result<In
     ))
 }
 
+fn decode_movd_movq_to_vector(
+    bytes: &[u8],
+    address: u64,
+    prefixes: Prefixes,
+) -> Result<Instruction> {
+    let modrm_offset = prefixes.opcode_offset + 2;
+    require_len(bytes, modrm_offset + 1)?;
+    let modrm = parse_modrm(bytes[modrm_offset]);
+    let width_bits = if prefixes.rex.w { 64 } else { 32 };
+    let dst = if prefixes.operand_size_override {
+        Operand::Register(xmm(extend_reg(modrm.reg, prefixes.rex.r)))
+    } else {
+        Operand::Register(mm(extend_reg(modrm.reg, prefixes.rex.r)))
+    };
+    let (src, consumed) = parse_rm_operand(bytes, modrm_offset, prefixes.rex, width_bits)?;
+    let kind = if matches!(src, Operand::Memory(_)) {
+        InstructionKind::Load
+    } else {
+        InstructionKind::Move
+    };
+    Ok(base(
+        bytes[..consumed].to_vec(),
+        address,
+        if width_bits == 64 { "movq" } else { "movd" },
+        vec![dst, src],
+        kind,
+        FlowKind::Fallthrough,
+        None,
+    ))
+}
+
 fn decode_pcmpeqb(bytes: &[u8], address: u64, prefixes: Prefixes) -> Result<Instruction> {
     let modrm_offset = prefixes.opcode_offset + 2;
     require_len(bytes, modrm_offset + 1)?;
@@ -1646,10 +1782,19 @@ fn decode_mmx_opcode(
         ));
     }
 
-    let reg = Operand::Register(mm(extend_reg(modrm.reg, prefixes.rex.r)));
-    let (rm, consumed) = parse_mmx_rm_operand(bytes, modrm_offset, prefixes.rex)?;
+    let (reg, rm, consumed) = if prefixes.operand_size_override {
+        let reg = Operand::Register(xmm(extend_reg(modrm.reg, prefixes.rex.r)));
+        let (rm, consumed) = parse_xmm_rm_operand(bytes, modrm_offset, prefixes.rex)?;
+        (reg, rm, consumed)
+    } else {
+        let reg = Operand::Register(mm(extend_reg(modrm.reg, prefixes.rex.r)));
+        let (rm, consumed) = parse_mmx_rm_operand(bytes, modrm_offset, prefixes.rex)?;
+        (reg, rm, consumed)
+    };
     let (mnemonic, kind) = match opcode {
         0xe0 => ("pavgb", InstructionKind::Arithmetic),
+        0xeb => ("por", InstructionKind::Logical),
+        0xef => ("pxor", InstructionKind::Logical),
         0xf1 => ("psllw", InstructionKind::Logical),
         0xf5 => ("pmaddwd", InstructionKind::Arithmetic),
         0xfd => ("paddw", InstructionKind::Arithmetic),
@@ -1661,6 +1806,45 @@ fn decode_mmx_opcode(
         mnemonic,
         vec![reg, rm],
         kind,
+        FlowKind::Fallthrough,
+        None,
+    ))
+}
+
+fn decode_packed_shuffle(bytes: &[u8], address: u64, prefixes: Prefixes) -> Result<Instruction> {
+    let modrm_offset = prefixes.opcode_offset + 2;
+    require_len(bytes, modrm_offset + 1)?;
+    let modrm = parse_modrm(bytes[modrm_offset]);
+    let (mnemonic, dst, src, consumed_without_imm) = match prefixes.repeat_prefix {
+        Some(0xf2) if prefixes.operand_size_override => {
+            let dst = Operand::Register(xmm(extend_reg(modrm.reg, prefixes.rex.r)));
+            let (src, consumed) = parse_xmm_rm_operand(bytes, modrm_offset, prefixes.rex)?;
+            ("pshuflw", dst, src, consumed)
+        }
+        Some(0xf3) if prefixes.operand_size_override => {
+            let dst = Operand::Register(xmm(extend_reg(modrm.reg, prefixes.rex.r)));
+            let (src, consumed) = parse_xmm_rm_operand(bytes, modrm_offset, prefixes.rex)?;
+            ("pshufhw", dst, src, consumed)
+        }
+        _ if prefixes.operand_size_override => {
+            let dst = Operand::Register(xmm(extend_reg(modrm.reg, prefixes.rex.r)));
+            let (src, consumed) = parse_xmm_rm_operand(bytes, modrm_offset, prefixes.rex)?;
+            ("pshufd", dst, src, consumed)
+        }
+        _ => {
+            let dst = Operand::Register(mm(extend_reg(modrm.reg, prefixes.rex.r)));
+            let (src, consumed) = parse_mmx_rm_operand(bytes, modrm_offset, prefixes.rex)?;
+            ("pshufw", dst, src, consumed)
+        }
+    };
+    let imm = i64::from(read_u8(bytes, consumed_without_imm)?);
+    let consumed = consumed_without_imm + 1;
+    Ok(base(
+        bytes[..consumed].to_vec(),
+        address,
+        mnemonic,
+        vec![dst, src, Operand::Immediate(imm)],
+        InstructionKind::Move,
         FlowKind::Fallthrough,
         None,
     ))
@@ -1735,6 +1919,21 @@ fn decode_sse_binary(
         FlowKind::Fallthrough,
         None,
     ))
+}
+
+fn decode_sse_compare_unordered(
+    bytes: &[u8],
+    address: u64,
+    prefixes: Prefixes,
+    opcode: u8,
+) -> Result<Instruction> {
+    let mnemonic = match (opcode, prefixes.operand_size_override) {
+        (0x2e, true) => "ucomisd",
+        (0x2e, false) => "ucomiss",
+        (0x2f, true) => "comisd",
+        _ => "comiss",
+    };
+    decode_sse_binary(bytes, address, prefixes, mnemonic, InstructionKind::Compare)
 }
 
 fn decode_sse_compare(bytes: &[u8], address: u64, prefixes: Prefixes) -> Result<Instruction> {
@@ -2131,6 +2330,25 @@ fn mnemonic_for_cmovcc(opcode: u8) -> &'static str {
         0xd => "cmovge",
         0xe => "cmovle",
         _ => "cmovg",
+    }
+}
+
+fn mnemonic_for_sse_binary(opcode: u8, prefixes: Prefixes) -> &'static str {
+    match opcode {
+        0x54 if prefixes.operand_size_override => "andpd",
+        0x54 => "andps",
+        0x58 if prefixes.repeat_prefix == Some(0xf2) => "addsd",
+        0x58 if prefixes.repeat_prefix == Some(0xf3) => "addss",
+        0x58 if prefixes.operand_size_override => "addpd",
+        0x58 => "addps",
+        0x5c if prefixes.repeat_prefix == Some(0xf2) => "subsd",
+        0x5c if prefixes.repeat_prefix == Some(0xf3) => "subss",
+        0x5c if prefixes.operand_size_override => "subpd",
+        0x5c => "subps",
+        0x5e if prefixes.repeat_prefix == Some(0xf2) => "divsd",
+        0x5e if prefixes.repeat_prefix == Some(0xf3) => "divss",
+        0x5e if prefixes.operand_size_override => "divpd",
+        _ => "divps",
     }
 }
 
