@@ -811,6 +811,36 @@ fn decodes_x86_64_mmx_forms() {
     assert_eq!(pcmpeqb_xmm.size, 4);
     assert_eq!(pcmpeqb_xmm.kind, InstructionKind::Compare);
 
+    let punpcklbw_mmx = decode(&[0x0f, 0x60, 0xc0], 0x401000);
+    assert_eq!(punpcklbw_mmx.text, "punpcklbw mm0, mm0");
+    assert_eq!(punpcklbw_mmx.size, 3);
+    assert_eq!(punpcklbw_mmx.kind, InstructionKind::Move);
+
+    let punpcklbw_xmm = decode(&[0x66, 0x0f, 0x60, 0xc0], 0x401000);
+    assert_eq!(punpcklbw_xmm.text, "punpcklbw xmm0, xmm0");
+    assert_eq!(punpcklbw_xmm.size, 4);
+    assert_eq!(punpcklbw_xmm.kind, InstructionKind::Move);
+
+    let pcmpgtb = decode(&[0x0f, 0x64, 0x0c, 0x0a], 0x401000);
+    assert_eq!(pcmpgtb.text, "pcmpgtb mm1, [rdx+rcx]");
+    assert_eq!(pcmpgtb.size, 4);
+    assert_eq!(pcmpgtb.kind, InstructionKind::Compare);
+
+    let pand = decode(&[0x66, 0x0f, 0xdb, 0x15, 0x34, 0x12, 0x00, 0x00], 0x401000);
+    assert_eq!(pand.text, "pand xmm2, [rip+0x1234]");
+    assert_eq!(pand.size, 8);
+    assert_eq!(pand.kind, InstructionKind::Logical);
+
+    let psubd = decode(&[0x0f, 0xfa, 0x2d, 0x34, 0x12, 0x00, 0x00], 0x401000);
+    assert_eq!(psubd.text, "psubd mm5, [rip+0x1234]");
+    assert_eq!(psubd.size, 7);
+    assert_eq!(psubd.kind, InstructionKind::Arithmetic);
+
+    let psubq = decode(&[0x0f, 0xfb, 0x1d, 0x34, 0x12, 0x00, 0x00], 0x401000);
+    assert_eq!(psubq.text, "psubq mm3, [rip+0x1234]");
+    assert_eq!(psubq.size, 7);
+    assert_eq!(psubq.kind, InstructionKind::Arithmetic);
+
     let psrlq = decode(&[0x0f, 0x73, 0xd0, 0x08], 0x401000);
     assert_eq!(psrlq.text, "psrlq mm0, 0x8");
     assert_eq!(psrlq.size, 4);

@@ -222,7 +222,10 @@ pub fn decode_instruction(bytes: &[u8], address: u64) -> Result<Instruction> {
                 decode_xadd(bytes, address, prefixes, default_operand_width(prefixes))
             } else if second == 0x73 {
                 decode_packed_shift_imm(bytes, address, prefixes)
-            } else if matches!(second, 0xd7 | 0xe0 | 0xeb | 0xef | 0xf1 | 0xf5 | 0xfd) {
+            } else if matches!(
+                second,
+                0x60 | 0x64 | 0xd7 | 0xdb | 0xe0 | 0xeb | 0xef | 0xf1 | 0xf5 | 0xfa | 0xfb | 0xfd
+            ) {
                 decode_mmx_opcode(bytes, address, prefixes, second)
             } else if second == 0xa3 {
                 decode_bit_test_reg(bytes, address, prefixes, "bt", InstructionKind::Compare)
@@ -1841,11 +1844,16 @@ fn decode_mmx_opcode(
         (reg, rm, consumed)
     };
     let (mnemonic, kind) = match opcode {
+        0x60 => ("punpcklbw", InstructionKind::Move),
+        0x64 => ("pcmpgtb", InstructionKind::Compare),
+        0xdb => ("pand", InstructionKind::Logical),
         0xe0 => ("pavgb", InstructionKind::Arithmetic),
         0xeb => ("por", InstructionKind::Logical),
         0xef => ("pxor", InstructionKind::Logical),
         0xf1 => ("psllw", InstructionKind::Logical),
         0xf5 => ("pmaddwd", InstructionKind::Arithmetic),
+        0xfa => ("psubd", InstructionKind::Arithmetic),
+        0xfb => ("psubq", InstructionKind::Arithmetic),
         0xfd => ("paddw", InstructionKind::Arithmetic),
         _ => unreachable!("opcode filtered by caller"),
     };
