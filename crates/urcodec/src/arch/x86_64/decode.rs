@@ -385,6 +385,10 @@ pub fn decode_instruction(bytes: &[u8], address: u64) -> Result<Instruction> {
         ),
         0x04 => decode_al_imm8(bytes, address, prefixes, "add", InstructionKind::Arithmetic),
         0x05 => decode_acc_imm32(bytes, address, prefixes, "add", InstructionKind::Arithmetic),
+        0x0d => decode_acc_imm32(bytes, address, prefixes, "or", InstructionKind::Logical),
+        0x15 => decode_acc_imm32(bytes, address, prefixes, "adc", InstructionKind::Arithmetic),
+        0x1d => decode_acc_imm32(bytes, address, prefixes, "sbb", InstructionKind::Arithmetic),
+        0x35 => decode_acc_imm32(bytes, address, prefixes, "xor", InstructionKind::Logical),
         0x01 => decode_reg_rm_binary(
             bytes,
             address,
@@ -435,6 +439,7 @@ pub fn decode_instruction(bytes: &[u8], address: u64) -> Result<Instruction> {
             InstructionKind::Arithmetic,
             true,
         ),
+        0x14 => decode_al_imm8(bytes, address, prefixes, "adc", InstructionKind::Arithmetic),
         0x08 => decode_reg_rm_binary_width(
             bytes,
             address,
@@ -488,6 +493,7 @@ pub fn decode_instruction(bytes: &[u8], address: u64) -> Result<Instruction> {
             InstructionKind::Arithmetic,
             true,
         ),
+        0x1c => decode_al_imm8(bytes, address, prefixes, "sbb", InstructionKind::Arithmetic),
         0x29 => decode_reg_rm_binary(
             bytes,
             address,
@@ -614,6 +620,9 @@ pub fn decode_instruction(bytes: &[u8], address: u64) -> Result<Instruction> {
             8,
         ),
         0x3c => decode_al_imm8(bytes, address, prefixes, "cmp", InstructionKind::Compare),
+        0x3d => decode_acc_imm32(bytes, address, prefixes, "cmp", InstructionKind::Compare),
+        0x69 => decode_imul_imm(bytes, address, prefixes, 32),
+        0x6b => decode_imul_imm(bytes, address, prefixes, 8),
         0x31 => decode_reg_rm_binary(
             bytes,
             address,
@@ -1659,6 +1668,45 @@ fn decode_imul_rm(bytes: &[u8], address: u64, prefixes: Prefixes) -> Result<Inst
         address,
         "imul",
         vec![dst, src],
+        InstructionKind::Arithmetic,
+        FlowKind::Fallthrough,
+        None,
+    ))
+}
+
+fn decode_imul_imm(
+    bytes: &[u8],
+    address: u64,
+    prefixes: Prefixes,
+    imm_width_bits: u16,
+) -> Result<Instruction> {
+    let modrm_offset = prefixes.opcode_offset + 1;
+    require_len(bytes, modrm_offset + 1)?;
+    let modrm = parse_modrm(bytes[modrm_offset]);
+    let width_bits = default_operand_width(prefixes);
+    let dst = Operand::Register(reg_for_width(
+        extend_reg(modrm.reg, prefixes.rex.r),
+        width_bits,
+        prefixes.rex.present,
+    ));
+    let (src, consumed_without_imm) =
+        parse_rm_operand(bytes, modrm_offset, prefixes.rex, width_bits)?;
+    let (imm, consumed) = if imm_width_bits == 8 {
+        (
+            i64::from(read_i8(bytes, consumed_without_imm)?),
+            consumed_without_imm + 1,
+        )
+    } else {
+        (
+            i64::from(read_i32(bytes, consumed_without_imm)?),
+            consumed_without_imm + 4,
+        )
+    };
+    Ok(base(
+        bytes[..consumed].to_vec(),
+        address,
+        "imul",
+        vec![dst, src, Operand::Immediate(imm)],
         InstructionKind::Arithmetic,
         FlowKind::Fallthrough,
         None,

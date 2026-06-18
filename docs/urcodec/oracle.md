@@ -20,7 +20,8 @@ Current fixture scope:
 - AArch64 core control flow, address, arithmetic, conditional select, logical
   immediate, move, bitfield alias, system exception, load, store, register-offset
   load/store, and load/store pair forms.
-- X86-64 control flow, selected `0f` scalar forms, MMX/SSE shifts, SSE
+- X86-64 control flow, accumulator immediate arithmetic/logical/compare forms,
+  immediate `imul`, selected `0f` scalar forms, MMX/SSE shifts, SSE
   arithmetic/logical forms, packed integer, packed shuffle, MXCSR memory forms,
   selected VEX move, logical, scalar arithmetic, packed-shift forms, and AVX
   cleanup forms.

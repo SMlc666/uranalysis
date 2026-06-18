@@ -320,6 +320,41 @@ fn decodes_x86_64_arithmetic_and_logical_forms() {
     assert_eq!(cmp_al_imm.size, 2);
     assert_eq!(cmp_al_imm.kind, InstructionKind::Compare);
 
+    let or_al_imm = decode(&[0x0c, 0x7c], 0x401000);
+    assert_eq!(or_al_imm.text, "or al, 0x7c");
+    assert_eq!(or_al_imm.size, 2);
+    assert_eq!(or_al_imm.kind, InstructionKind::Logical);
+
+    let adc_al_imm = decode(&[0x14, 0x14], 0x401000);
+    assert_eq!(adc_al_imm.text, "adc al, 0x14");
+    assert_eq!(adc_al_imm.size, 2);
+    assert_eq!(adc_al_imm.kind, InstructionKind::Arithmetic);
+
+    let sbb_al_imm = decode(&[0x1c, 0x05], 0x401000);
+    assert_eq!(sbb_al_imm.text, "sbb al, 0x5");
+    assert_eq!(sbb_al_imm.size, 2);
+    assert_eq!(sbb_al_imm.kind, InstructionKind::Arithmetic);
+
+    let and_al_imm = decode(&[0x24, 0xf0], 0x401000);
+    assert_eq!(and_al_imm.text, "and al, 0xf0");
+    assert_eq!(and_al_imm.size, 2);
+    assert_eq!(and_al_imm.kind, InstructionKind::Logical);
+
+    let sub_al_imm = decode(&[0x2c, 0x20], 0x401000);
+    assert_eq!(sub_al_imm.text, "sub al, 0x20");
+    assert_eq!(sub_al_imm.size, 2);
+    assert_eq!(sub_al_imm.kind, InstructionKind::Arithmetic);
+
+    let cmp_eax_imm = decode(&[0x3d, 0x00, 0x01, 0x00, 0x00], 0x401000);
+    assert_eq!(cmp_eax_imm.text, "cmp eax, 0x100");
+    assert_eq!(cmp_eax_imm.size, 5);
+    assert_eq!(cmp_eax_imm.kind, InstructionKind::Compare);
+
+    let cmp_rax_imm = decode(&[0x48, 0x3d, 0x00, 0x01, 0x00, 0x00], 0x401000);
+    assert_eq!(cmp_rax_imm.text, "cmp rax, 0x100");
+    assert_eq!(cmp_rax_imm.size, 6);
+    assert_eq!(cmp_rax_imm.kind, InstructionKind::Compare);
+
     let add_byte_reg = decode(&[0x02, 0xc1], 0x401000);
     assert_eq!(add_byte_reg.text, "add al, cl");
     assert_eq!(add_byte_reg.size, 2);
@@ -340,10 +375,30 @@ fn decodes_x86_64_arithmetic_and_logical_forms() {
     assert_eq!(add_eax_imm.size, 5);
     assert_eq!(add_eax_imm.kind, InstructionKind::Arithmetic);
 
+    let or_eax_imm = decode(&[0x0d, 0x7c, 0x92, 0x14, 0x00], 0x401000);
+    assert_eq!(or_eax_imm.text, "or eax, 0x14927c");
+    assert_eq!(or_eax_imm.size, 5);
+    assert_eq!(or_eax_imm.kind, InstructionKind::Logical);
+
+    let adc_eax_imm = decode(&[0x15, 0x34, 0x12, 0x00, 0x00], 0x401000);
+    assert_eq!(adc_eax_imm.text, "adc eax, 0x1234");
+    assert_eq!(adc_eax_imm.size, 5);
+    assert_eq!(adc_eax_imm.kind, InstructionKind::Arithmetic);
+
+    let sbb_eax_imm = decode(&[0x1d, 0x05, 0x93, 0x14, 0x00], 0x401000);
+    assert_eq!(sbb_eax_imm.text, "sbb eax, 0x149305");
+    assert_eq!(sbb_eax_imm.size, 5);
+    assert_eq!(sbb_eax_imm.kind, InstructionKind::Arithmetic);
+
     let sub_eax_imm = decode(&[0x2d, 0x20, 0x05, 0x93, 0x19], 0x401000);
     assert_eq!(sub_eax_imm.text, "sub eax, 0x19930520");
     assert_eq!(sub_eax_imm.size, 5);
     assert_eq!(sub_eax_imm.kind, InstructionKind::Arithmetic);
+
+    let xor_eax_imm = decode(&[0x35, 0x1b, 0x94, 0x14, 0x00], 0x401000);
+    assert_eq!(xor_eax_imm.text, "xor eax, 0x14941b");
+    assert_eq!(xor_eax_imm.size, 5);
+    assert_eq!(xor_eax_imm.kind, InstructionKind::Logical);
 
     let adc_reg = decode(&[0x13, 0xd1], 0x401000);
     assert_eq!(adc_reg.text, "adc edx, ecx");
@@ -389,6 +444,16 @@ fn decodes_x86_64_arithmetic_and_logical_forms() {
     assert_eq!(imul_mem.text, "imul rcx, [rax]");
     assert_eq!(imul_mem.size, 4);
     assert_eq!(imul_mem.kind, InstructionKind::Arithmetic);
+
+    let imul_imm32 = decode(&[0x69, 0xde, 0xc8, 0x03, 0x00, 0x00], 0x401000);
+    assert_eq!(imul_imm32.text, "imul ebx, esi, 0x3c8");
+    assert_eq!(imul_imm32.size, 6);
+    assert_eq!(imul_imm32.kind, InstructionKind::Arithmetic);
+
+    let imul_imm8 = decode(&[0x48, 0x6b, 0xc0, 0x01], 0x401000);
+    assert_eq!(imul_imm8.text, "imul rax, rax, 0x1");
+    assert_eq!(imul_imm8.size, 4);
+    assert_eq!(imul_imm8.kind, InstructionKind::Arithmetic);
 
     let cmp_byte_reg = decode(&[0x38, 0xc8], 0x401000);
     assert_eq!(cmp_byte_reg.text, "cmp al, cl");
