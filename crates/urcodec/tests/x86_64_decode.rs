@@ -166,6 +166,12 @@ fn decodes_x86_64_mov_register_forms() {
 
 #[test]
 fn decodes_x86_64_byte_mov_forms() {
+    let mov_al_imm = decode(&[0xb0, 0x01], 0x401000);
+    assert_eq!(mov_al_imm.text, "mov al, 0x1");
+    assert_eq!(mov_al_imm.size, 2);
+    assert_eq!(mov_al_imm.kind, InstructionKind::Move);
+    assert_eq!(register_name(&mov_al_imm.operands[0]), "al");
+
     let mov_store = decode(&[0x88, 0x84, 0x24, 0x97, 0x00, 0x00, 0x00], 0x401000);
     assert_eq!(mov_store.text, "mov [rsp+0x97], al");
     assert_eq!(mov_store.size, 7);
@@ -242,6 +248,26 @@ fn decodes_x86_64_arithmetic_and_logical_forms() {
     assert_eq!(cmp_byte_imm.kind, InstructionKind::Compare);
     let mem = memory_operand(&cmp_byte_imm.operands[0]);
     assert_eq!(mem.width_bits, Some(8));
+
+    let cmp_al_imm = decode(&[0x3c, 0x02], 0x401000);
+    assert_eq!(cmp_al_imm.text, "cmp al, 0x2");
+    assert_eq!(cmp_al_imm.size, 2);
+    assert_eq!(cmp_al_imm.kind, InstructionKind::Compare);
+
+    let add_byte_reg = decode(&[0x02, 0xc1], 0x401000);
+    assert_eq!(add_byte_reg.text, "add al, cl");
+    assert_eq!(add_byte_reg.size, 2);
+    assert_eq!(add_byte_reg.kind, InstructionKind::Arithmetic);
+
+    let or_byte_reg = decode(&[0x08, 0xc8], 0x401000);
+    assert_eq!(or_byte_reg.text, "or al, cl");
+    assert_eq!(or_byte_reg.size, 2);
+    assert_eq!(or_byte_reg.kind, InstructionKind::Logical);
+
+    let cmp_byte_reg = decode(&[0x38, 0xc8], 0x401000);
+    assert_eq!(cmp_byte_reg.text, "cmp al, cl");
+    assert_eq!(cmp_byte_reg.size, 2);
+    assert_eq!(cmp_byte_reg.kind, InstructionKind::Compare);
 
     let xor_imm = decode(&[0x48, 0x83, 0xf0, 0x7f], 0x401000);
     assert_eq!(xor_imm.text, "xor rax, 0x7f");
