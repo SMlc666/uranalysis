@@ -237,6 +237,12 @@ fn decodes_x86_64_arithmetic_and_logical_forms() {
     assert_eq!(and_imm.text, "and rax, 0xf");
     assert_eq!(and_imm.kind, InstructionKind::Logical);
 
+    let cmp_byte_imm = decode(&[0x80, 0x7b, 0x2f, 0x01], 0x401000);
+    assert_eq!(cmp_byte_imm.text, "cmp [rbx+0x2f], 0x1");
+    assert_eq!(cmp_byte_imm.kind, InstructionKind::Compare);
+    let mem = memory_operand(&cmp_byte_imm.operands[0]);
+    assert_eq!(mem.width_bits, Some(8));
+
     let xor_imm = decode(&[0x48, 0x83, 0xf0, 0x7f], 0x401000);
     assert_eq!(xor_imm.text, "xor rax, 0x7f");
     assert_eq!(xor_imm.kind, InstructionKind::Logical);
@@ -259,9 +265,33 @@ fn decodes_x86_64_arithmetic_and_logical_forms() {
     let mem = memory_operand(&test_byte.operands[0]);
     assert_eq!(mem.width_bits, Some(8));
 
+    let test_byte_imm = decode(&[0xf6, 0xc1, 0x01], 0x401000);
+    assert_eq!(test_byte_imm.text, "test cl, 0x1");
+    assert_eq!(test_byte_imm.kind, InstructionKind::Compare);
+
     let xor_reg = decode(&[0x48, 0x31, 0xc0], 0x401000);
     assert_eq!(xor_reg.text, "xor rax, rax");
     assert_eq!(xor_reg.kind, InstructionKind::Logical);
+}
+
+#[test]
+fn decodes_x86_64_shift_groups() {
+    let shr_al = decode(&[0xc0, 0xe8, 0x06], 0x401000);
+    assert_eq!(shr_al.text, "shr al, 0x6");
+    assert_eq!(shr_al.size, 3);
+    assert_eq!(shr_al.kind, InstructionKind::Logical);
+
+    let rol_mem32 = decode(&[0xc1, 0x01, 0x01], 0x401000);
+    assert_eq!(rol_mem32.text, "rol [rcx], 0x1");
+    assert_eq!(rol_mem32.size, 3);
+    assert_eq!(rol_mem32.kind, InstructionKind::Logical);
+    let mem = memory_operand(&rol_mem32.operands[0]);
+    assert_eq!(mem.width_bits, Some(32));
+
+    let sar_rax = decode(&[0x48, 0xc1, 0xf8, 0x03], 0x401000);
+    assert_eq!(sar_rax.text, "sar rax, 0x3");
+    assert_eq!(sar_rax.size, 4);
+    assert_eq!(sar_rax.kind, InstructionKind::Logical);
 }
 
 #[test]

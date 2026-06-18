@@ -317,10 +317,14 @@ pub fn decode_instruction(bytes: &[u8], address: u64) -> Result<Instruction> {
             false,
             8,
         ),
+        0x80 => decode_group1_imm8_width(bytes, address, prefixes, 8, false),
         0x81 => decode_group1_imm32(bytes, address, prefixes),
         0x83 => decode_group1_imm8(bytes, address, prefixes),
+        0xc0 => decode_group2_imm8(bytes, address, prefixes, 8),
+        0xc1 => decode_group2_imm8(bytes, address, prefixes, default_operand_width(prefixes)),
         0xc6 => decode_mov_imm8_rm(bytes, address, prefixes),
         0xc7 => decode_mov_imm_rm(bytes, address, prefixes),
+        0xf6 => decode_group_f6(bytes, address, prefixes),
         0xf7 => decode_group_f7(bytes, address, prefixes),
         0xff => decode_group_ff(bytes, address, prefixes),
         0x50..=0x57 => Ok(base(
@@ -451,11 +455,26 @@ fn decode_byte_mov(
 }
 
 fn decode_group1_imm8(bytes: &[u8], address: u64, prefixes: Prefixes) -> Result<Instruction> {
+    decode_group1_imm8_width(bytes, address, prefixes, 64, true)
+}
+
+fn decode_group1_imm8_width(
+    bytes: &[u8],
+    address: u64,
+    prefixes: Prefixes,
+    width_bits: u16,
+    sign_extend: bool,
+) -> Result<Instruction> {
     let modrm_offset = prefixes.opcode_offset + 1;
     require_len(bytes, modrm_offset + 2)?;
     let modrm = parse_modrm(bytes[modrm_offset]);
-    let (rm, consumed_without_imm) = parse_rm_operand(bytes, modrm_offset, prefixes.rex, 64)?;
-    let imm = i64::from(read_i8(bytes, consumed_without_imm)?);
+    let (rm, consumed_without_imm) =
+        parse_rm_operand(bytes, modrm_offset, prefixes.rex, width_bits)?;
+    let imm = if sign_extend {
+        i64::from(read_i8(bytes, consumed_without_imm)?)
+    } else {
+        i64::from(read_u8(bytes, consumed_without_imm)?)
+    };
     let consumed = consumed_without_imm + 1;
     let (mnemonic, kind) = match modrm.reg {
         0 => ("add", InstructionKind::Arithmetic),
@@ -508,6 +527,40 @@ fn decode_group1_imm32(bytes: &[u8], address: u64, prefixes: Prefixes) -> Result
     ))
 }
 
+fn decode_group2_imm8(
+    bytes: &[u8],
+    address: u64,
+    prefixes: Prefixes,
+    width_bits: u16,
+) -> Result<Instruction> {
+    let modrm_offset = prefixes.opcode_offset + 1;
+    require_len(bytes, modrm_offset + 2)?;
+    let modrm = parse_modrm(bytes[modrm_offset]);
+    let (rm, consumed_without_imm) =
+        parse_rm_operand(bytes, modrm_offset, prefixes.rex, width_bits)?;
+    let imm = i64::from(read_u8(bytes, consumed_without_imm)?);
+    let consumed = consumed_without_imm + 1;
+    let mnemonic = match modrm.reg {
+        0 => "rol",
+        1 => "ror",
+        2 => "rcl",
+        3 => "rcr",
+        4 | 6 => "shl",
+        5 => "shr",
+        7 => "sar",
+        _ => unreachable!("ModRM reg field is three bits"),
+    };
+    Ok(base(
+        bytes[..consumed].to_vec(),
+        address,
+        mnemonic,
+        vec![rm, Operand::Immediate(imm)],
+        InstructionKind::Logical,
+        FlowKind::Fallthrough,
+        None,
+    ))
+}
+
 fn decode_mov_imm8_rm(bytes: &[u8], address: u64, prefixes: Prefixes) -> Result<Instruction> {
     let modrm_offset = prefixes.opcode_offset + 1;
     require_len(bytes, modrm_offset + 1)?;
@@ -528,6 +581,44 @@ fn decode_mov_imm8_rm(bytes: &[u8], address: u64, prefixes: Prefixes) -> Result<
         address,
         "mov",
         vec![rm, Operand::Immediate(imm)],
+        kind,
+        FlowKind::Fallthrough,
+        None,
+    ))
+}
+
+fn decode_group_f6(bytes: &[u8], address: u64, prefixes: Prefixes) -> Result<Instruction> {
+    let modrm_offset = prefixes.opcode_offset + 1;
+    require_len(bytes, modrm_offset + 1)?;
+    let modrm = parse_modrm(bytes[modrm_offset]);
+    let (rm, consumed_without_imm) = parse_rm_operand(bytes, modrm_offset, prefixes.rex, 8)?;
+    if modrm.reg <= 1 {
+        let imm = i64::from(read_u8(bytes, consumed_without_imm)?);
+        let consumed = consumed_without_imm + 1;
+        return Ok(base(
+            bytes[..consumed].to_vec(),
+            address,
+            "test",
+            vec![rm, Operand::Immediate(imm)],
+            InstructionKind::Compare,
+            FlowKind::Fallthrough,
+            None,
+        ));
+    }
+    let (mnemonic, kind) = match modrm.reg {
+        2 => ("not", InstructionKind::Logical),
+        3 => ("neg", InstructionKind::Arithmetic),
+        4 => ("mul", InstructionKind::Arithmetic),
+        5 => ("imul", InstructionKind::Arithmetic),
+        6 => ("div", InstructionKind::Arithmetic),
+        7 => ("idiv", InstructionKind::Arithmetic),
+        _ => unreachable!("ModRM reg field is three bits"),
+    };
+    Ok(base(
+        bytes[..consumed_without_imm].to_vec(),
+        address,
+        mnemonic,
+        vec![rm],
         kind,
         FlowKind::Fallthrough,
         None,
@@ -960,6 +1051,16 @@ fn reg_for_width(index: u8, width_bits: u16, rex_present: bool) -> crate::model:
         16 => reg16(index),
         32 => reg32(index),
         _ => reg64(index),
+    }
+}
+
+fn default_operand_width(prefixes: Prefixes) -> u16 {
+    if prefixes.rex.w {
+        64
+    } else if prefixes.operand_size_override {
+        16
+    } else {
+        32
     }
 }
 
