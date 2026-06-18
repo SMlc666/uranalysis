@@ -1,7 +1,7 @@
 use crate::{
     arch::x86_64::{
         format::render_instruction,
-        registers::{reg16, reg32, reg64, reg8, xmm},
+        registers::{mm, reg16, reg32, reg64, reg8, xmm},
     },
     error::{DecodeError, Result},
     model::{DecodeStatus, FlowKind, Instruction, InstructionKind, MemoryOperand, Operand},
@@ -150,6 +150,8 @@ pub fn decode_instruction(bytes: &[u8], address: u64) -> Result<Instruction> {
                     FlowKind::ConditionalBranch,
                     Some(target),
                 ))
+            } else if (0x40..=0x4f).contains(&second) {
+                decode_cmovcc(bytes, address, prefixes, second)
             } else if second == 0x1f {
                 decode_multibyte_nop(bytes, address, prefixes)
             } else if second == 0x0b {
@@ -162,6 +164,12 @@ pub fn decode_instruction(bytes: &[u8], address: u64) -> Result<Instruction> {
                     FlowKind::Fallthrough,
                     None,
                 ))
+            } else if second == 0x6f || second == 0x7f {
+                decode_mmx_move(bytes, address, prefixes, second)
+            } else if matches!(second, 0xd7 | 0xe0 | 0xf1 | 0xf5 | 0xfd) {
+                decode_mmx_opcode(bytes, address, prefixes, second)
+            } else if second == 0xa3 {
+                decode_bt(bytes, address, prefixes)
             } else if matches!(second, 0x10 | 0x11 | 0x28 | 0x29) {
                 decode_sse_move(bytes, address, prefixes, second)
             } else if second == 0x57 {
@@ -966,6 +974,55 @@ fn decode_multibyte_nop(bytes: &[u8], address: u64, prefixes: Prefixes) -> Resul
     ))
 }
 
+fn decode_cmovcc(
+    bytes: &[u8],
+    address: u64,
+    prefixes: Prefixes,
+    opcode: u8,
+) -> Result<Instruction> {
+    let modrm_offset = prefixes.opcode_offset + 2;
+    require_len(bytes, modrm_offset + 1)?;
+    let modrm = parse_modrm(bytes[modrm_offset]);
+    let width_bits = default_operand_width(prefixes);
+    let dst = Operand::Register(reg_for_width(
+        extend_reg(modrm.reg, prefixes.rex.r),
+        width_bits,
+        prefixes.rex.present,
+    ));
+    let (src, consumed) = parse_rm_operand(bytes, modrm_offset, prefixes.rex, width_bits)?;
+    Ok(base(
+        bytes[..consumed].to_vec(),
+        address,
+        mnemonic_for_cmovcc(opcode),
+        vec![dst, src],
+        InstructionKind::Move,
+        FlowKind::Fallthrough,
+        None,
+    ))
+}
+
+fn decode_bt(bytes: &[u8], address: u64, prefixes: Prefixes) -> Result<Instruction> {
+    let modrm_offset = prefixes.opcode_offset + 2;
+    require_len(bytes, modrm_offset + 1)?;
+    let modrm = parse_modrm(bytes[modrm_offset]);
+    let width_bits = default_operand_width(prefixes);
+    let reg = Operand::Register(reg_for_width(
+        extend_reg(modrm.reg, prefixes.rex.r),
+        width_bits,
+        prefixes.rex.present,
+    ));
+    let (rm, consumed) = parse_rm_operand(bytes, modrm_offset, prefixes.rex, width_bits)?;
+    Ok(base(
+        bytes[..consumed].to_vec(),
+        address,
+        "bt",
+        vec![rm, reg],
+        InstructionKind::Compare,
+        FlowKind::Fallthrough,
+        None,
+    ))
+}
+
 fn decode_mov_extend(
     bytes: &[u8],
     address: u64,
@@ -1034,6 +1091,82 @@ fn decode_sse_move(
         address,
         mnemonic,
         operands,
+        kind,
+        FlowKind::Fallthrough,
+        None,
+    ))
+}
+
+fn decode_mmx_move(
+    bytes: &[u8],
+    address: u64,
+    prefixes: Prefixes,
+    opcode: u8,
+) -> Result<Instruction> {
+    let modrm_offset = prefixes.opcode_offset + 2;
+    require_len(bytes, modrm_offset + 1)?;
+    let modrm = parse_modrm(bytes[modrm_offset]);
+    let reg = Operand::Register(mm(extend_reg(modrm.reg, prefixes.rex.r)));
+    let (rm, consumed) = parse_mmx_rm_operand(bytes, modrm_offset, prefixes.rex)?;
+    let is_store = opcode == 0x7f;
+    let operands = if is_store {
+        vec![rm.clone(), reg]
+    } else {
+        vec![reg, rm.clone()]
+    };
+    let kind = match (is_store, matches!(rm, Operand::Memory(_))) {
+        (true, true) => InstructionKind::Store,
+        (false, true) => InstructionKind::Load,
+        _ => InstructionKind::Move,
+    };
+    Ok(base(
+        bytes[..consumed].to_vec(),
+        address,
+        "movq",
+        operands,
+        kind,
+        FlowKind::Fallthrough,
+        None,
+    ))
+}
+
+fn decode_mmx_opcode(
+    bytes: &[u8],
+    address: u64,
+    prefixes: Prefixes,
+    opcode: u8,
+) -> Result<Instruction> {
+    let modrm_offset = prefixes.opcode_offset + 2;
+    require_len(bytes, modrm_offset + 1)?;
+    let modrm = parse_modrm(bytes[modrm_offset]);
+    if opcode == 0xd7 {
+        let dst = Operand::Register(reg32(extend_reg(modrm.reg, prefixes.rex.r)));
+        let (src, consumed) = parse_mmx_rm_operand(bytes, modrm_offset, prefixes.rex)?;
+        return Ok(base(
+            bytes[..consumed].to_vec(),
+            address,
+            "pmovmskb",
+            vec![dst, src],
+            InstructionKind::Move,
+            FlowKind::Fallthrough,
+            None,
+        ));
+    }
+
+    let reg = Operand::Register(mm(extend_reg(modrm.reg, prefixes.rex.r)));
+    let (rm, consumed) = parse_mmx_rm_operand(bytes, modrm_offset, prefixes.rex)?;
+    let (mnemonic, kind) = match opcode {
+        0xe0 => ("pavgb", InstructionKind::Arithmetic),
+        0xf1 => ("psllw", InstructionKind::Logical),
+        0xf5 => ("pmaddwd", InstructionKind::Arithmetic),
+        0xfd => ("paddw", InstructionKind::Arithmetic),
+        _ => unreachable!("opcode filtered by caller"),
+    };
+    Ok(base(
+        bytes[..consumed].to_vec(),
+        address,
+        mnemonic,
+        vec![reg, rm],
         kind,
         FlowKind::Fallthrough,
         None,
@@ -1273,6 +1406,18 @@ fn parse_xmm_rm_operand(bytes: &[u8], modrm_offset: usize, rex: Rex) -> Result<(
     parse_rm_operand(bytes, modrm_offset, rex, 128)
 }
 
+fn parse_mmx_rm_operand(bytes: &[u8], modrm_offset: usize, rex: Rex) -> Result<(Operand, usize)> {
+    require_len(bytes, modrm_offset + 1)?;
+    let modrm = parse_modrm(bytes[modrm_offset]);
+    if modrm.mode == 0b11 {
+        return Ok((
+            Operand::Register(mm(extend_reg(modrm.rm, rex.b))),
+            modrm_offset + 1,
+        ));
+    }
+    parse_rm_operand(bytes, modrm_offset, rex, 64)
+}
+
 fn rel_target(address: u64, size: usize, displacement: i64) -> u64 {
     address
         .wrapping_add(size as u64)
@@ -1341,6 +1486,27 @@ fn mnemonic_for_setcc(opcode: u8) -> &'static str {
         0xd => "setge",
         0xe => "setle",
         _ => "setg",
+    }
+}
+
+fn mnemonic_for_cmovcc(opcode: u8) -> &'static str {
+    match opcode & 0x0f {
+        0x0 => "cmovo",
+        0x1 => "cmovno",
+        0x2 => "cmovb",
+        0x3 => "cmovae",
+        0x4 => "cmove",
+        0x5 => "cmovne",
+        0x6 => "cmovbe",
+        0x7 => "cmova",
+        0x8 => "cmovs",
+        0x9 => "cmovns",
+        0xa => "cmovp",
+        0xb => "cmovnp",
+        0xc => "cmovl",
+        0xd => "cmovge",
+        0xe => "cmovle",
+        _ => "cmovg",
     }
 }
 

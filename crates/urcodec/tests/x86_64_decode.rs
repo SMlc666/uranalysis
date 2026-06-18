@@ -91,6 +91,19 @@ fn decodes_x86_64_conditional_jumps() {
 }
 
 #[test]
+fn decodes_x86_64_conditional_moves() {
+    let cmovb = decode(&[0x0f, 0x42, 0xf7], 0x401000);
+    assert_eq!(cmovb.text, "cmovb esi, edi");
+    assert_eq!(cmovb.size, 3);
+    assert_eq!(cmovb.kind, InstructionKind::Move);
+
+    let cmovae = decode(&[0x48, 0x0f, 0x43, 0xc7], 0x401000);
+    assert_eq!(cmovae.text, "cmovae rax, rdi");
+    assert_eq!(cmovae.size, 4);
+    assert_eq!(cmovae.kind, InstructionKind::Move);
+}
+
+#[test]
 fn truncated_x86_64_relative_control_flow_is_an_error() {
     let decoder = Decoder::new(Architecture::X86_64, DecodeOptions::default()).unwrap();
     let err = decoder.decode_one(&[0xe8, 0x00], 0x401000).unwrap_err();
@@ -268,6 +281,11 @@ fn decodes_x86_64_arithmetic_and_logical_forms() {
     assert_eq!(cmp_byte_reg.text, "cmp al, cl");
     assert_eq!(cmp_byte_reg.size, 2);
     assert_eq!(cmp_byte_reg.kind, InstructionKind::Compare);
+
+    let bt_reg = decode(&[0x0f, 0xa3, 0xc8], 0x401000);
+    assert_eq!(bt_reg.text, "bt eax, ecx");
+    assert_eq!(bt_reg.size, 3);
+    assert_eq!(bt_reg.kind, InstructionKind::Compare);
 
     let xor_imm = decode(&[0x48, 0x83, 0xf0, 0x7f], 0x401000);
     assert_eq!(xor_imm.text, "xor rax, 0x7f");
@@ -518,6 +536,39 @@ fn decodes_x86_64_sse_move_and_xor_forms() {
     assert_eq!(cmpps_mem.text, "cmpps xmm0, [rsp+0x20], 0x6");
     assert_eq!(cmpps_mem.size, 6);
     assert_eq!(cmpps_mem.kind, InstructionKind::Compare);
+}
+
+#[test]
+fn decodes_x86_64_mmx_forms() {
+    let movq_load = decode(&[0x0f, 0x6f, 0x74, 0x24, 0x20], 0x401000);
+    assert_eq!(movq_load.text, "movq mm6, [rsp+0x20]");
+    assert_eq!(movq_load.size, 5);
+    assert_eq!(movq_load.kind, InstructionKind::Load);
+
+    let pavgb = decode(&[0x0f, 0xe0, 0xe0], 0x401000);
+    assert_eq!(pavgb.text, "pavgb mm4, mm0");
+    assert_eq!(pavgb.size, 3);
+    assert_eq!(pavgb.kind, InstructionKind::Arithmetic);
+
+    let pmaddwd = decode(&[0x0f, 0xf5, 0xff], 0x401000);
+    assert_eq!(pmaddwd.text, "pmaddwd mm7, mm7");
+    assert_eq!(pmaddwd.size, 3);
+    assert_eq!(pmaddwd.kind, InstructionKind::Arithmetic);
+
+    let psllw = decode(&[0x0f, 0xf1, 0xf1], 0x401000);
+    assert_eq!(psllw.text, "psllw mm6, mm1");
+    assert_eq!(psllw.size, 3);
+    assert_eq!(psllw.kind, InstructionKind::Logical);
+
+    let paddw = decode(&[0x0f, 0xfd, 0xfd], 0x401000);
+    assert_eq!(paddw.text, "paddw mm7, mm5");
+    assert_eq!(paddw.size, 3);
+    assert_eq!(paddw.kind, InstructionKind::Arithmetic);
+
+    let pmovmskb = decode(&[0x0f, 0xd7, 0xd7], 0x401000);
+    assert_eq!(pmovmskb.text, "pmovmskb edx, mm7");
+    assert_eq!(pmovmskb.size, 3);
+    assert_eq!(pmovmskb.kind, InstructionKind::Move);
 }
 
 #[test]
