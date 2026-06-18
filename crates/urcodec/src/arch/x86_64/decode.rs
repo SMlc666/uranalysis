@@ -1564,11 +1564,21 @@ fn decode_0fae_system(bytes: &[u8], address: u64, prefixes: Prefixes) -> Result<
 fn decode_vex(bytes: &[u8], address: u64, prefixes: Prefixes) -> Result<Instruction> {
     let vex = parse_vex(bytes, prefixes.opcode_offset)?;
     require_len(bytes, vex.opcode_offset + 1)?;
-    let opcode = bytes[vex.opcode_offset];
-    if vex.map != 0x01 {
-        return Ok(unknown(bytes[prefixes.opcode_offset], address));
+    match vex.map {
+        0x01 => decode_vex_map1(bytes, address, prefixes, vex),
+        0x02 => decode_vex_map2(bytes, address, prefixes, vex),
+        0x03 => decode_vex_map3(bytes, address, prefixes, vex),
+        _ => Ok(unknown(bytes[prefixes.opcode_offset], address)),
     }
+}
 
+fn decode_vex_map1(
+    bytes: &[u8],
+    address: u64,
+    prefixes: Prefixes,
+    vex: Vex,
+) -> Result<Instruction> {
+    let opcode = bytes[vex.opcode_offset];
     match opcode {
         0x77 if vex.pp == 0 => Ok(base(
             bytes[..vex.opcode_offset + 1].to_vec(),
@@ -1630,6 +1640,45 @@ fn decode_vex(bytes: &[u8], address: u64, prefixes: Prefixes) -> Result<Instruct
         0xfb if vex.pp == 1 => {
             decode_vex_ternary_binary(bytes, address, vex, "vpsubq", InstructionKind::Arithmetic)
         }
+        _ => Ok(unknown(bytes[prefixes.opcode_offset], address)),
+    }
+}
+
+fn decode_vex_map2(
+    bytes: &[u8],
+    address: u64,
+    prefixes: Prefixes,
+    vex: Vex,
+) -> Result<Instruction> {
+    let opcode = bytes[vex.opcode_offset];
+    match opcode {
+        0xab if vex.pp == 1 => decode_vex_ternary_binary(
+            bytes,
+            address,
+            vex,
+            "vfmsub213sd",
+            InstructionKind::Arithmetic,
+        ),
+        0xb9 if vex.pp == 1 => decode_vex_ternary_binary(
+            bytes,
+            address,
+            vex,
+            "vfmadd231sd",
+            InstructionKind::Arithmetic,
+        ),
+        _ => Ok(unknown(bytes[prefixes.opcode_offset], address)),
+    }
+}
+
+fn decode_vex_map3(
+    bytes: &[u8],
+    address: u64,
+    prefixes: Prefixes,
+    vex: Vex,
+) -> Result<Instruction> {
+    let opcode = bytes[vex.opcode_offset];
+    match opcode {
+        0x18 if vex.pp == 1 => decode_vinsertf128(bytes, address, vex),
         _ => Ok(unknown(bytes[prefixes.opcode_offset], address)),
     }
 }
@@ -1793,6 +1842,30 @@ fn decode_vex_binary(
         mnemonic,
         vec![dst, src],
         kind,
+        FlowKind::Fallthrough,
+        None,
+    ))
+}
+
+fn decode_vinsertf128(bytes: &[u8], address: u64, vex: Vex) -> Result<Instruction> {
+    let modrm_offset = vex.opcode_offset + 1;
+    require_len(bytes, modrm_offset + 1)?;
+    let modrm = parse_modrm(bytes[modrm_offset]);
+    let dst = Operand::Register(ymm(extend_reg(modrm.reg, vex.rex.r)));
+    let src1 = Operand::Register(ymm(vex.vvvv));
+    let source_vex = Vex {
+        l_256: false,
+        ..vex
+    };
+    let (src2, consumed_without_imm) = parse_vector_rm_operand(bytes, modrm_offset, source_vex)?;
+    let size = consumed_without_imm + 1;
+    let imm = i64::from(read_u8(bytes, consumed_without_imm)?);
+    Ok(base(
+        bytes[..size].to_vec(),
+        address,
+        "vinsertf128",
+        vec![dst, src1, src2, Operand::Immediate(imm)],
+        InstructionKind::Move,
         FlowKind::Fallthrough,
         None,
     ))

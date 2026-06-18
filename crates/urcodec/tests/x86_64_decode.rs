@@ -1251,6 +1251,21 @@ fn decodes_x86_64_vex_avx_forms() {
     assert_eq!(vmovq_gpr.size, 5);
     assert_eq!(vmovq_gpr.kind, InstructionKind::Move);
 
+    let vfmsub213sd = decode(&[0xc4, 0xe2, 0xc9, 0xab, 0xe9], 0x401000);
+    assert_eq!(vfmsub213sd.text, "vfmsub213sd xmm5, xmm6, xmm1");
+    assert_eq!(vfmsub213sd.size, 5);
+    assert_eq!(vfmsub213sd.kind, InstructionKind::Arithmetic);
+
+    let vfmadd231sd = decode(&[0xc4, 0xe2, 0xd1, 0xb9, 0xc8], 0x401000);
+    assert_eq!(vfmadd231sd.text, "vfmadd231sd xmm1, xmm5, xmm0");
+    assert_eq!(vfmadd231sd.size, 5);
+    assert_eq!(vfmadd231sd.kind, InstructionKind::Arithmetic);
+
+    let vinsertf128 = decode(&[0xc4, 0xe3, 0x7d, 0x18, 0xc0, 0x01], 0x401000);
+    assert_eq!(vinsertf128.text, "vinsertf128 ymm0, ymm0, xmm0, 0x1");
+    assert_eq!(vinsertf128.size, 6);
+    assert_eq!(vinsertf128.kind, InstructionKind::Move);
+
     let vmovsd = decode(&[0xc5, 0xfb, 0x10, 0x2d, 0xb4, 0x92, 0x14, 0x00], 0x401000);
     assert_eq!(vmovsd.text, "vmovsd xmm5, [rip+0x1492b4]");
     assert_eq!(vmovsd.size, 8);
