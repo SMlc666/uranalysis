@@ -182,6 +182,12 @@ fn analyze_sample(root: &Path, sample: &Sample) -> Result<SampleReport> {
     let functions = ura_core::commands::functions(&project)?;
     let xrefs = ura_core::commands::all_xrefs(&project)?;
     let diagnostics = ura_core::commands::diagnostics(&project)?;
+    let cfg_failure_count = diagnostics
+        .iter()
+        .filter(|diagnostic| {
+            diagnostic.severity == "error" && diagnostic.message.contains("CFG decode gap")
+        })
+        .count();
 
     let detected_format = format!("{:?}", info.format).to_ascii_lowercase();
     let detected_architecture = format!("{:?}", info.architecture).to_ascii_lowercase();
@@ -253,7 +259,7 @@ fn analyze_sample(root: &Path, sample: &Sample) -> Result<SampleReport> {
         function_count: functions.len(),
         xref_count: xrefs.len(),
         diagnostic_count: diagnostics.len(),
-        cfg_failure_count: 0,
+        cfg_failure_count,
         unknown_clusters,
         failure_reason: if ok { None } else { Some(failures.join("; ")) },
     })
@@ -415,16 +421,19 @@ fn candidate_x86_64_family(bytes: &[u8]) -> String {
 fn render_summary(report: &Report) -> String {
     let mut out = String::new();
     out.push_str("# Corpus Gate\n\n");
-    out.push_str("| Sample | OK | Instructions | Blocks | Edges | Unknown Rate | Failure |\n");
-    out.push_str("| --- | --- | ---: | ---: | ---: | ---: | --- |\n");
+    out.push_str(
+        "| Sample | OK | Instructions | Blocks | Edges | CFG Failures | Unknown Rate | Failure |\n",
+    );
+    out.push_str("| --- | --- | ---: | ---: | ---: | ---: | ---: | --- |\n");
     for sample in &report.samples {
         out.push_str(&format!(
-            "| {} | {} | {} | {} | {} | {:.4} | {} |\n",
+            "| {} | {} | {} | {} | {} | {} | {:.4} | {} |\n",
             sample.id,
             sample.ok,
             sample.decoded_instruction_count,
             sample.basic_block_count,
             sample.cfg_edge_count,
+            sample.cfg_failure_count,
             sample.unknown_rate,
             sample.failure_reason.clone().unwrap_or_default()
         ));
@@ -491,8 +500,8 @@ mod tests {
         let summary = render_summary(&report);
 
         assert!(summary
-            .contains("| Sample | OK | Instructions | Blocks | Edges | Unknown Rate | Failure |"));
-        assert!(summary.contains("| sample | true | 4 | 2 | 1 | 0.0000 |  |"));
+            .contains("| Sample | OK | Instructions | Blocks | Edges | CFG Failures | Unknown Rate | Failure |"));
+        assert!(summary.contains("| sample | true | 4 | 2 | 1 | 0 | 0.0000 |  |"));
     }
 
     #[test]

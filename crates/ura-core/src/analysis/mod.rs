@@ -74,7 +74,22 @@ pub fn run_initial_analysis_with_instruction_limit(
         end: image.entry.saturating_add(4),
         reason: refresh::RefreshReason::SourceBytesChanged,
     };
-    let cfg = cfg::build_cfg(&instructions, &[image.entry], window)?;
+    let mut diagnostics = diagnostics::collect_diagnostics(&instructions);
+    let cfg = match cfg::build_cfg(&instructions, &[image.entry], window) {
+        Ok(cfg) => cfg,
+        Err(err) if max_instructions.is_some() => {
+            diagnostics.push(Diagnostic {
+                addr: Some(image.entry),
+                severity: "error".to_string(),
+                message: err.to_string(),
+            });
+            cfg::CfgOutput {
+                basic_blocks: Vec::new(),
+                cfg_edges: Vec::new(),
+            }
+        }
+        Err(err) => return Err(err),
+    };
     let functions = functions::discover_functions(
         image.entry,
         &instructions,
@@ -83,7 +98,6 @@ pub fn run_initial_analysis_with_instruction_limit(
         user_functions,
     );
     let xrefs = xrefs::build_xrefs(&instructions, &strings, &cfg.cfg_edges);
-    let mut diagnostics = diagnostics::collect_diagnostics(&instructions);
     diagnostics.extend(diagnostics::collect_graph_diagnostics(&cfg.cfg_edges));
     diagnostics.extend(diagnostics::collect_user_function_diagnostics(
         &functions,
