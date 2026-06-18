@@ -1,6 +1,7 @@
 [workspace]
 members = [
     "crates/urdisassembly",
+    "crates/urcodec",
     "crates/urdis2il",
     "crates/urloader",
     "crates/ura-core",
