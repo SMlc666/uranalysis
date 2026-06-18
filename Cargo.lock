@@ -829,16 +829,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "urdisassembly"
-version = "0.1.0"
-dependencies = [
- "goblin",
- "serde",
- "tempfile",
- "thiserror",
-]
-
-[[package]]
 name = "urloader"
 version = "0.1.0"
 dependencies = [
