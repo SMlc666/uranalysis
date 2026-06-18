@@ -6,7 +6,7 @@ pub type Result<T> = std::result::Result<T, LiftError>;
 pub enum LiftError {
     #[error("instruction architecture mismatch: lifter={lifter:?} instruction={instruction:?}")]
     ArchitectureMismatch {
-        lifter: urdisassembly::Architecture,
-        instruction: urdisassembly::Architecture,
+        lifter: urcodec::Architecture,
+        instruction: urcodec::Architecture,
     },
 }

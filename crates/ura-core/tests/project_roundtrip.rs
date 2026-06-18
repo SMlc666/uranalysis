@@ -54,7 +54,7 @@ fn project_schema_v4_records_decode_metadata() -> Result<()> {
     assert_eq!(disasm[0].kind, InstructionKind::Return);
     assert_eq!(disasm[0].flow, FlowKind::Return);
     assert_eq!(disasm[0].decode_status, DecodeStatus::Complete);
-    assert_eq!(disasm[0].decoder, "urdisassembly/aarch64");
+    assert_eq!(disasm[0].decoder, "urcodec/aarch64");
     assert_eq!(disasm[0].decoder_version, env!("CARGO_PKG_VERSION"));
     Ok(())
 }

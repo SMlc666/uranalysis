@@ -1,5 +1,7 @@
 # Urdis2il Coverage Matrix
 
+`urdis2il` consumes structured instructions from `urcodec`; it does not own byte decoding, byte encoding, or text parsing.
+
 | Architecture | Instruction family | IL status | Representation | Tests | Notes |
 | --- | --- | --- | --- | --- | --- |
 | AArch64 | `mov`, `movz`, `movn`, `movk` | Partial | `Assign` | Yes | Immediate and register forms only. |

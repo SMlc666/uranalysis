@@ -782,7 +782,7 @@ dependencies = [
  "serde_json",
  "tempfile",
  "thiserror",
- "urdisassembly",
+ "urcodec",
  "urloader",
 ]
 
@@ -810,22 +810,22 @@ dependencies = [
 ]
 
 [[package]]
-name = "urdis2il"
-version = "0.1.0"
-dependencies = [
- "serde",
- "thiserror",
- "urdisassembly",
-]
-
-[[package]]
-name = "urdisassembly"
+name = "urcodec"
 version = "0.1.0"
 dependencies = [
  "goblin",
  "serde",
  "tempfile",
  "thiserror",
+]
+
+[[package]]
+name = "urdis2il"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "thiserror",
+ "urcodec",
 ]
 
 [[package]]

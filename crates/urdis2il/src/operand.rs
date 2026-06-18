@@ -1,6 +1,6 @@
 use crate::model::{IlExpr, IlLocation, IlReg};
 
-pub(crate) fn reg_expr(arch: urdisassembly::Architecture, name: &str, width_bits: u16) -> IlExpr {
+pub(crate) fn reg_expr(arch: urcodec::Architecture, name: &str, width_bits: u16) -> IlExpr {
     IlExpr::Reg(IlReg {
         arch,
         name: name.to_string(),
@@ -8,11 +8,7 @@ pub(crate) fn reg_expr(arch: urdisassembly::Architecture, name: &str, width_bits
     })
 }
 
-pub(crate) fn reg_location(
-    arch: urdisassembly::Architecture,
-    name: &str,
-    width_bits: u16,
-) -> IlLocation {
+pub(crate) fn reg_location(arch: urcodec::Architecture, name: &str, width_bits: u16) -> IlLocation {
     IlLocation::Reg(IlReg {
         arch,
         name: name.to_string(),
@@ -24,10 +20,7 @@ pub(crate) fn const_expr(value: u64, width_bits: u16) -> IlExpr {
     IlExpr::Const { value, width_bits }
 }
 
-pub(crate) fn memory_address(
-    arch: urdisassembly::Architecture,
-    mem: &urdisassembly::MemoryOperand,
-) -> IlExpr {
+pub(crate) fn memory_address(arch: urcodec::Architecture, mem: &urcodec::MemoryOperand) -> IlExpr {
     let base = mem.base.as_ref().map(|reg| reg_expr(arch, &reg.name, 64));
     let index = mem.index.as_ref().map(|reg| {
         let expr = reg_expr(arch, &reg.name, 64);

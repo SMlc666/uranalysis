@@ -1,6 +1,10 @@
 # AArch64 Coverage Matrix
 
-The CI corpus gate records sample-level decode totals and unknown rates. Per-encoding corpus attribution is still not measured in this matrix.
+The CI corpus gate records sample-level codec totals and unknown rates. Per-encoding corpus attribution is still not measured in this matrix.
+
+## Codec Seed Forms
+
+The first declarative forms cover `ret` and `b imm26`. These forms drive decode compatibility, encode, canonical text, text parsing, and roundtrip tests from one form table.
 
 | Encoding group | Representative mnemonics | Decode | Format | Flow semantics | Golden tests | Corpus evidence | Notes |
 | --- | --- | --- | --- | --- | --- | --- | --- |

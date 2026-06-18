@@ -1,8 +1,6 @@
-use urdisassembly::{
-    Architecture, DecodeOptions, DecodeStatus, Decoder, FlowKind, InstructionKind,
-};
+use urcodec::{Architecture, DecodeOptions, DecodeStatus, Decoder, FlowKind, InstructionKind};
 
-fn decode(word: u32, address: u64) -> urdisassembly::Instruction {
+fn decode(word: u32, address: u64) -> urcodec::Instruction {
     Decoder::new(Architecture::Aarch64, DecodeOptions::default())
         .unwrap()
         .decode_one(&word.to_le_bytes(), address)

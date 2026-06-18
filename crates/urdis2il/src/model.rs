@@ -86,14 +86,14 @@ pub enum IlLocation {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct IlReg {
-    pub arch: urdisassembly::Architecture,
+    pub arch: urcodec::Architecture,
     pub name: String,
     pub width_bits: u16,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct IlFlag {
-    pub arch: urdisassembly::Architecture,
+    pub arch: urcodec::Architecture,
     pub name: String,
 }
 

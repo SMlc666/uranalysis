@@ -5,13 +5,13 @@ use std::{
 };
 
 use goblin::{elf::program_header, Object};
-use urdisassembly::{Architecture, DecodeOptions, DecodeStatus, Decoder};
+use urcodec::{Architecture, DecodeOptions, DecodeStatus, Decoder};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let root = env::args().nth(1).ok_or_else(|| {
         io::Error::new(
             io::ErrorKind::InvalidInput,
-            "usage: cargo run -p urdisassembly --example coverage -- <file-or-directory>",
+            "usage: cargo run -p urcodec --example coverage -- <file-or-directory>",
         )
     })?;
     let mut files = Vec::new();

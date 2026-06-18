@@ -1,6 +1,4 @@
-use urdisassembly::{
-    Architecture, DecodeOptions, DecodeStatus, Decoder, FlowKind, InstructionKind,
-};
+use urcodec::{Architecture, DecodeOptions, DecodeStatus, Decoder, FlowKind, InstructionKind};
 
 #[test]
 fn unknown_word_decodes_as_word_directive() {

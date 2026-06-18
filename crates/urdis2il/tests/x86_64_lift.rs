@@ -1,7 +1,7 @@
+use urcodec::{Architecture, DecodeOptions, Decoder};
 use urdis2il::{IlExpr, IlFlag, IlLocation, IlReg, IlStmt, IlTerminator, Lifter};
-use urdisassembly::{Architecture, DecodeOptions, Decoder};
 
-fn decode(bytes: &[u8], address: u64) -> urdisassembly::Instruction {
+fn decode(bytes: &[u8], address: u64) -> urcodec::Instruction {
     Decoder::new(Architecture::X86_64, DecodeOptions::default())
         .unwrap()
         .decode_one(bytes, address)

@@ -22,9 +22,9 @@ fn disassemble_aarch64(
     image: &AnalysisImage<'_>,
     max_instructions: Option<usize>,
 ) -> Result<Vec<Instruction>> {
-    let decoder = urdisassembly::Decoder::new(
-        urdisassembly::Architecture::Aarch64,
-        urdisassembly::DecodeOptions::default(),
+    let decoder = urcodec::Decoder::new(
+        urcodec::Architecture::Aarch64,
+        urcodec::DecodeOptions::default(),
     )
     .map_err(|err| UraError::Analysis(err.to_string()))?;
 
@@ -42,7 +42,7 @@ fn disassemble_aarch64(
             let decoded = decoder
                 .decode_one(chunk, addr)
                 .map_err(|err| UraError::Analysis(err.to_string()))?;
-            out.push(convert_instruction(decoded, "urdisassembly/aarch64"));
+            out.push(convert_instruction(decoded, "urcodec/aarch64"));
             if reached_instruction_limit(&out, max_instructions) {
                 return Ok(out);
             }
@@ -55,9 +55,9 @@ fn disassemble_x86_64(
     image: &AnalysisImage<'_>,
     max_instructions: Option<usize>,
 ) -> Result<Vec<Instruction>> {
-    let decoder = urdisassembly::Decoder::new(
-        urdisassembly::Architecture::X86_64,
-        urdisassembly::DecodeOptions::default(),
+    let decoder = urcodec::Decoder::new(
+        urcodec::Architecture::X86_64,
+        urcodec::DecodeOptions::default(),
     )
     .map_err(|err| UraError::Analysis(err.to_string()))?;
 
@@ -78,7 +78,7 @@ fn disassemble_x86_64(
             match decoder.decode_one(bytes, addr) {
                 Ok(decoded) => {
                     let size = u64::from(decoded.size.max(1));
-                    out.push(convert_instruction(decoded, "urdisassembly/x86_64"));
+                    out.push(convert_instruction(decoded, "urcodec/x86_64"));
                     addr = addr.saturating_add(size);
                     if reached_instruction_limit(&out, max_instructions) {
                         return Ok(out);
@@ -101,12 +101,12 @@ fn reached_instruction_limit(out: &[Instruction], max_instructions: Option<usize
     max_instructions.is_some_and(|limit| out.len() >= limit)
 }
 
-fn convert_instruction(decoded: urdisassembly::Instruction, decoder: &str) -> Instruction {
+fn convert_instruction(decoded: urcodec::Instruction, decoder: &str) -> Instruction {
     let operands = decoded.operand_text();
     let fallthrough = match decoded.flow {
-        urdisassembly::FlowKind::Branch
-        | urdisassembly::FlowKind::Return
-        | urdisassembly::FlowKind::IndirectBranch => None,
+        urcodec::FlowKind::Branch
+        | urcodec::FlowKind::Return
+        | urcodec::FlowKind::IndirectBranch => None,
         _ => Some(decoded.address + u64::from(decoded.size)),
     };
     Instruction {
@@ -140,45 +140,45 @@ fn unknown_byte_instruction(addr: u64, byte: u8) -> Instruction {
         fallthrough: Some(addr + 1),
         branch_target: None,
         decode_status: DecodeStatus::Unknown,
-        decoder: "urdisassembly/x86_64".to_string(),
+        decoder: "urcodec/x86_64".to_string(),
         decoder_version: env!("CARGO_PKG_VERSION").to_string(),
         function_addr: None,
     }
 }
 
-fn convert_kind(kind: urdisassembly::InstructionKind) -> InstructionKind {
+fn convert_kind(kind: urcodec::InstructionKind) -> InstructionKind {
     match kind {
-        urdisassembly::InstructionKind::Branch => InstructionKind::Branch,
-        urdisassembly::InstructionKind::Call => InstructionKind::Call,
-        urdisassembly::InstructionKind::Return => InstructionKind::Return,
-        urdisassembly::InstructionKind::Compare => InstructionKind::Compare,
-        urdisassembly::InstructionKind::Load => InstructionKind::Load,
-        urdisassembly::InstructionKind::Store => InstructionKind::Store,
-        urdisassembly::InstructionKind::Address => InstructionKind::Address,
-        urdisassembly::InstructionKind::Arithmetic => InstructionKind::Arithmetic,
-        urdisassembly::InstructionKind::Logical => InstructionKind::Logical,
-        urdisassembly::InstructionKind::Move => InstructionKind::Move,
-        urdisassembly::InstructionKind::System => InstructionKind::System,
-        urdisassembly::InstructionKind::Unknown => InstructionKind::Unknown,
+        urcodec::InstructionKind::Branch => InstructionKind::Branch,
+        urcodec::InstructionKind::Call => InstructionKind::Call,
+        urcodec::InstructionKind::Return => InstructionKind::Return,
+        urcodec::InstructionKind::Compare => InstructionKind::Compare,
+        urcodec::InstructionKind::Load => InstructionKind::Load,
+        urcodec::InstructionKind::Store => InstructionKind::Store,
+        urcodec::InstructionKind::Address => InstructionKind::Address,
+        urcodec::InstructionKind::Arithmetic => InstructionKind::Arithmetic,
+        urcodec::InstructionKind::Logical => InstructionKind::Logical,
+        urcodec::InstructionKind::Move => InstructionKind::Move,
+        urcodec::InstructionKind::System => InstructionKind::System,
+        urcodec::InstructionKind::Unknown => InstructionKind::Unknown,
     }
 }
 
-fn convert_flow(flow: urdisassembly::FlowKind) -> FlowKind {
+fn convert_flow(flow: urcodec::FlowKind) -> FlowKind {
     match flow {
-        urdisassembly::FlowKind::Fallthrough => FlowKind::Fallthrough,
-        urdisassembly::FlowKind::Branch => FlowKind::Branch,
-        urdisassembly::FlowKind::ConditionalBranch => FlowKind::ConditionalBranch,
-        urdisassembly::FlowKind::Call => FlowKind::Call,
-        urdisassembly::FlowKind::Return => FlowKind::Return,
-        urdisassembly::FlowKind::IndirectBranch => FlowKind::IndirectBranch,
-        urdisassembly::FlowKind::IndirectCall => FlowKind::IndirectCall,
+        urcodec::FlowKind::Fallthrough => FlowKind::Fallthrough,
+        urcodec::FlowKind::Branch => FlowKind::Branch,
+        urcodec::FlowKind::ConditionalBranch => FlowKind::ConditionalBranch,
+        urcodec::FlowKind::Call => FlowKind::Call,
+        urcodec::FlowKind::Return => FlowKind::Return,
+        urcodec::FlowKind::IndirectBranch => FlowKind::IndirectBranch,
+        urcodec::FlowKind::IndirectCall => FlowKind::IndirectCall,
     }
 }
 
-fn convert_status(status: urdisassembly::DecodeStatus) -> DecodeStatus {
+fn convert_status(status: urcodec::DecodeStatus) -> DecodeStatus {
     match status {
-        urdisassembly::DecodeStatus::Complete => DecodeStatus::Complete,
-        urdisassembly::DecodeStatus::Partial => DecodeStatus::Partial,
-        urdisassembly::DecodeStatus::Unknown => DecodeStatus::Unknown,
+        urcodec::DecodeStatus::Complete => DecodeStatus::Complete,
+        urcodec::DecodeStatus::Partial => DecodeStatus::Partial,
+        urcodec::DecodeStatus::Unknown => DecodeStatus::Unknown,
     }
 }

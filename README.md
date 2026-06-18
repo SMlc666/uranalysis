@@ -9,7 +9,7 @@ This project is not a mature reverse-engineering suite. The current goal is to b
 | Crate | Purpose |
 | --- | --- |
 | `urloader` | Loads executable image metadata and bytes. |
-| `urdisassembly` | Decodes AArch64 and x86-64 instruction subsets. |
+| `urcodec` | Decodes and encodes AArch64 and x86-64 instruction subsets, owns the shared instruction model, and provides canonical text handling. |
 | `urdis2il` | Lifts decoded instructions into a small IL. |
 | `ura-core` | Stores projects and runs analysis passes. |
 | `ura-cli` | Provides the `ura` command-line interface. |
@@ -23,7 +23,7 @@ This project is not a mature reverse-engineering suite. The current goal is to b
 | ELF64 x86-64 little-endian | Supported | Supported | Variable-width x86-64 disassembly. |
 | PE32+ x86-64 little-endian | Supported | Supported | PE sections are analyzed as executable ranges. |
 
-Instruction coverage is intentionally partial. Unknown instructions are preserved in analysis output and surfaced through diagnostics.
+Instruction coverage is intentionally partial. Unknown instructions are preserved in analysis output and surfaced through diagnostics. `urcodec` owns the shared instruction model, byte decoding, seed byte encoding, canonical text rendering, and seed text parsing.
 
 ## Build and Test
 

@@ -5,9 +5,9 @@ use crate::{
     Result,
 };
 
-const ARCH: urdisassembly::Architecture = urdisassembly::Architecture::Aarch64;
+const ARCH: urcodec::Architecture = urcodec::Architecture::Aarch64;
 
-pub(crate) fn lift(instruction: &urdisassembly::Instruction) -> Result<IlInstruction> {
+pub(crate) fn lift(instruction: &urcodec::Instruction) -> Result<IlInstruction> {
     let mut statements = Vec::new();
     let mut terminator = None;
     match instruction.mnemonic.as_str() {
@@ -15,7 +15,7 @@ pub(crate) fn lift(instruction: &urdisassembly::Instruction) -> Result<IlInstruc
             terminator = Some(fallthrough(instruction));
         }
         "ldr" => {
-            if let [urdisassembly::Operand::Register(dst), urdisassembly::Operand::Memory(mem)] =
+            if let [urcodec::Operand::Register(dst), urcodec::Operand::Memory(mem)] =
                 instruction.operands.as_slice()
             {
                 statements.push(IlStmt::Load {
@@ -27,7 +27,7 @@ pub(crate) fn lift(instruction: &urdisassembly::Instruction) -> Result<IlInstruc
             }
         }
         "str" => {
-            if let [urdisassembly::Operand::Register(src), urdisassembly::Operand::Memory(mem)] =
+            if let [urcodec::Operand::Register(src), urcodec::Operand::Memory(mem)] =
                 instruction.operands.as_slice()
             {
                 statements.push(IlStmt::Store {
@@ -39,7 +39,7 @@ pub(crate) fn lift(instruction: &urdisassembly::Instruction) -> Result<IlInstruc
             }
         }
         "add" | "sub" | "and" | "orr" | "eor" => {
-            if let [urdisassembly::Operand::Register(dst), urdisassembly::Operand::Register(lhs), rhs] =
+            if let [urcodec::Operand::Register(dst), urcodec::Operand::Register(lhs), rhs] =
                 instruction.operands.as_slice()
             {
                 let rhs_expr = operand_expr(rhs);
@@ -59,7 +59,7 @@ pub(crate) fn lift(instruction: &urdisassembly::Instruction) -> Result<IlInstruc
             }
         }
         "mov" | "movk" | "movn" => {
-            if let [urdisassembly::Operand::Register(dst), src] = instruction.operands.as_slice() {
+            if let [urcodec::Operand::Register(dst), src] = instruction.operands.as_slice() {
                 statements.push(IlStmt::Assign {
                     dst: reg_location(ARCH, &dst.name, 64),
                     src: operand_expr(src),
@@ -68,7 +68,7 @@ pub(crate) fn lift(instruction: &urdisassembly::Instruction) -> Result<IlInstruc
             }
         }
         "adr" | "adrp" => {
-            if let [urdisassembly::Operand::Register(dst), urdisassembly::Operand::AbsoluteAddress(addr)] =
+            if let [urcodec::Operand::Register(dst), urcodec::Operand::AbsoluteAddress(addr)] =
                 instruction.operands.as_slice()
             {
                 statements.push(IlStmt::Assign {
@@ -141,17 +141,17 @@ pub(crate) fn lift(instruction: &urdisassembly::Instruction) -> Result<IlInstruc
     })
 }
 
-fn operand_expr(operand: &urdisassembly::Operand) -> IlExpr {
+fn operand_expr(operand: &urcodec::Operand) -> IlExpr {
     match operand {
-        urdisassembly::Operand::Register(reg) => reg_expr(ARCH, &reg.name, 64),
-        urdisassembly::Operand::Immediate(value) => const_expr(*value as u64, 64),
-        urdisassembly::Operand::AbsoluteAddress(addr) => const_expr(*addr, 64),
-        urdisassembly::Operand::Memory(mem) => memory_address(ARCH, mem),
-        urdisassembly::Operand::Condition(cond) => const_expr(condition_code(cond), 4),
+        urcodec::Operand::Register(reg) => reg_expr(ARCH, &reg.name, 64),
+        urcodec::Operand::Immediate(value) => const_expr(*value as u64, 64),
+        urcodec::Operand::AbsoluteAddress(addr) => const_expr(*addr, 64),
+        urcodec::Operand::Memory(mem) => memory_address(ARCH, mem),
+        urcodec::Operand::Condition(cond) => const_expr(condition_code(cond), 4),
     }
 }
 
-fn target_expr(instruction: &urdisassembly::Instruction) -> IlExpr {
+fn target_expr(instruction: &urcodec::Instruction) -> IlExpr {
     instruction
         .branch_target
         .map(|target| const_expr(target, 64))
@@ -162,7 +162,7 @@ fn target_expr(instruction: &urdisassembly::Instruction) -> IlExpr {
         }))
 }
 
-fn fallthrough(instruction: &urdisassembly::Instruction) -> IlTerminator {
+fn fallthrough(instruction: &urcodec::Instruction) -> IlTerminator {
     IlTerminator::Fallthrough {
         target: instruction.address + u64::from(instruction.size),
     }

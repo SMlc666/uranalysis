@@ -1,9 +1,9 @@
-use urdisassembly::{
+use urcodec::{
     Architecture, DecodeError, DecodeOptions, DecodeStatus, Decoder, FlowKind, InstructionKind,
     MemoryOperand, Operand,
 };
 
-fn decode(bytes: &[u8], address: u64) -> urdisassembly::Instruction {
+fn decode(bytes: &[u8], address: u64) -> urcodec::Instruction {
     Decoder::new(Architecture::X86_64, DecodeOptions::default())
         .unwrap()
         .decode_one(bytes, address)
