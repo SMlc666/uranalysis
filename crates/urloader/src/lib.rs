@@ -1,6 +1,7 @@
 mod elf;
 mod error;
 mod model;
+mod normalize;
 mod pe;
 mod view;
 

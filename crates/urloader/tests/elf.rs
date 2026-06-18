@@ -175,6 +175,19 @@ fn loads_elf_sections_and_symbols() {
 }
 
 #[test]
+fn analysis_view_normalizes_elf_symbols_and_relocations() {
+    let bytes = elf_with_sections_and_symbols();
+    let raw = load(&bytes).expect("raw image should load");
+    let view = raw.analysis_view(&bytes).expect("view should build");
+
+    assert!(view.capabilities.has_symbols);
+    assert!(view
+        .symbols
+        .iter()
+        .any(|symbol| symbol.name == "main" && symbol.source == "elf:symtab"));
+}
+
+#[test]
 fn loads_nobits_section_without_file_backing() {
     let mut bytes = minimal_elf64_aarch64_executable();
     bytes.resize(0x1100, 0);

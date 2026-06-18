@@ -46,6 +46,77 @@ fn minimal_pe32_plus_x86_64() -> Vec<u8> {
     bytes
 }
 
+fn pe32_plus_x86_64_with_imports_and_relocs() -> Vec<u8> {
+    let mut bytes = minimal_pe32_plus_x86_64();
+
+    let coff = 0x84usize;
+    let opt = coff + 20;
+
+    let idata_va = 0x3000u32;
+    let idata_raw = 0x600u32;
+    let reloc_va = 0x4000u32;
+    let reloc_raw = 0x700u32;
+
+    let text = opt + 0xf0;
+    write_section(
+        &mut bytes,
+        text + 80,
+        b".idata\0\0",
+        idata_va,
+        0x100,
+        0x100,
+        idata_raw,
+        0x4000_0040,
+    );
+    write_section(
+        &mut bytes,
+        text + 120,
+        b".reloc\0\0",
+        reloc_va,
+        0x100,
+        0x100,
+        reloc_raw,
+        0x4200_0040,
+    );
+
+    bytes[coff + 2..coff + 4].copy_from_slice(&4u16.to_le_bytes());
+
+    bytes.resize(0x800, 0);
+
+    let import_dir = opt + 112 + (8 * 1);
+    bytes[import_dir..import_dir + 4].copy_from_slice(&idata_va.to_le_bytes());
+    bytes[import_dir + 4..import_dir + 8].copy_from_slice(&0x40u32.to_le_bytes());
+    let reloc_dir = opt + 112 + (8 * 5);
+    bytes[reloc_dir..reloc_dir + 4].copy_from_slice(&reloc_va.to_le_bytes());
+    bytes[reloc_dir + 4..reloc_dir + 8].copy_from_slice(&0x0cu32.to_le_bytes());
+
+    let desc = idata_raw as usize;
+    bytes[desc..desc + 4].copy_from_slice(&(idata_va + 0x28).to_le_bytes());
+    bytes[desc + 12..desc + 16].copy_from_slice(&(idata_va + 0x40).to_le_bytes());
+    bytes[desc + 16..desc + 20].copy_from_slice(&(idata_va + 0x28).to_le_bytes());
+
+    let thunk = (idata_raw + 0x28) as usize;
+    bytes[thunk..thunk + 8].copy_from_slice(&(idata_va as u64 + 0x50).to_le_bytes());
+    bytes[thunk + 8..thunk + 16].copy_from_slice(&0u64.to_le_bytes());
+
+    let dll = (idata_raw + 0x40) as usize;
+    bytes[dll..dll + 12].copy_from_slice(b"KERNEL32.dll");
+    bytes[dll + 12] = 0;
+
+    let ibn = (idata_raw + 0x50) as usize;
+    bytes[ibn..ibn + 2].copy_from_slice(&0u16.to_le_bytes());
+    bytes[ibn + 2..ibn + 13].copy_from_slice(b"ExitProcess");
+    bytes[ibn + 13] = 0;
+
+    let reloc = reloc_raw as usize;
+    bytes[reloc..reloc + 4].copy_from_slice(&0x1000u32.to_le_bytes());
+    bytes[reloc + 4..reloc + 8].copy_from_slice(&0x0cu32.to_le_bytes());
+    bytes[reloc + 8..reloc + 10].copy_from_slice(&0xa010u16.to_le_bytes());
+    bytes[reloc + 10..reloc + 12].copy_from_slice(&0u16.to_le_bytes());
+
+    bytes
+}
+
 #[allow(clippy::too_many_arguments)]
 fn write_section(
     bytes: &mut [u8],
@@ -131,4 +202,15 @@ fn rejects_section_raw_range_outside_file() {
     bytes[text + 20..text + 24].copy_from_slice(&0x700u32.to_le_bytes());
     let err = load(&bytes).unwrap_err().to_string();
     assert!(err.contains("section raw range"), "{err}");
+}
+
+#[test]
+fn analysis_view_normalizes_pe_imports_and_relocations() {
+    let bytes = pe32_plus_x86_64_with_imports_and_relocs();
+    let raw = load(&bytes).expect("raw image should load");
+    let view = raw.analysis_view(&bytes).expect("view should build");
+
+    assert!(view.capabilities.has_imports || view.capabilities.has_relocations);
+    assert!(view.imports.iter().any(|import| import.name.as_deref() == Some("ExitProcess")));
+    assert!(view.relocations.iter().any(|reloc| reloc.addr == 0x140001010));
 }

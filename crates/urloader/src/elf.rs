@@ -38,6 +38,7 @@ pub fn load(bytes: &[u8]) -> Result<LoadedImage> {
         symbols,
         imports: Vec::new(),
         exports: Vec::new(),
+        relocations: Vec::new(),
         diagnostics: Vec::new(),
         format_details: FormatDetails::Elf {
             file_type: header.file_type,

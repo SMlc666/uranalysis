@@ -1,8 +1,9 @@
 use crate::{
     model::{
         BinaryTarget, BinaryView, CapabilitySet, LoadedImage, LoaderDiagnostic, MappedRange,
-        MetadataConfidence, NormalizedExport, NormalizedImport, NormalizedSymbol, ViewSection,
+        ViewSection,
     },
+    normalize::{normalize_exports, normalize_imports, normalize_symbols},
     ViewBuildError,
 };
 
@@ -28,39 +29,9 @@ impl LoadedImage {
             return Err(ViewBuildError::MissingAnalysisEntry);
         }
 
-        let symbols = self
-            .symbols
-            .iter()
-            .map(|symbol| NormalizedSymbol {
-                name: symbol.name.clone(),
-                addr: symbol.addr,
-                size: symbol.size,
-                kind: symbol.kind.clone(),
-                source: "legacy:symbol".to_string(),
-                confidence: MetadataConfidence::Exact,
-            })
-            .collect();
-        let imports = self
-            .imports
-            .iter()
-            .map(|import| NormalizedImport {
-                library: import.library.clone(),
-                name: Some(import.name.clone()),
-                slot_addr: None,
-                source: "legacy:import".to_string(),
-                confidence: MetadataConfidence::Exact,
-            })
-            .collect();
-        let exports = self
-            .exports
-            .iter()
-            .map(|export| NormalizedExport {
-                name: Some(export.name.clone()),
-                addr: export.addr,
-                source: "legacy:export".to_string(),
-                confidence: MetadataConfidence::Exact,
-            })
-            .collect();
+        let symbols = normalize_symbols(self.format, &self.symbols);
+        let imports = normalize_imports(self.format, &self.imports);
+        let exports = normalize_exports(self.format, &self.exports);
 
         Ok(BinaryView {
             target: BinaryTarget {
@@ -88,7 +59,7 @@ impl LoadedImage {
             symbols,
             imports,
             exports,
-            relocations: Vec::new(),
+            relocations: self.relocations.clone(),
             debug: None,
             unwind: None,
             capabilities: CapabilitySet {
@@ -99,7 +70,7 @@ impl LoadedImage {
                 has_symbols: !self.symbols.is_empty(),
                 has_imports: !self.imports.is_empty(),
                 has_exports: !self.exports.is_empty(),
-                has_relocations: false,
+                has_relocations: !self.relocations.is_empty(),
                 has_debug_lines: false,
                 has_debug_function_ranges: false,
                 has_unwind_ranges: false,

@@ -129,6 +129,7 @@ pub struct LoadedImage {
     pub symbols: Vec<Symbol>,
     pub imports: Vec<Import>,
     pub exports: Vec<Export>,
+    pub relocations: Vec<NormalizedRelocation>,
     pub diagnostics: Vec<Diagnostic>,
     pub format_details: FormatDetails,
     pub bytes: Vec<u8>,
