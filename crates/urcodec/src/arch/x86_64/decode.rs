@@ -237,13 +237,13 @@ pub fn decode_instruction(bytes: &[u8], address: u64) -> Result<Instruction> {
                 decode_sse_move(bytes, address, prefixes, second)
             } else if matches!(second, 0x2e | 0x2f) {
                 decode_sse_compare_unordered(bytes, address, prefixes, second)
-            } else if matches!(second, 0x54 | 0x58 | 0x5c | 0x5e) {
+            } else if matches!(second, 0x54 | 0x56 | 0x58 | 0x5c | 0x5e) {
                 decode_sse_binary(
                     bytes,
                     address,
                     prefixes,
                     mnemonic_for_sse_binary(second, prefixes),
-                    if second == 0x54 {
+                    if matches!(second, 0x54 | 0x56) {
                         InstructionKind::Logical
                     } else {
                         InstructionKind::Arithmetic
@@ -1264,18 +1264,36 @@ fn decode_0f01_system(bytes: &[u8], address: u64, prefixes: Prefixes) -> Result<
 fn decode_0fae_system(bytes: &[u8], address: u64, prefixes: Prefixes) -> Result<Instruction> {
     let modrm_offset = prefixes.opcode_offset + 2;
     require_len(bytes, modrm_offset + 1)?;
-    if bytes[modrm_offset] != 0xf8 {
-        return Ok(unknown(bytes[prefixes.opcode_offset], address));
+    let modrm = parse_modrm(bytes[modrm_offset]);
+    if modrm.mode != 0b11 && matches!(modrm.reg, 0x2 | 0x3) {
+        let (mem, consumed) = parse_rm_operand(bytes, modrm_offset, prefixes.rex, 32)?;
+        let mnemonic = if modrm.reg == 0x2 {
+            "ldmxcsr"
+        } else {
+            "stmxcsr"
+        };
+        return Ok(base(
+            bytes[..consumed].to_vec(),
+            address,
+            mnemonic,
+            vec![mem],
+            InstructionKind::System,
+            FlowKind::Fallthrough,
+            None,
+        ));
     }
-    Ok(base(
-        bytes[..modrm_offset + 1].to_vec(),
-        address,
-        "sfence",
-        Vec::new(),
-        InstructionKind::System,
-        FlowKind::Fallthrough,
-        None,
-    ))
+    if bytes[modrm_offset] == 0xf8 {
+        return Ok(base(
+            bytes[..modrm_offset + 1].to_vec(),
+            address,
+            "sfence",
+            Vec::new(),
+            InstructionKind::System,
+            FlowKind::Fallthrough,
+            None,
+        ));
+    }
+    Ok(unknown(bytes[prefixes.opcode_offset], address))
 }
 
 fn decode_vex(bytes: &[u8], address: u64, prefixes: Prefixes) -> Result<Instruction> {
@@ -2394,6 +2412,8 @@ fn mnemonic_for_sse_binary(opcode: u8, prefixes: Prefixes) -> &'static str {
     match opcode {
         0x54 if prefixes.operand_size_override => "andpd",
         0x54 => "andps",
+        0x56 if prefixes.operand_size_override => "orpd",
+        0x56 => "orps",
         0x58 if prefixes.repeat_prefix == Some(0xf2) => "addsd",
         0x58 if prefixes.repeat_prefix == Some(0xf3) => "addss",
         0x58 if prefixes.operand_size_override => "addpd",

@@ -98,6 +98,16 @@ fn decodes_x86_64_system_0f_forms() {
     assert_eq!(sfence.size, 3);
     assert_eq!(sfence.kind, InstructionKind::System);
 
+    let stmxcsr = decode(&[0x0f, 0xae, 0x1c, 0x24], 0x401000);
+    assert_eq!(stmxcsr.text, "stmxcsr [rsp]");
+    assert_eq!(stmxcsr.size, 4);
+    assert_eq!(stmxcsr.kind, InstructionKind::System);
+
+    let ldmxcsr = decode(&[0x0f, 0xae, 0x54, 0x24, 0x08], 0x401000);
+    assert_eq!(ldmxcsr.text, "ldmxcsr [rsp+0x8]");
+    assert_eq!(ldmxcsr.size, 5);
+    assert_eq!(ldmxcsr.kind, InstructionKind::System);
+
     let cpuid = decode(&[0x0f, 0xa2], 0x401000);
     assert_eq!(cpuid.text, "cpuid");
     assert_eq!(cpuid.size, 2);
@@ -692,6 +702,16 @@ fn decodes_x86_64_sse_move_and_xor_forms() {
     assert_eq!(xorps.text, "xorps xmm0, xmm0");
     assert_eq!(xorps.size, 3);
     assert_eq!(xorps.kind, InstructionKind::Logical);
+
+    let orps = decode(&[0x0f, 0x56, 0xc8], 0x401000);
+    assert_eq!(orps.text, "orps xmm1, xmm0");
+    assert_eq!(orps.size, 3);
+    assert_eq!(orps.kind, InstructionKind::Logical);
+
+    let orpd = decode(&[0x66, 0x0f, 0x56, 0xc8], 0x401000);
+    assert_eq!(orpd.text, "orpd xmm1, xmm0");
+    assert_eq!(orpd.size, 4);
+    assert_eq!(orpd.kind, InstructionKind::Logical);
 
     let cmpps_reg = decode(&[0x0f, 0xc2, 0xc2, 0x00], 0x401000);
     assert_eq!(cmpps_reg.text, "cmpps xmm0, xmm2, 0x0");
