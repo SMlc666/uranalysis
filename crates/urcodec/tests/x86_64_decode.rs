@@ -817,6 +817,13 @@ fn decodes_x86_64_x87_memory_forms() {
     assert_eq!(fstp.kind, InstructionKind::Store);
     let fstp_mem = memory_operand(&fstp.operands[0]);
     assert_eq!(fstp_mem.width_bits, Some(64));
+
+    let fisttp = decode(&[0xdd, 0x0a], 0x401000);
+    assert_eq!(fisttp.text, "fisttp [rdx]");
+    assert_eq!(fisttp.size, 2);
+    assert_eq!(fisttp.kind, InstructionKind::Store);
+    let fisttp_mem = memory_operand(&fisttp.operands[0]);
+    assert_eq!(fisttp_mem.width_bits, Some(64));
 }
 
 #[test]
@@ -1158,6 +1165,11 @@ fn decodes_x86_64_mmx_forms() {
     assert_eq!(pmovmskb.text, "pmovmskb edx, mm7");
     assert_eq!(pmovmskb.size, 3);
     assert_eq!(pmovmskb.kind, InstructionKind::Move);
+
+    let cvtps2pi = decode(&[0x0f, 0x2d, 0xc8], 0x401000);
+    assert_eq!(cvtps2pi.text, "cvtps2pi mm1, xmm0");
+    assert_eq!(cvtps2pi.size, 3);
+    assert_eq!(cvtps2pi.kind, InstructionKind::Arithmetic);
 
     let movd = decode(&[0x0f, 0x7e, 0xc0], 0x401000);
     assert_eq!(movd.text, "movd eax, mm0");

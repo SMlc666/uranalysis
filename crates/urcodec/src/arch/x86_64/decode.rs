@@ -400,6 +400,8 @@ pub fn decode_instruction(bytes: &[u8], address: u64) -> Result<Instruction> {
                 decode_bit_test_imm(bytes, address, prefixes)
             } else if matches!(second, 0x10 | 0x11 | 0x28 | 0x29) {
                 decode_sse_move(bytes, address, prefixes, second)
+            } else if second == 0x2d {
+                decode_cvtps2pi(bytes, address, prefixes)
             } else if matches!(second, 0x2e | 0x2f) {
                 decode_sse_compare_unordered(bytes, address, prefixes, second)
             } else if matches!(second, 0x54 | 0x56 | 0x58 | 0x5c | 0x5e) {
@@ -1577,6 +1579,7 @@ fn decode_x87_memory(
     let (mnemonic, width_bits, kind) = match (opcode, modrm.reg) {
         (0xda, 1) => ("fimul", 32, InstructionKind::Arithmetic),
         (0xdb, 3) => ("fistp", 32, InstructionKind::Store),
+        (0xdd, 1) => ("fisttp", 64, InstructionKind::Store),
         (0xdd, 3) => ("fstp", 64, InstructionKind::Store),
         _ => return Ok(unknown(bytes[prefixes.opcode_offset], address)),
     };
@@ -2560,6 +2563,30 @@ fn decode_mmx_move(
         "movq",
         operands,
         kind,
+        FlowKind::Fallthrough,
+        None,
+    ))
+}
+
+fn decode_cvtps2pi(bytes: &[u8], address: u64, prefixes: Prefixes) -> Result<Instruction> {
+    let modrm_offset = prefixes.opcode_offset + 2;
+    require_len(bytes, modrm_offset + 1)?;
+    let modrm = parse_modrm(bytes[modrm_offset]);
+    let dst = Operand::Register(mm(extend_reg(modrm.reg, prefixes.rex.r)));
+    let (src, consumed) = if modrm.mode == 0b11 {
+        (
+            Operand::Register(xmm(extend_reg(modrm.rm, prefixes.rex.b))),
+            modrm_offset + 1,
+        )
+    } else {
+        parse_rm_operand(bytes, modrm_offset, prefixes.rex, 64)?
+    };
+    Ok(base(
+        bytes[..consumed].to_vec(),
+        address,
+        "cvtps2pi",
+        vec![dst, src],
+        InstructionKind::Arithmetic,
         FlowKind::Fallthrough,
         None,
     ))
