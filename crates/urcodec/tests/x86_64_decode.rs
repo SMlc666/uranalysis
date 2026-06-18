@@ -355,6 +355,16 @@ fn decodes_x86_64_arithmetic_and_logical_forms() {
     assert_eq!(cmp_rax_imm.size, 6);
     assert_eq!(cmp_rax_imm.kind, InstructionKind::Compare);
 
+    let test_eax_imm = decode(&[0xa9, 0x00, 0x01, 0x00, 0x00], 0x401000);
+    assert_eq!(test_eax_imm.text, "test eax, 0x100");
+    assert_eq!(test_eax_imm.size, 5);
+    assert_eq!(test_eax_imm.kind, InstructionKind::Compare);
+
+    let test_rax_imm = decode(&[0x48, 0xa9, 0x00, 0x01, 0x00, 0x00], 0x401000);
+    assert_eq!(test_rax_imm.text, "test rax, 0x100");
+    assert_eq!(test_rax_imm.size, 6);
+    assert_eq!(test_rax_imm.kind, InstructionKind::Compare);
+
     let add_byte_reg = decode(&[0x02, 0xc1], 0x401000);
     assert_eq!(add_byte_reg.text, "add al, cl");
     assert_eq!(add_byte_reg.size, 2);
@@ -690,10 +700,118 @@ fn decodes_x86_64_xchg_forms() {
     assert_eq!(xchg_reg.size, 2);
     assert_eq!(xchg_reg.kind, InstructionKind::Move);
 
+    let xchg_eax_ecx = decode(&[0x91], 0x401000);
+    assert_eq!(xchg_eax_ecx.text, "xchg ecx, eax");
+    assert_eq!(xchg_eax_ecx.size, 1);
+    assert_eq!(xchg_eax_ecx.kind, InstructionKind::Move);
+
+    let xchg_rax_rcx = decode(&[0x48, 0x91], 0x401000);
+    assert_eq!(xchg_rax_rcx.text, "xchg rcx, rax");
+    assert_eq!(xchg_rax_rcx.size, 2);
+    assert_eq!(xchg_rax_rcx.kind, InstructionKind::Move);
+
     let xchg_mem = decode(&[0x87, 0x84, 0xf6, 0xf0, 0xff, 0x4f, 0x00], 0x401000);
     assert_eq!(xchg_mem.text, "xchg [rsi+rsi*8+0x4ffff0], eax");
     assert_eq!(xchg_mem.size, 7);
     assert_eq!(xchg_mem.kind, InstructionKind::Move);
+}
+
+#[test]
+fn decodes_x86_64_accumulator_and_string_unary_forms() {
+    let cwde = decode(&[0x98], 0x401000);
+    assert_eq!(cwde.text, "cwde");
+    assert_eq!(cwde.size, 1);
+    assert_eq!(cwde.kind, InstructionKind::Arithmetic);
+
+    let cdqe = decode(&[0x48, 0x98], 0x401000);
+    assert_eq!(cdqe.text, "cdqe");
+    assert_eq!(cdqe.size, 2);
+    assert_eq!(cdqe.kind, InstructionKind::Arithmetic);
+
+    let cdq = decode(&[0x99], 0x401000);
+    assert_eq!(cdq.text, "cdq");
+    assert_eq!(cdq.size, 1);
+    assert_eq!(cdq.kind, InstructionKind::Arithmetic);
+
+    let cqo = decode(&[0x48, 0x99], 0x401000);
+    assert_eq!(cqo.text, "cqo");
+    assert_eq!(cqo.size, 2);
+    assert_eq!(cqo.kind, InstructionKind::Arithmetic);
+
+    let pushfq = decode(&[0x9c], 0x401000);
+    assert_eq!(pushfq.text, "pushfq");
+    assert_eq!(pushfq.size, 1);
+    assert_eq!(pushfq.kind, InstructionKind::Store);
+
+    let popfq = decode(&[0x9d], 0x401000);
+    assert_eq!(popfq.text, "popfq");
+    assert_eq!(popfq.size, 1);
+    assert_eq!(popfq.kind, InstructionKind::Load);
+
+    let sahf = decode(&[0x9e], 0x401000);
+    assert_eq!(sahf.text, "sahf");
+    assert_eq!(sahf.size, 1);
+    assert_eq!(sahf.kind, InstructionKind::Move);
+
+    let lahf = decode(&[0x9f], 0x401000);
+    assert_eq!(lahf.text, "lahf");
+    assert_eq!(lahf.size, 1);
+    assert_eq!(lahf.kind, InstructionKind::Move);
+
+    let movsb = decode(&[0xa4], 0x401000);
+    assert_eq!(movsb.text, "movsb [rdi], [rsi]");
+    assert_eq!(movsb.size, 1);
+    assert_eq!(movsb.kind, InstructionKind::Move);
+
+    let movsd = decode(&[0xa5], 0x401000);
+    assert_eq!(movsd.text, "movsd [rdi], [rsi]");
+    assert_eq!(movsd.size, 1);
+    assert_eq!(movsd.kind, InstructionKind::Move);
+
+    let movsq = decode(&[0x48, 0xa5], 0x401000);
+    assert_eq!(movsq.text, "movsq [rdi], [rsi]");
+    assert_eq!(movsq.size, 2);
+    assert_eq!(movsq.kind, InstructionKind::Move);
+
+    let cmpsb = decode(&[0xa6], 0x401000);
+    assert_eq!(cmpsb.text, "cmpsb [rsi], [rdi]");
+    assert_eq!(cmpsb.size, 1);
+    assert_eq!(cmpsb.kind, InstructionKind::Compare);
+
+    let cmpsd = decode(&[0xa7], 0x401000);
+    assert_eq!(cmpsd.text, "cmpsd [rsi], [rdi]");
+    assert_eq!(cmpsd.size, 1);
+    assert_eq!(cmpsd.kind, InstructionKind::Compare);
+
+    let stosb = decode(&[0xaa], 0x401000);
+    assert_eq!(stosb.text, "stosb [rdi], al");
+    assert_eq!(stosb.size, 1);
+    assert_eq!(stosb.kind, InstructionKind::Store);
+
+    let stosd = decode(&[0xab], 0x401000);
+    assert_eq!(stosd.text, "stosd [rdi], eax");
+    assert_eq!(stosd.size, 1);
+    assert_eq!(stosd.kind, InstructionKind::Store);
+
+    let lodsb = decode(&[0xac], 0x401000);
+    assert_eq!(lodsb.text, "lodsb al, [rsi]");
+    assert_eq!(lodsb.size, 1);
+    assert_eq!(lodsb.kind, InstructionKind::Load);
+
+    let lodsd = decode(&[0xad], 0x401000);
+    assert_eq!(lodsd.text, "lodsd eax, [rsi]");
+    assert_eq!(lodsd.size, 1);
+    assert_eq!(lodsd.kind, InstructionKind::Load);
+
+    let scasb = decode(&[0xae], 0x401000);
+    assert_eq!(scasb.text, "scasb al, [rdi]");
+    assert_eq!(scasb.size, 1);
+    assert_eq!(scasb.kind, InstructionKind::Compare);
+
+    let scasd = decode(&[0xaf], 0x401000);
+    assert_eq!(scasd.text, "scasd eax, [rdi]");
+    assert_eq!(scasd.size, 1);
+    assert_eq!(scasd.kind, InstructionKind::Compare);
 }
 
 #[test]

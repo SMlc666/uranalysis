@@ -20,11 +20,12 @@ Current fixture scope:
 - AArch64 core control flow, address, arithmetic, conditional select, logical
   immediate, move, bitfield alias, system exception, load, store, register-offset
   load/store, and load/store pair forms.
-- X86-64 control flow, accumulator immediate arithmetic/logical/compare forms,
-  immediate `imul`, selected `0f` scalar forms, MMX/SSE shifts, SSE
-  arithmetic/logical forms, packed integer, packed shuffle, MXCSR memory forms,
-  selected VEX move, logical, scalar arithmetic, packed-shift forms, and AVX
-  cleanup forms.
+- X86-64 control flow, accumulator immediate arithmetic/logical/compare/test
+  forms, accumulator sign-extension, flags push/pop and byte transfer, implicit
+  string move/compare/store/load/scan forms, immediate `imul`, selected `0f`
+  scalar forms, MMX/SSE shifts, SSE arithmetic/logical forms, packed integer,
+  packed shuffle, MXCSR memory forms, selected VEX move, logical, scalar
+  arithmetic, packed-shift forms, and AVX cleanup forms.
 
 When adding corpus-driven decoder coverage, add a Capstone oracle fixture for
 the representative bytes if Capstone can decode the instruction and the opcode

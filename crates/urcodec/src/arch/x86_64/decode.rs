@@ -86,6 +86,69 @@ pub fn decode_instruction(bytes: &[u8], address: u64) -> Result<Instruction> {
             FlowKind::Fallthrough,
             None,
         )),
+        0x91..=0x97 => decode_xchg_acc_reg(bytes, address, prefixes, opcode),
+        0x98 => Ok(base(
+            bytes[..opcode_offset + 1].to_vec(),
+            address,
+            mnemonic_for_acc_sign_extend(prefixes),
+            Vec::new(),
+            InstructionKind::Arithmetic,
+            FlowKind::Fallthrough,
+            None,
+        )),
+        0x99 => Ok(base(
+            bytes[..opcode_offset + 1].to_vec(),
+            address,
+            mnemonic_for_dx_acc_sign_extend(prefixes),
+            Vec::new(),
+            InstructionKind::Arithmetic,
+            FlowKind::Fallthrough,
+            None,
+        )),
+        0x9c => Ok(base(
+            bytes[..opcode_offset + 1].to_vec(),
+            address,
+            if prefixes.operand_size_override {
+                "pushf"
+            } else {
+                "pushfq"
+            },
+            Vec::new(),
+            InstructionKind::Store,
+            FlowKind::Fallthrough,
+            None,
+        )),
+        0x9d => Ok(base(
+            bytes[..opcode_offset + 1].to_vec(),
+            address,
+            if prefixes.operand_size_override {
+                "popf"
+            } else {
+                "popfq"
+            },
+            Vec::new(),
+            InstructionKind::Load,
+            FlowKind::Fallthrough,
+            None,
+        )),
+        0x9e => Ok(base(
+            bytes[..opcode_offset + 1].to_vec(),
+            address,
+            "sahf",
+            Vec::new(),
+            InstructionKind::Move,
+            FlowKind::Fallthrough,
+            None,
+        )),
+        0x9f => Ok(base(
+            bytes[..opcode_offset + 1].to_vec(),
+            address,
+            "lahf",
+            Vec::new(),
+            InstructionKind::Move,
+            FlowKind::Fallthrough,
+            None,
+        )),
         0xa8 => {
             let size = opcode_offset + 2;
             let imm = i64::from(read_u8(bytes, opcode_offset + 1)?);
@@ -102,6 +165,8 @@ pub fn decode_instruction(bytes: &[u8], address: u64) -> Result<Instruction> {
                 None,
             ))
         }
+        0xa9 => decode_acc_imm32(bytes, address, prefixes, "test", InstructionKind::Compare),
+        0xa4..=0xa7 | 0xaa..=0xaf => decode_string_op(bytes, address, prefixes, opcode),
         0xe8 => {
             let size = opcode_offset + 5;
             let disp = i64::from(read_i32(bytes, opcode_offset + 1)?);
@@ -929,6 +994,94 @@ fn decode_xchg(bytes: &[u8], address: u64, prefixes: Prefixes) -> Result<Instruc
         "xchg",
         vec![rm, reg],
         InstructionKind::Move,
+        FlowKind::Fallthrough,
+        None,
+    ))
+}
+
+fn decode_xchg_acc_reg(
+    bytes: &[u8],
+    address: u64,
+    prefixes: Prefixes,
+    opcode: u8,
+) -> Result<Instruction> {
+    let width_bits = default_operand_width(prefixes);
+    let reg = Operand::Register(reg_for_width(
+        extend_reg(opcode - 0x90, prefixes.rex.b),
+        width_bits,
+        prefixes.rex.present,
+    ));
+    let acc = Operand::Register(reg_for_width(0, width_bits, prefixes.rex.present));
+    Ok(base(
+        bytes[..prefixes.opcode_offset + 1].to_vec(),
+        address,
+        "xchg",
+        vec![reg, acc],
+        InstructionKind::Move,
+        FlowKind::Fallthrough,
+        None,
+    ))
+}
+
+fn decode_string_op(
+    bytes: &[u8],
+    address: u64,
+    prefixes: Prefixes,
+    opcode: u8,
+) -> Result<Instruction> {
+    let width_bits = match opcode {
+        0xa4 | 0xa6 | 0xaa | 0xac | 0xae => 8,
+        _ => default_operand_width(prefixes),
+    };
+    let destination = Operand::Memory(MemoryOperand::base_offset(reg64(7), 0, Some(width_bits)));
+    let source = Operand::Memory(MemoryOperand::base_offset(reg64(6), 0, Some(width_bits)));
+    let accumulator = Operand::Register(reg_for_width(0, width_bits, prefixes.rex.present));
+    let (mnemonic, operands, kind) = match opcode {
+        0xa4 => ("movsb", vec![destination, source], InstructionKind::Move),
+        0xa5 => (
+            mnemonic_for_string_sized("movs", width_bits),
+            vec![destination, source],
+            InstructionKind::Move,
+        ),
+        0xa6 => ("cmpsb", vec![source, destination], InstructionKind::Compare),
+        0xa7 => (
+            mnemonic_for_string_sized("cmps", width_bits),
+            vec![source, destination],
+            InstructionKind::Compare,
+        ),
+        0xaa => (
+            "stosb",
+            vec![destination, accumulator],
+            InstructionKind::Store,
+        ),
+        0xab => (
+            mnemonic_for_string_sized("stos", width_bits),
+            vec![destination, accumulator],
+            InstructionKind::Store,
+        ),
+        0xac => ("lodsb", vec![accumulator, source], InstructionKind::Load),
+        0xad => (
+            mnemonic_for_string_sized("lods", width_bits),
+            vec![accumulator, source],
+            InstructionKind::Load,
+        ),
+        0xae => (
+            "scasb",
+            vec![accumulator, destination],
+            InstructionKind::Compare,
+        ),
+        _ => (
+            mnemonic_for_string_sized("scas", width_bits),
+            vec![accumulator, destination],
+            InstructionKind::Compare,
+        ),
+    };
+    Ok(base(
+        bytes[..prefixes.opcode_offset + 1].to_vec(),
+        address,
+        mnemonic,
+        operands,
+        kind,
         FlowKind::Fallthrough,
         None,
     ))
@@ -2480,6 +2633,47 @@ fn default_operand_width(prefixes: Prefixes) -> u16 {
         16
     } else {
         32
+    }
+}
+
+fn mnemonic_for_acc_sign_extend(prefixes: Prefixes) -> &'static str {
+    if prefixes.rex.w {
+        "cdqe"
+    } else if prefixes.operand_size_override {
+        "cbw"
+    } else {
+        "cwde"
+    }
+}
+
+fn mnemonic_for_dx_acc_sign_extend(prefixes: Prefixes) -> &'static str {
+    if prefixes.rex.w {
+        "cqo"
+    } else if prefixes.operand_size_override {
+        "cwd"
+    } else {
+        "cdq"
+    }
+}
+
+fn mnemonic_for_string_sized(stem: &str, width_bits: u16) -> &'static str {
+    match (stem, width_bits) {
+        ("movs", 16) => "movsw",
+        ("movs", 64) => "movsq",
+        ("movs", _) => "movsd",
+        ("cmps", 16) => "cmpsw",
+        ("cmps", 64) => "cmpsq",
+        ("cmps", _) => "cmpsd",
+        ("stos", 16) => "stosw",
+        ("stos", 64) => "stosq",
+        ("stos", _) => "stosd",
+        ("lods", 16) => "lodsw",
+        ("lods", 64) => "lodsq",
+        ("lods", _) => "lodsd",
+        ("scas", 16) => "scasw",
+        ("scas", 64) => "scasq",
+        ("scas", _) => "scasd",
+        _ => unreachable!("unknown string instruction stem"),
     }
 }
 
