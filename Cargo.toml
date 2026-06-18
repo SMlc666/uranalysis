@@ -3,6 +3,7 @@ members = [
     "crates/urcodec",
     "crates/urdis2il",
     "crates/urloader",
+    "crates/urastore",
     "crates/ura-core",
     "crates/ura-cli",
     "crates/ura-daemon",
@@ -25,6 +26,7 @@ goblin = "0.8"
 urcodec = { path = "crates/urcodec" }
 urdis2il = { path = "crates/urdis2il" }
 urloader = { path = "crates/urloader" }
+urastore = { path = "crates/urastore" }
 clap = { version = "4.5", features = ["derive"] }
 rustyline = "14.0"
 tempfile = "3.10"

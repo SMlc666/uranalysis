@@ -1,8 +1,33 @@
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 use crate::model::{
-    BasicBlock, CfgEdge, CfgEdgeKind, FlowKind, Function, FunctionSource, Instruction,
+    BasicBlock, CfgEdge, CfgEdgeKind, FlowKind, Function, FunctionSource, Instruction, UserFacts,
 };
+
+pub fn manual_functions_from_facts(user_facts: &UserFacts) -> Vec<Function> {
+    let mut out = Vec::new();
+    for addr in &user_facts.manual_function_roots {
+        let (start, end) = user_facts
+            .manual_function_ranges
+            .get(addr)
+            .copied()
+            .unwrap_or((*addr, addr + 4));
+        let name = user_facts
+            .renames
+            .get(addr)
+            .cloned()
+            .unwrap_or_else(|| format!("sub_{addr:x}"));
+        out.push(Function {
+            addr: *addr,
+            name,
+            start,
+            end,
+            source: FunctionSource::User,
+        });
+    }
+    out.sort_by_key(|func| func.addr);
+    out
+}
 
 pub fn discover_functions(
     entry: u64,

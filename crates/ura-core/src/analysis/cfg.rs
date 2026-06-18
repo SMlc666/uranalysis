@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 use crate::{
-    analysis::refresh::AnalysisWindow,
+    analysis::invalidation::AnalysisWindow,
     model::{
         BasicBlock, BasicBlockSource, CfgEdge, CfgEdgeKind, DecodeStatus, FlowKind, Instruction,
     },

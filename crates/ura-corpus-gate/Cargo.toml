@@ -11,3 +11,4 @@ serde_json.workspace = true
 tempfile.workspace = true
 toml.workspace = true
 ura-core = { path = "../ura-core" }
+urloader.workspace = true

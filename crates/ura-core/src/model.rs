@@ -1,3 +1,5 @@
+use std::collections::{BTreeMap, BTreeSet};
+
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -145,6 +147,37 @@ pub enum FunctionSource {
     User,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct UserFacts {
+    pub renames: BTreeMap<u64, String>,
+    pub comments: BTreeMap<u64, String>,
+    pub manual_function_roots: BTreeSet<u64>,
+    pub manual_function_ranges: BTreeMap<u64, (u64, u64)>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+pub enum PassId {
+    Decode,
+    Strings,
+    Cfg,
+    Functions,
+    Xrefs,
+    Diagnostics,
+}
+
+impl PassId {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            PassId::Decode => "decode",
+            PassId::Strings => "strings",
+            PassId::Cfg => "cfg",
+            PassId::Functions => "functions",
+            PassId::Xrefs => "xrefs",
+            PassId::Diagnostics => "diagnostics",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum BasicBlockSource {
     Entry,
@@ -211,4 +244,15 @@ pub struct Diagnostic {
     pub addr: Option<u64>,
     pub severity: String,
     pub message: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct AnalysisState {
+    pub instructions: Vec<Instruction>,
+    pub strings: Vec<StringRef>,
+    pub basic_blocks: Vec<BasicBlock>,
+    pub cfg_edges: Vec<CfgEdge>,
+    pub functions: Vec<Function>,
+    pub xrefs: Vec<Xref>,
+    pub diagnostics: Vec<Diagnostic>,
 }

@@ -6,7 +6,6 @@ use std::{
 
 use anyhow::{anyhow, bail, Context, Result};
 use serde::{Deserialize, Serialize};
-use tempfile::tempdir;
 
 const MAX_CORPUS_INSTRUCTIONS_PER_SAMPLE: usize = 20_000;
 const X86_64_UNKNOWN_CONTEXT_BYTES: usize = 8;
@@ -168,22 +167,20 @@ fn analyze_sample(root: &Path, sample: &Sample) -> Result<SampleReport> {
     if !input.exists() {
         bail!("sample output missing: {}", input.display());
     }
-    let dir = tempdir()?;
-    let project = dir.path().join(format!("{}.ura", sample.id));
-
-    ura_core::commands::new_project_with_instruction_limit(
-        &input,
-        &project,
-        MAX_CORPUS_INSTRUCTIONS_PER_SAMPLE,
+    let bytes = fs::read(&input)?;
+    let loaded = urloader::load(&bytes)?;
+    let state = ura_core::analysis::build_state_from_loaded_with_instruction_limit(
+        &loaded,
+        &ura_core::model::UserFacts::default(),
+        Some(MAX_CORPUS_INSTRUCTIONS_PER_SAMPLE),
     )?;
-    let info = ura_core::commands::info(&project)?;
-    let instructions = ura_core::commands::disasm(&project, 0, usize::MAX)?;
-    let basic_blocks = ura_core::commands::basic_blocks(&project)?;
-    let cfg_edges = ura_core::commands::cfg_edges(&project)?;
-    let strings = ura_core::commands::strings(&project, None)?;
-    let functions = ura_core::commands::functions(&project)?;
-    let xrefs = ura_core::commands::all_xrefs(&project)?;
-    let diagnostics = ura_core::commands::diagnostics(&project)?;
+    let instructions = &state.instructions;
+    let basic_blocks = &state.basic_blocks;
+    let cfg_edges = &state.cfg_edges;
+    let strings = &state.strings;
+    let functions = &state.functions;
+    let xrefs = &state.xrefs;
+    let diagnostics = &state.diagnostics;
     let cfg_failure_count = diagnostics
         .iter()
         .filter(|diagnostic| {
@@ -191,9 +188,9 @@ fn analyze_sample(root: &Path, sample: &Sample) -> Result<SampleReport> {
         })
         .count();
 
-    let detected_format = format!("{:?}", info.format).to_ascii_lowercase();
-    let detected_architecture = format!("{:?}", info.architecture).to_ascii_lowercase();
-    let detected_class = format!("{:?}", info.class).to_ascii_lowercase();
+    let detected_format = format!("{:?}", loaded.format).to_ascii_lowercase();
+    let detected_architecture = format!("{:?}", loaded.architecture).to_ascii_lowercase();
+    let detected_class = format!("{:?}", loaded.class).to_ascii_lowercase();
     let unknown = instructions
         .iter()
         .filter(|insn| insn.decode_status == ura_core::model::DecodeStatus::Unknown)
@@ -204,7 +201,7 @@ fn analyze_sample(root: &Path, sample: &Sample) -> Result<SampleReport> {
         unknown as f64 / instructions.len() as f64
     };
     let unknown_clusters =
-        collect_unknown_clusters(&sample.id, &detected_architecture, &instructions);
+        collect_unknown_clusters(&sample.id, &detected_architecture, instructions);
 
     let mut failures = Vec::new();
     if detected_format != sample.format {

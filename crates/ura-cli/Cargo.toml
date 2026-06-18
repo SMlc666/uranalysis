@@ -14,6 +14,8 @@ clap.workspace = true
 rustyline.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+urastore.workspace = true
+urloader.workspace = true
 ura-core = { path = "../ura-core" }
 
 [dev-dependencies]

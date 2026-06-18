@@ -2,13 +2,19 @@ pub mod cfg;
 pub mod diagnostics;
 pub mod disasm;
 pub mod functions;
-pub mod refresh;
+pub mod invalidation;
+pub mod pass;
+pub mod scheduler;
+pub mod session;
 pub mod strings;
 pub mod target;
 pub mod xrefs;
 
 use crate::{
-    model::{BasicBlock, CfgEdge, Diagnostic, Function, Instruction, Segment, StringRef, Xref},
+    model::{
+        AnalysisState, BasicBlock, CfgEdge, Diagnostic, Function, Instruction, Segment, StringRef,
+        UserFacts, Xref,
+    },
     Result,
 };
 
@@ -55,6 +61,21 @@ pub struct AnalysisOutput {
     pub diagnostics: Vec<Diagnostic>,
 }
 
+fn segments_from_loaded(segments: &[urloader::Segment]) -> Vec<Segment> {
+    segments
+        .iter()
+        .map(|segment| Segment {
+            id: segment.id,
+            name: segment.name.clone(),
+            vaddr: segment.vaddr,
+            file_offset: segment.file_offset,
+            file_size: segment.file_size,
+            mem_size: segment.mem_size,
+            permissions: segment.permissions.clone(),
+        })
+        .collect()
+}
+
 pub fn run_initial_analysis(
     image: &AnalysisImage<'_>,
     user_functions: &[Function],
@@ -69,10 +90,10 @@ pub fn run_initial_analysis_with_instruction_limit(
 ) -> Result<AnalysisOutput> {
     let instructions = disasm::linear_disassemble_with_limit(image, max_instructions)?;
     let strings = strings::extract_strings(image);
-    let window = refresh::AnalysisWindow {
+    let window = invalidation::AnalysisWindow {
         start: image.entry,
         end: image.entry.saturating_add(4),
-        reason: refresh::RefreshReason::SourceBytesChanged,
+        reason: invalidation::RefreshReason::SourceBytesChanged,
     };
     let mut diagnostics = diagnostics::collect_diagnostics(&instructions);
     let cfg = match cfg::build_cfg(&instructions, &[image.entry], window) {
@@ -111,5 +132,40 @@ pub fn run_initial_analysis_with_instruction_limit(
         functions,
         xrefs,
         diagnostics,
+    })
+}
+
+pub fn build_state_from_loaded(
+    loaded: &urloader::LoadedImage,
+    user_facts: &UserFacts,
+) -> Result<AnalysisState> {
+    build_state_from_loaded_with_instruction_limit(loaded, user_facts, None)
+}
+
+pub fn build_state_from_loaded_with_instruction_limit(
+    loaded: &urloader::LoadedImage,
+    user_facts: &UserFacts,
+    max_instructions: Option<usize>,
+) -> Result<AnalysisState> {
+    let segments = segments_from_loaded(&loaded.segments);
+    let target = target::AnalysisTarget::from_loaded(loaded)?;
+    let image = AnalysisImage {
+        target,
+        entry: loaded.entry,
+        bytes: &loaded.bytes,
+        segments: &segments,
+    };
+    let user_functions = functions::manual_functions_from_facts(user_facts);
+    let output =
+        run_initial_analysis_with_instruction_limit(&image, &user_functions, max_instructions)?;
+
+    Ok(AnalysisState {
+        instructions: output.instructions,
+        strings: output.strings,
+        basic_blocks: output.basic_blocks,
+        cfg_edges: output.cfg_edges,
+        functions: output.functions,
+        xrefs: output.xrefs,
+        diagnostics: output.diagnostics,
     })
 }
