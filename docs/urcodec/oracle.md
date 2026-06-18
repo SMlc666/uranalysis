@@ -22,12 +22,13 @@ Current fixture scope:
   load/store, and load/store pair forms.
 - X86-64 control flow, near/far return and interrupt-return forms, stack-frame
   setup/teardown, accumulator immediate arithmetic/logical/compare/test forms,
-  byte/default-width exchanges, accumulator sign-extension, flags push/pop and
-  byte transfer, implicit string move/compare/store/load/scan forms, immediate
-  `imul`, CL-count shift/rotate groups, selected `0f` scalar forms, MMX/SSE
-  shifts, SSE arithmetic/logical forms, packed integer, packed shuffle, MXCSR
-  memory forms, selected VEX move, compare, conversion, FMA, insert, logical,
-  scalar arithmetic, packed integer, packed-shift forms, and AVX cleanup forms.
+  byte/default-width exchanges, accumulator sign-extension, byte inc/dec,
+  loop-count branches, flags push/pop and byte transfer, implicit string
+  move/compare/store/load/scan forms, selected port I/O forms, immediate `imul`,
+  CL-count shift/rotate groups, selected `0f` scalar forms, MMX/SSE shifts, SSE
+  arithmetic/logical forms, packed integer, packed shuffle, MXCSR memory forms,
+  selected VEX move, compare, conversion, FMA, insert, logical, scalar
+  arithmetic, packed integer, packed-shift forms, and AVX cleanup forms.
 
 When adding corpus-driven decoder coverage, add a Capstone oracle fixture for
 the representative bytes if Capstone can decode the instruction and the opcode

@@ -81,6 +81,24 @@ fn decodes_x86_64_returns_calls_and_jumps() {
     let jmp_rel32 = decode(&[0xe9, 0xfb, 0xff, 0xff, 0xff], 0x401010);
     assert_eq!(jmp_rel32.text, "jmp 0x401010");
     assert_eq!(jmp_rel32.branch_target, Some(0x401010));
+
+    let loopne = decode(&[0xe0, 0xfe], 0x401000);
+    assert_eq!(loopne.text, "loopne 0x401000");
+    assert_eq!(loopne.size, 2);
+    assert_eq!(loopne.flow, FlowKind::ConditionalBranch);
+    assert_eq!(loopne.branch_target, Some(0x401000));
+
+    let loop_ = decode(&[0xe2, 0xfe], 0x401000);
+    assert_eq!(loop_.text, "loop 0x401000");
+    assert_eq!(loop_.size, 2);
+    assert_eq!(loop_.flow, FlowKind::ConditionalBranch);
+    assert_eq!(loop_.branch_target, Some(0x401000));
+
+    let jrcxz = decode(&[0xe3, 0xfe], 0x401000);
+    assert_eq!(jrcxz.text, "jrcxz 0x401000");
+    assert_eq!(jrcxz.size, 2);
+    assert_eq!(jrcxz.flow, FlowKind::ConditionalBranch);
+    assert_eq!(jrcxz.branch_target, Some(0x401000));
 }
 
 #[test]
@@ -140,6 +158,49 @@ fn decodes_x86_64_system_0f_forms() {
     assert_eq!(iretq.text, "iretq");
     assert_eq!(iretq.size, 2);
     assert_eq!(iretq.kind, InstructionKind::System);
+}
+
+#[test]
+fn decodes_x86_64_system_and_io_forms() {
+    let int1 = decode(&[0xf1], 0x401000);
+    assert_eq!(int1.text, "int1");
+    assert_eq!(int1.size, 1);
+    assert_eq!(int1.kind, InstructionKind::System);
+
+    let cmc = decode(&[0xf5], 0x401000);
+    assert_eq!(cmc.text, "cmc");
+    assert_eq!(cmc.size, 1);
+    assert_eq!(cmc.kind, InstructionKind::Logical);
+
+    let sti = decode(&[0xfb], 0x401000);
+    assert_eq!(sti.text, "sti");
+    assert_eq!(sti.size, 1);
+    assert_eq!(sti.kind, InstructionKind::System);
+
+    let in_al_imm = decode(&[0xe4, 0x8a], 0x401000);
+    assert_eq!(in_al_imm.text, "in al, 0x8a");
+    assert_eq!(in_al_imm.size, 2);
+    assert_eq!(in_al_imm.kind, InstructionKind::System);
+
+    let in_eax_imm = decode(&[0xe5, 0x8c], 0x401000);
+    assert_eq!(in_eax_imm.text, "in eax, 0x8c");
+    assert_eq!(in_eax_imm.size, 2);
+    assert_eq!(in_eax_imm.kind, InstructionKind::System);
+
+    let out_imm_al = decode(&[0xe6, 0x8b], 0x401000);
+    assert_eq!(out_imm_al.text, "out 0x8b, al");
+    assert_eq!(out_imm_al.size, 2);
+    assert_eq!(out_imm_al.kind, InstructionKind::System);
+
+    let insb = decode(&[0x6c], 0x401000);
+    assert_eq!(insb.text, "insb [rdi], dx");
+    assert_eq!(insb.size, 1);
+    assert_eq!(insb.kind, InstructionKind::System);
+
+    let outsd = decode(&[0x6f], 0x401000);
+    assert_eq!(outsd.text, "outsd dx, [rsi]");
+    assert_eq!(outsd.size, 1);
+    assert_eq!(outsd.kind, InstructionKind::System);
 }
 
 #[test]
@@ -717,6 +778,21 @@ fn decodes_x86_64_group_f7_forms() {
     let idiv = decode(&[0x48, 0xf7, 0xf8], 0x401000);
     assert_eq!(idiv.text, "idiv rax");
     assert_eq!(idiv.kind, InstructionKind::Arithmetic);
+}
+
+#[test]
+fn decodes_x86_64_group_fe_forms() {
+    let inc_mem8 = decode(&[0xfe, 0x03], 0x401000);
+    assert_eq!(inc_mem8.text, "inc [rbx]");
+    assert_eq!(inc_mem8.size, 2);
+    assert_eq!(inc_mem8.kind, InstructionKind::Arithmetic);
+    let mem = memory_operand(&inc_mem8.operands[0]);
+    assert_eq!(mem.width_bits, Some(8));
+
+    let dec_al = decode(&[0xfe, 0xc8], 0x401000);
+    assert_eq!(dec_al.text, "dec al");
+    assert_eq!(dec_al.size, 2);
+    assert_eq!(dec_al.kind, InstructionKind::Arithmetic);
 }
 
 #[test]

@@ -138,6 +138,33 @@ pub fn decode_instruction(bytes: &[u8], address: u64) -> Result<Instruction> {
                 None,
             ))
         }
+        0xf1 => Ok(base(
+            bytes[..opcode_offset + 1].to_vec(),
+            address,
+            "int1",
+            Vec::new(),
+            InstructionKind::System,
+            FlowKind::Fallthrough,
+            None,
+        )),
+        0xf5 => Ok(base(
+            bytes[..opcode_offset + 1].to_vec(),
+            address,
+            "cmc",
+            Vec::new(),
+            InstructionKind::Logical,
+            FlowKind::Fallthrough,
+            None,
+        )),
+        0xfb => Ok(base(
+            bytes[..opcode_offset + 1].to_vec(),
+            address,
+            "sti",
+            Vec::new(),
+            InstructionKind::System,
+            FlowKind::Fallthrough,
+            None,
+        )),
         0xcf => Ok(base(
             bytes[..opcode_offset + 1].to_vec(),
             address,
@@ -156,6 +183,7 @@ pub fn decode_instruction(bytes: &[u8], address: u64) -> Result<Instruction> {
             FlowKind::Fallthrough,
             None,
         )),
+        0x6c..=0x6f => decode_string_io(bytes, address, prefixes, opcode),
         0x91..=0x97 => decode_xchg_acc_reg(bytes, address, prefixes, opcode),
         0x98 => Ok(base(
             bytes[..opcode_offset + 1].to_vec(),
@@ -237,6 +265,8 @@ pub fn decode_instruction(bytes: &[u8], address: u64) -> Result<Instruction> {
         }
         0xa9 => decode_acc_imm32(bytes, address, prefixes, "test", InstructionKind::Compare),
         0xa4..=0xa7 | 0xaa..=0xaf => decode_string_op(bytes, address, prefixes, opcode),
+        0xe0..=0xe3 => decode_loop_rel8(bytes, address, prefixes, opcode),
+        0xe4..=0xe7 | 0xec..=0xef => decode_io(bytes, address, prefixes, opcode),
         0xe8 => {
             let size = opcode_offset + 5;
             let disp = i64::from(read_i32(bytes, opcode_offset + 1)?);
@@ -821,6 +851,7 @@ pub fn decode_instruction(bytes: &[u8], address: u64) -> Result<Instruction> {
         0xd3 => decode_group2_cl(bytes, address, prefixes, default_operand_width(prefixes)),
         0xc6 => decode_mov_imm8_rm(bytes, address, prefixes),
         0xc7 => decode_mov_imm_rm(bytes, address, prefixes),
+        0xfe => decode_group_fe(bytes, address, prefixes),
         0xf6 => decode_group_f6(bytes, address, prefixes),
         0xf7 => decode_group_f7(bytes, address, prefixes),
         0xff => decode_group_ff(bytes, address, prefixes),
@@ -1168,6 +1199,128 @@ fn decode_string_op(
     ))
 }
 
+fn decode_string_io(
+    bytes: &[u8],
+    address: u64,
+    prefixes: Prefixes,
+    opcode: u8,
+) -> Result<Instruction> {
+    let width_bits = match opcode {
+        0x6c | 0x6e => 8,
+        _ if prefixes.operand_size_override => 16,
+        _ => 32,
+    };
+    let destination = Operand::Memory(MemoryOperand::base_offset(reg64(7), 0, Some(width_bits)));
+    let source = Operand::Memory(MemoryOperand::base_offset(reg64(6), 0, Some(width_bits)));
+    let dx = Operand::Register(reg16(2));
+    let (mnemonic, operands) = match opcode {
+        0x6c => ("insb", vec![destination, dx]),
+        0x6d => (
+            if width_bits == 16 { "insw" } else { "insd" },
+            vec![destination, dx],
+        ),
+        0x6e => ("outsb", vec![dx, source]),
+        _ => (
+            if width_bits == 16 { "outsw" } else { "outsd" },
+            vec![dx, source],
+        ),
+    };
+    Ok(base(
+        bytes[..prefixes.opcode_offset + 1].to_vec(),
+        address,
+        mnemonic,
+        operands,
+        InstructionKind::System,
+        FlowKind::Fallthrough,
+        None,
+    ))
+}
+
+fn decode_loop_rel8(
+    bytes: &[u8],
+    address: u64,
+    prefixes: Prefixes,
+    opcode: u8,
+) -> Result<Instruction> {
+    let size = prefixes.opcode_offset + 2;
+    let disp = i64::from(read_i8(bytes, prefixes.opcode_offset + 1)?);
+    let target = rel_target(address, size, disp);
+    let mnemonic = match opcode {
+        0xe0 => "loopne",
+        0xe1 => "loope",
+        0xe2 => "loop",
+        _ => "jrcxz",
+    };
+    Ok(base(
+        bytes[..size].to_vec(),
+        address,
+        mnemonic,
+        absolute_target(target),
+        InstructionKind::Branch,
+        FlowKind::ConditionalBranch,
+        Some(target),
+    ))
+}
+
+fn decode_io(bytes: &[u8], address: u64, prefixes: Prefixes, opcode: u8) -> Result<Instruction> {
+    let acc_width_bits = if prefixes.operand_size_override {
+        16
+    } else {
+        32
+    };
+    let al = Operand::Register(reg8(0, prefixes.rex.present));
+    let acc = Operand::Register(reg_for_width(0, acc_width_bits, prefixes.rex.present));
+    let dx = Operand::Register(reg16(2));
+    let (size, operands) = match opcode {
+        0xe4 => (
+            prefixes.opcode_offset + 2,
+            vec![
+                al,
+                Operand::Immediate(i64::from(read_u8(bytes, prefixes.opcode_offset + 1)?)),
+            ],
+        ),
+        0xe5 => (
+            prefixes.opcode_offset + 2,
+            vec![
+                acc,
+                Operand::Immediate(i64::from(read_u8(bytes, prefixes.opcode_offset + 1)?)),
+            ],
+        ),
+        0xe6 => (
+            prefixes.opcode_offset + 2,
+            vec![
+                Operand::Immediate(i64::from(read_u8(bytes, prefixes.opcode_offset + 1)?)),
+                al,
+            ],
+        ),
+        0xe7 => (
+            prefixes.opcode_offset + 2,
+            vec![
+                Operand::Immediate(i64::from(read_u8(bytes, prefixes.opcode_offset + 1)?)),
+                acc,
+            ],
+        ),
+        0xec => (prefixes.opcode_offset + 1, vec![al, dx]),
+        0xed => (prefixes.opcode_offset + 1, vec![acc, dx]),
+        0xee => (prefixes.opcode_offset + 1, vec![dx, al]),
+        _ => (prefixes.opcode_offset + 1, vec![dx, acc]),
+    };
+    let mnemonic = if matches!(opcode, 0xe4 | 0xe5 | 0xec | 0xed) {
+        "in"
+    } else {
+        "out"
+    };
+    Ok(base(
+        bytes[..size].to_vec(),
+        address,
+        mnemonic,
+        operands,
+        InstructionKind::System,
+        FlowKind::Fallthrough,
+        None,
+    ))
+}
+
 fn decode_group1_imm8(bytes: &[u8], address: u64, prefixes: Prefixes) -> Result<Instruction> {
     decode_group1_imm8_width(bytes, address, prefixes, 64, true)
 }
@@ -1382,6 +1535,27 @@ fn decode_group_f6(bytes: &[u8], address: u64, prefixes: Prefixes) -> Result<Ins
         mnemonic,
         vec![rm],
         kind,
+        FlowKind::Fallthrough,
+        None,
+    ))
+}
+
+fn decode_group_fe(bytes: &[u8], address: u64, prefixes: Prefixes) -> Result<Instruction> {
+    let modrm_offset = prefixes.opcode_offset + 1;
+    require_len(bytes, modrm_offset + 1)?;
+    let modrm = parse_modrm(bytes[modrm_offset]);
+    let mnemonic = match modrm.reg {
+        0 => "inc",
+        1 => "dec",
+        _ => return Ok(unknown(bytes[prefixes.opcode_offset], address)),
+    };
+    let (rm, consumed) = parse_rm_operand(bytes, modrm_offset, prefixes.rex, 8)?;
+    Ok(base(
+        bytes[..consumed].to_vec(),
+        address,
+        mnemonic,
+        vec![rm],
+        InstructionKind::Arithmetic,
         FlowKind::Fallthrough,
         None,
     ))
