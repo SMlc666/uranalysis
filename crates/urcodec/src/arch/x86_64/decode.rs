@@ -810,12 +810,15 @@ pub fn decode_instruction(bytes: &[u8], address: u64) -> Result<Instruction> {
         0x80 => decode_group1_imm8_width(bytes, address, prefixes, 8, false),
         0x81 => decode_group1_imm32(bytes, address, prefixes),
         0x83 => decode_group1_imm8(bytes, address, prefixes),
+        0x86 => decode_xchg_width(bytes, address, prefixes, 8),
         0x87 => decode_xchg(bytes, address, prefixes),
         0xc4 | 0xc5 => decode_vex(bytes, address, prefixes),
         0xc0 => decode_group2_imm8(bytes, address, prefixes, 8),
         0xc1 => decode_group2_imm8(bytes, address, prefixes, default_operand_width(prefixes)),
         0xd0 => decode_group2_one(bytes, address, prefixes, 8),
         0xd1 => decode_group2_one(bytes, address, prefixes, default_operand_width(prefixes)),
+        0xd2 => decode_group2_cl(bytes, address, prefixes, 8),
+        0xd3 => decode_group2_cl(bytes, address, prefixes, default_operand_width(prefixes)),
         0xc6 => decode_mov_imm8_rm(bytes, address, prefixes),
         0xc7 => decode_mov_imm_rm(bytes, address, prefixes),
         0xf6 => decode_group_f6(bytes, address, prefixes),
@@ -1048,10 +1051,18 @@ fn decode_al_imm8(
 }
 
 fn decode_xchg(bytes: &[u8], address: u64, prefixes: Prefixes) -> Result<Instruction> {
+    decode_xchg_width(bytes, address, prefixes, default_operand_width(prefixes))
+}
+
+fn decode_xchg_width(
+    bytes: &[u8],
+    address: u64,
+    prefixes: Prefixes,
+    width_bits: u16,
+) -> Result<Instruction> {
     let modrm_offset = prefixes.opcode_offset + 1;
     require_len(bytes, modrm_offset + 1)?;
     let modrm = parse_modrm(bytes[modrm_offset]);
-    let width_bits = default_operand_width(prefixes);
     let reg = Operand::Register(reg_for_width(
         extend_reg(modrm.reg, prefixes.rex.r),
         width_bits,
@@ -1271,6 +1282,28 @@ fn decode_group2_one(
         address,
         mnemonic,
         vec![rm, Operand::Immediate(1)],
+        InstructionKind::Logical,
+        FlowKind::Fallthrough,
+        None,
+    ))
+}
+
+fn decode_group2_cl(
+    bytes: &[u8],
+    address: u64,
+    prefixes: Prefixes,
+    width_bits: u16,
+) -> Result<Instruction> {
+    let modrm_offset = prefixes.opcode_offset + 1;
+    require_len(bytes, modrm_offset + 1)?;
+    let modrm = parse_modrm(bytes[modrm_offset]);
+    let (rm, consumed) = parse_rm_operand(bytes, modrm_offset, prefixes.rex, width_bits)?;
+    let mnemonic = group2_mnemonic(modrm.reg);
+    Ok(base(
+        bytes[..consumed].to_vec(),
+        address,
+        mnemonic,
+        vec![rm, Operand::Register(reg8(1, prefixes.rex.present))],
         InstructionKind::Logical,
         FlowKind::Fallthrough,
         None,

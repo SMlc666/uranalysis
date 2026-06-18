@@ -617,6 +617,33 @@ fn decodes_x86_64_shift_groups() {
     assert_eq!(shr_rax_one.text, "shr rax, 0x1");
     assert_eq!(shr_rax_one.size, 3);
     assert_eq!(shr_rax_one.kind, InstructionKind::Logical);
+
+    let rcl_dl_cl = decode(&[0xd2, 0xd2], 0x401000);
+    assert_eq!(rcl_dl_cl.text, "rcl dl, cl");
+    assert_eq!(rcl_dl_cl.size, 2);
+    assert_eq!(rcl_dl_cl.kind, InstructionKind::Logical);
+
+    let rcl_mem8_cl = decode(&[0xd2, 0x12], 0x401000);
+    assert_eq!(rcl_mem8_cl.text, "rcl [rdx], cl");
+    assert_eq!(rcl_mem8_cl.size, 2);
+    assert_eq!(rcl_mem8_cl.kind, InstructionKind::Logical);
+    let mem = memory_operand(&rcl_mem8_cl.operands[0]);
+    assert_eq!(mem.width_bits, Some(8));
+
+    let ror_eax_cl = decode(&[0xd3, 0xc8], 0x401000);
+    assert_eq!(ror_eax_cl.text, "ror eax, cl");
+    assert_eq!(ror_eax_cl.size, 2);
+    assert_eq!(ror_eax_cl.kind, InstructionKind::Logical);
+
+    let rcl_ebx_cl = decode(&[0xd3, 0xd3], 0x401000);
+    assert_eq!(rcl_ebx_cl.text, "rcl ebx, cl");
+    assert_eq!(rcl_ebx_cl.size, 2);
+    assert_eq!(rcl_ebx_cl.kind, InstructionKind::Logical);
+
+    let shr_rax_cl = decode(&[0x48, 0xd3, 0xe8], 0x401000);
+    assert_eq!(shr_rax_cl.text, "shr rax, cl");
+    assert_eq!(shr_rax_cl.size, 3);
+    assert_eq!(shr_rax_cl.kind, InstructionKind::Logical);
 }
 
 #[test]
@@ -727,6 +754,13 @@ fn decodes_x86_64_xchg_forms() {
     assert_eq!(xchg_reg.text, "xchg eax, ecx");
     assert_eq!(xchg_reg.size, 2);
     assert_eq!(xchg_reg.kind, InstructionKind::Move);
+
+    let xchg_byte_mem = decode(&[0x86, 0x03], 0x401000);
+    assert_eq!(xchg_byte_mem.text, "xchg [rbx], al");
+    assert_eq!(xchg_byte_mem.size, 2);
+    assert_eq!(xchg_byte_mem.kind, InstructionKind::Move);
+    let mem = memory_operand(&xchg_byte_mem.operands[0]);
+    assert_eq!(mem.width_bits, Some(8));
 
     let xchg_eax_ecx = decode(&[0x91], 0x401000);
     assert_eq!(xchg_eax_ecx.text, "xchg ecx, eax");
