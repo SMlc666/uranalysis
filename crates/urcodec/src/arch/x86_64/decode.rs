@@ -291,8 +291,11 @@ pub fn decode_instruction(bytes: &[u8], address: u64) -> Result<Instruction> {
             InstructionKind::Compare,
             false,
         ),
-        0x83 => decode_group83(bytes, address, prefixes),
+        0x81 => decode_group1_imm32(bytes, address, prefixes),
+        0x83 => decode_group1_imm8(bytes, address, prefixes),
+        0xc7 => decode_mov_imm32_rm(bytes, address, prefixes),
         0xf7 => decode_group_f7(bytes, address, prefixes),
+        0xff => decode_group_ff(bytes, address, prefixes),
         0x50..=0x57 => Ok(base(
             bytes[..prefixes.opcode_offset + 1].to_vec(),
             address,
@@ -350,7 +353,7 @@ fn decode_reg_rm_binary(
     ))
 }
 
-fn decode_group83(bytes: &[u8], address: u64, prefixes: Prefixes) -> Result<Instruction> {
+fn decode_group1_imm8(bytes: &[u8], address: u64, prefixes: Prefixes) -> Result<Instruction> {
     let modrm_offset = prefixes.opcode_offset + 1;
     require_len(bytes, modrm_offset + 2)?;
     let modrm = parse_modrm(bytes[modrm_offset]);
@@ -372,6 +375,61 @@ fn decode_group83(bytes: &[u8], address: u64, prefixes: Prefixes) -> Result<Inst
         bytes[..consumed].to_vec(),
         address,
         mnemonic,
+        vec![rm, Operand::Immediate(imm)],
+        kind,
+        FlowKind::Fallthrough,
+        None,
+    ))
+}
+
+fn decode_group1_imm32(bytes: &[u8], address: u64, prefixes: Prefixes) -> Result<Instruction> {
+    let modrm_offset = prefixes.opcode_offset + 1;
+    require_len(bytes, modrm_offset + 5)?;
+    let modrm = parse_modrm(bytes[modrm_offset]);
+    let (rm, consumed_without_imm) = parse_rm_operand(bytes, modrm_offset, prefixes.rex, 64)?;
+    let imm = i64::from(read_i32(bytes, consumed_without_imm)?);
+    let consumed = consumed_without_imm + 4;
+    let (mnemonic, kind) = match modrm.reg {
+        0 => ("add", InstructionKind::Arithmetic),
+        1 => ("or", InstructionKind::Logical),
+        2 => ("adc", InstructionKind::Arithmetic),
+        3 => ("sbb", InstructionKind::Arithmetic),
+        4 => ("and", InstructionKind::Logical),
+        5 => ("sub", InstructionKind::Arithmetic),
+        6 => ("xor", InstructionKind::Logical),
+        7 => ("cmp", InstructionKind::Compare),
+        _ => unreachable!("ModRM reg field is three bits"),
+    };
+    Ok(base(
+        bytes[..consumed].to_vec(),
+        address,
+        mnemonic,
+        vec![rm, Operand::Immediate(imm)],
+        kind,
+        FlowKind::Fallthrough,
+        None,
+    ))
+}
+
+fn decode_mov_imm32_rm(bytes: &[u8], address: u64, prefixes: Prefixes) -> Result<Instruction> {
+    let modrm_offset = prefixes.opcode_offset + 1;
+    require_len(bytes, modrm_offset + 5)?;
+    let modrm = parse_modrm(bytes[modrm_offset]);
+    if modrm.reg != 0 {
+        return Ok(unknown(bytes[prefixes.opcode_offset], address));
+    }
+    let (rm, consumed_without_imm) = parse_rm_operand(bytes, modrm_offset, prefixes.rex, 64)?;
+    let imm = i64::from(read_i32(bytes, consumed_without_imm)?);
+    let consumed = consumed_without_imm + 4;
+    let kind = if matches!(rm, Operand::Memory(_)) {
+        InstructionKind::Store
+    } else {
+        InstructionKind::Move
+    };
+    Ok(base(
+        bytes[..consumed].to_vec(),
+        address,
+        "mov",
         vec![rm, Operand::Immediate(imm)],
         kind,
         FlowKind::Fallthrough,
@@ -413,6 +471,30 @@ fn decode_group_f7(bytes: &[u8], address: u64, prefixes: Prefixes) -> Result<Ins
         vec![rm],
         kind,
         FlowKind::Fallthrough,
+        None,
+    ))
+}
+
+fn decode_group_ff(bytes: &[u8], address: u64, prefixes: Prefixes) -> Result<Instruction> {
+    let modrm_offset = prefixes.opcode_offset + 1;
+    require_len(bytes, modrm_offset + 1)?;
+    let modrm = parse_modrm(bytes[modrm_offset]);
+    let (rm, consumed) = parse_rm_operand(bytes, modrm_offset, prefixes.rex, 64)?;
+    let (mnemonic, kind, flow) = match modrm.reg {
+        0 => ("inc", InstructionKind::Arithmetic, FlowKind::Fallthrough),
+        1 => ("dec", InstructionKind::Arithmetic, FlowKind::Fallthrough),
+        2 => ("call", InstructionKind::Call, FlowKind::IndirectCall),
+        4 => ("jmp", InstructionKind::Branch, FlowKind::IndirectBranch),
+        6 => ("push", InstructionKind::Store, FlowKind::Fallthrough),
+        _ => return Ok(unknown(bytes[prefixes.opcode_offset], address)),
+    };
+    Ok(base(
+        bytes[..consumed].to_vec(),
+        address,
+        mnemonic,
+        vec![rm],
+        kind,
+        flow,
         None,
     ))
 }

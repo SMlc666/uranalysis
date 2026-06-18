@@ -226,6 +226,36 @@ fn decodes_x86_64_arithmetic_and_logical_forms() {
 }
 
 #[test]
+fn decodes_x86_64_group_81_imm32_forms() {
+    let add = decode(&[0x48, 0x81, 0xc0, 0x34, 0x12, 0x00, 0x00], 0x401000);
+    assert_eq!(add.text, "add rax, 0x1234");
+    assert_eq!(add.size, 7);
+    assert_eq!(add.kind, InstructionKind::Arithmetic);
+
+    let xor = decode(&[0x48, 0x81, 0xf0, 0x78, 0x56, 0x34, 0x12], 0x401000);
+    assert_eq!(xor.text, "xor rax, 0x12345678");
+    assert_eq!(xor.kind, InstructionKind::Logical);
+
+    let cmp_mem = decode(&[0x48, 0x81, 0x7b, 0x08, 0x34, 0x12, 0x00, 0x00], 0x401000);
+    assert_eq!(cmp_mem.text, "cmp [rbx+0x8], 0x1234");
+    assert_eq!(cmp_mem.size, 8);
+    assert_eq!(cmp_mem.kind, InstructionKind::Compare);
+}
+
+#[test]
+fn decodes_x86_64_c7_mov_imm32_forms() {
+    let mov_reg = decode(&[0x48, 0xc7, 0xc0, 0x34, 0x12, 0x00, 0x00], 0x401000);
+    assert_eq!(mov_reg.text, "mov rax, 0x1234");
+    assert_eq!(mov_reg.size, 7);
+    assert_eq!(mov_reg.kind, InstructionKind::Move);
+
+    let mov_mem = decode(&[0x48, 0xc7, 0x43, 0x08, 0x34, 0x12, 0x00, 0x00], 0x401000);
+    assert_eq!(mov_mem.text, "mov [rbx+0x8], 0x1234");
+    assert_eq!(mov_mem.size, 8);
+    assert_eq!(mov_mem.kind, InstructionKind::Store);
+}
+
+#[test]
 fn decodes_x86_64_group_f7_forms() {
     let test = decode(&[0x48, 0xf7, 0xc0, 0x34, 0x12, 0x00, 0x00], 0x401000);
     assert_eq!(test.text, "test rax, 0x1234");
@@ -250,6 +280,35 @@ fn decodes_x86_64_group_f7_forms() {
     let idiv = decode(&[0x48, 0xf7, 0xf8], 0x401000);
     assert_eq!(idiv.text, "idiv rax");
     assert_eq!(idiv.kind, InstructionKind::Arithmetic);
+}
+
+#[test]
+fn decodes_x86_64_group_ff_forms() {
+    let inc = decode(&[0x48, 0xff, 0xc0], 0x401000);
+    assert_eq!(inc.text, "inc rax");
+    assert_eq!(inc.size, 3);
+    assert_eq!(inc.kind, InstructionKind::Arithmetic);
+    assert_eq!(inc.flow, FlowKind::Fallthrough);
+
+    let dec = decode(&[0x48, 0xff, 0xc8], 0x401000);
+    assert_eq!(dec.text, "dec rax");
+    assert_eq!(dec.kind, InstructionKind::Arithmetic);
+
+    let call = decode(&[0x48, 0xff, 0xd0], 0x401000);
+    assert_eq!(call.text, "call rax");
+    assert_eq!(call.kind, InstructionKind::Call);
+    assert_eq!(call.flow, FlowKind::IndirectCall);
+    assert_eq!(call.branch_target, None);
+
+    let jmp = decode(&[0x48, 0xff, 0xe0], 0x401000);
+    assert_eq!(jmp.text, "jmp rax");
+    assert_eq!(jmp.kind, InstructionKind::Branch);
+    assert_eq!(jmp.flow, FlowKind::IndirectBranch);
+    assert_eq!(jmp.branch_target, None);
+
+    let push = decode(&[0x48, 0xff, 0xf0], 0x401000);
+    assert_eq!(push.text, "push rax");
+    assert_eq!(push.kind, InstructionKind::Store);
 }
 
 #[test]
