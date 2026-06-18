@@ -12,10 +12,10 @@ The first declarative forms cover `ret` and `call rel32`. These forms drive deco
 | Relative call | `call rel32` | Implemented | Implemented | Implemented | Yes | Not measured | Direct relative call only. |
 | Relative jump | `jmp rel8`, `jmp rel32` | Implemented | Implemented | Implemented | Yes | Not measured | Direct relative jump only. |
 | Conditional jump | `jcc rel8`, `jcc rel32` | Implemented | Implemented | Implemented | Yes | Not measured | Common condition mnemonics covered. |
-| Register move | `mov r64, imm64`, `mov r/m64, r64`, `mov r64, r/m64`, `mov r/m64, imm32`, `mov m16, imm16` | Partial | Implemented | Implemented | Yes | Not measured | 64-bit GPR forms plus operand-size-prefixed memory immediate stores only. |
+| Register move | `mov r64, imm64`, `mov r/m64, r64`, `mov r64, r/m64`, `mov r/m64, imm32`, `mov m16, imm16`, `mov r/m8, r8`, `mov r8, r/m8`, `mov r/m8, imm8` | Partial | Implemented | Implemented | Yes | Not measured | Common 64-bit and byte GPR forms plus operand-size-prefixed memory immediate stores only. |
 | Address calculation | `lea r64, m` | Partial | Implemented | Implemented | Yes | Not measured | Common ModRM/SIB memory only. |
 | Arithmetic | `add`, `adc`, `sbb`, `sub`, `inc`, `dec`, `neg`, `mul`, `imul`, `div`, `idiv` | Partial | Implemented | Implemented | Yes | Not measured | Common 64-bit GPR, imm8/imm32 group, `f7`, and `ff /0`-`/1` forms only. |
-| Compare and test | `cmp`, `test` | Partial | Implemented | Implemented | Yes | Not measured | Common 64-bit GPR, imm8/imm32 group, and `f7 /0` forms only. |
+| Compare and test | `cmp`, `test`, `setcc` | Partial | Implemented | Implemented | Yes | Not measured | Common 64-bit GPR, byte `test`, imm8/imm32 group, `f7 /0`, and `setcc r/m8` forms only. |
 | Logical | `and`, `or`, `xor`, `not` | Partial | Implemented | Implemented | Yes | Not measured | Common 64-bit GPR, imm8/imm32 group, and `f7 /2` forms only. |
 | Indirect control flow | `call r/m64`, `jmp r/m64` | Partial | Implemented | Implemented | Yes | Not measured | Near indirect `ff /2` and `ff /4` forms only. |
 | Stack | `push`, `pop` | Partial | Implemented | Implemented | Yes | Not measured | 64-bit GPR forms and `ff /6` only. |

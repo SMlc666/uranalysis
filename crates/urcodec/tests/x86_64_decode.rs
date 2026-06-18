@@ -165,6 +165,28 @@ fn decodes_x86_64_mov_register_forms() {
 }
 
 #[test]
+fn decodes_x86_64_byte_mov_forms() {
+    let mov_store = decode(&[0x88, 0x84, 0x24, 0x97, 0x00, 0x00, 0x00], 0x401000);
+    assert_eq!(mov_store.text, "mov [rsp+0x97], al");
+    assert_eq!(mov_store.size, 7);
+    assert_eq!(mov_store.kind, InstructionKind::Store);
+    let mem = memory_operand(&mov_store.operands[0]);
+    assert_eq!(mem.width_bits, Some(8));
+
+    let mov_load = decode(&[0x8a, 0x44, 0x24, 0x10], 0x401000);
+    assert_eq!(mov_load.text, "mov al, [rsp+0x10]");
+    assert_eq!(mov_load.size, 4);
+    assert_eq!(mov_load.kind, InstructionKind::Load);
+
+    let mov_imm = decode(&[0xc6, 0x84, 0x24, 0x92, 0x00, 0x00, 0x00, 0x01], 0x401000);
+    assert_eq!(mov_imm.text, "mov [rsp+0x92], 0x1");
+    assert_eq!(mov_imm.size, 8);
+    assert_eq!(mov_imm.kind, InstructionKind::Store);
+    let mem = memory_operand(&mov_imm.operands[0]);
+    assert_eq!(mem.width_bits, Some(8));
+}
+
+#[test]
 fn decodes_x86_64_memory_moves_and_lea() {
     let load = decode(&[0x48, 0x8b, 0x43, 0x08], 0x401000);
     assert_eq!(load.text, "mov rax, [rbx+0x8]");
@@ -230,6 +252,12 @@ fn decodes_x86_64_arithmetic_and_logical_forms() {
     let test_reg = decode(&[0x48, 0x85, 0xc0], 0x401000);
     assert_eq!(test_reg.text, "test rax, rax");
     assert_eq!(test_reg.kind, InstructionKind::Compare);
+
+    let test_byte = decode(&[0x84, 0x24, 0x24], 0x401000);
+    assert_eq!(test_byte.text, "test [rsp], ah");
+    assert_eq!(test_byte.kind, InstructionKind::Compare);
+    let mem = memory_operand(&test_byte.operands[0]);
+    assert_eq!(mem.width_bits, Some(8));
 
     let xor_reg = decode(&[0x48, 0x31, 0xc0], 0x401000);
     assert_eq!(xor_reg.text, "xor rax, rax");
@@ -403,4 +431,18 @@ fn decodes_x86_64_sse_move_and_xor_forms() {
     assert_eq!(xorps.text, "xorps xmm0, xmm0");
     assert_eq!(xorps.size, 3);
     assert_eq!(xorps.kind, InstructionKind::Logical);
+}
+
+#[test]
+fn decodes_x86_64_setcc_forms() {
+    let sete = decode(&[0x0f, 0x94, 0xc2], 0x401000);
+    assert_eq!(sete.text, "sete dl");
+    assert_eq!(sete.size, 3);
+    assert_eq!(sete.kind, InstructionKind::Move);
+    assert_eq!(sete.flow, FlowKind::Fallthrough);
+
+    let setne_mem = decode(&[0x0f, 0x95, 0x44, 0x24, 0x08], 0x401000);
+    assert_eq!(setne_mem.text, "setne [rsp+0x8]");
+    assert_eq!(setne_mem.size, 5);
+    assert_eq!(setne_mem.kind, InstructionKind::Store);
 }

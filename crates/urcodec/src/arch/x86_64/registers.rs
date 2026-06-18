@@ -52,6 +52,30 @@ pub fn reg32(index: u8) -> Register {
     }
 }
 
+pub fn reg16(index: u8) -> Register {
+    let name = match index & 0x0f {
+        0 => "ax",
+        1 => "cx",
+        2 => "dx",
+        3 => "bx",
+        4 => "sp",
+        5 => "bp",
+        6 => "si",
+        7 => "di",
+        8 => "r8w",
+        9 => "r9w",
+        10 => "r10w",
+        11 => "r11w",
+        12 => "r12w",
+        13 => "r13w",
+        14 => "r14w",
+        _ => "r15w",
+    };
+    Register {
+        name: name.to_string(),
+    }
+}
+
 pub fn reg64(index: u8) -> Register {
     let name = if index == 16 {
         "rip"

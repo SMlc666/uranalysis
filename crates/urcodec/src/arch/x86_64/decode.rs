@@ -1,7 +1,7 @@
 use crate::{
     arch::x86_64::{
         format::render_instruction,
-        registers::{reg32, reg64, reg8, xmm},
+        registers::{reg16, reg32, reg64, reg8, xmm},
     },
     error::{DecodeError, Result},
     model::{DecodeStatus, FlowKind, Instruction, InstructionKind, MemoryOperand, Operand},
@@ -131,6 +131,8 @@ pub fn decode_instruction(bytes: &[u8], address: u64) -> Result<Instruction> {
                 decode_sse_move(bytes, address, prefixes, second)
             } else if second == 0x57 {
                 decode_sse_binary(bytes, address, prefixes, "xorps", InstructionKind::Logical)
+            } else if (0x90..=0x9f).contains(&second) {
+                decode_setcc(bytes, address, prefixes, second)
             } else if second == 0xb6 || second == 0xbe {
                 decode_mov_extend(bytes, address, prefixes, second)
             } else {
@@ -201,6 +203,7 @@ pub fn decode_instruction(bytes: &[u8], address: u64) -> Result<Instruction> {
                 None,
             ))
         }
+        0x88 | 0x8a => decode_byte_mov(bytes, address, prefixes, opcode),
         0x01 => decode_reg_rm_binary(
             bytes,
             address,
@@ -305,8 +308,18 @@ pub fn decode_instruction(bytes: &[u8], address: u64) -> Result<Instruction> {
             InstructionKind::Compare,
             false,
         ),
+        0x84 => decode_reg_rm_binary_width(
+            bytes,
+            address,
+            prefixes,
+            "test",
+            InstructionKind::Compare,
+            false,
+            8,
+        ),
         0x81 => decode_group1_imm32(bytes, address, prefixes),
         0x83 => decode_group1_imm8(bytes, address, prefixes),
+        0xc6 => decode_mov_imm8_rm(bytes, address, prefixes),
         0xc7 => decode_mov_imm_rm(bytes, address, prefixes),
         0xf7 => decode_group_f7(bytes, address, prefixes),
         0xff => decode_group_ff(bytes, address, prefixes),
@@ -367,6 +380,76 @@ fn decode_reg_rm_binary(
     ))
 }
 
+fn decode_reg_rm_binary_width(
+    bytes: &[u8],
+    address: u64,
+    prefixes: Prefixes,
+    mnemonic: &str,
+    kind: InstructionKind,
+    reg_is_dst: bool,
+    width_bits: u16,
+) -> Result<Instruction> {
+    let modrm_offset = prefixes.opcode_offset + 1;
+    require_len(bytes, modrm_offset + 1)?;
+    let modrm = parse_modrm(bytes[modrm_offset]);
+    let reg = Operand::Register(reg_for_width(
+        extend_reg(modrm.reg, prefixes.rex.r),
+        width_bits,
+        prefixes.rex.present,
+    ));
+    let (rm, consumed) = parse_rm_operand(bytes, modrm_offset, prefixes.rex, width_bits)?;
+    let operands = if reg_is_dst {
+        vec![reg, rm]
+    } else {
+        vec![rm, reg]
+    };
+    Ok(base(
+        bytes[..consumed].to_vec(),
+        address,
+        mnemonic,
+        operands,
+        kind,
+        FlowKind::Fallthrough,
+        None,
+    ))
+}
+
+fn decode_byte_mov(
+    bytes: &[u8],
+    address: u64,
+    prefixes: Prefixes,
+    opcode: u8,
+) -> Result<Instruction> {
+    let modrm_offset = prefixes.opcode_offset + 1;
+    require_len(bytes, modrm_offset + 1)?;
+    let modrm = parse_modrm(bytes[modrm_offset]);
+    let reg = Operand::Register(reg8(
+        extend_reg(modrm.reg, prefixes.rex.r),
+        prefixes.rex.present,
+    ));
+    let (rm, consumed) = parse_rm_operand(bytes, modrm_offset, prefixes.rex, 8)?;
+    let reg_is_dst = opcode == 0x8a;
+    let operands = if reg_is_dst {
+        vec![reg, rm.clone()]
+    } else {
+        vec![rm.clone(), reg]
+    };
+    let kind = match (reg_is_dst, matches!(rm, Operand::Memory(_))) {
+        (true, true) => InstructionKind::Load,
+        (false, true) => InstructionKind::Store,
+        _ => InstructionKind::Move,
+    };
+    Ok(base(
+        bytes[..consumed].to_vec(),
+        address,
+        "mov",
+        operands,
+        kind,
+        FlowKind::Fallthrough,
+        None,
+    ))
+}
+
 fn decode_group1_imm8(bytes: &[u8], address: u64, prefixes: Prefixes) -> Result<Instruction> {
     let modrm_offset = prefixes.opcode_offset + 1;
     require_len(bytes, modrm_offset + 2)?;
@@ -418,6 +501,32 @@ fn decode_group1_imm32(bytes: &[u8], address: u64, prefixes: Prefixes) -> Result
         bytes[..consumed].to_vec(),
         address,
         mnemonic,
+        vec![rm, Operand::Immediate(imm)],
+        kind,
+        FlowKind::Fallthrough,
+        None,
+    ))
+}
+
+fn decode_mov_imm8_rm(bytes: &[u8], address: u64, prefixes: Prefixes) -> Result<Instruction> {
+    let modrm_offset = prefixes.opcode_offset + 1;
+    require_len(bytes, modrm_offset + 1)?;
+    let modrm = parse_modrm(bytes[modrm_offset]);
+    if modrm.reg != 0 {
+        return Ok(unknown(bytes[prefixes.opcode_offset], address));
+    }
+    let (rm, consumed_without_imm) = parse_rm_operand(bytes, modrm_offset, prefixes.rex, 8)?;
+    let imm = i64::from(read_u8(bytes, consumed_without_imm)?);
+    let consumed = consumed_without_imm + 1;
+    let kind = if matches!(rm, Operand::Memory(_)) {
+        InstructionKind::Store
+    } else {
+        InstructionKind::Move
+    };
+    Ok(base(
+        bytes[..consumed].to_vec(),
+        address,
+        "mov",
         vec![rm, Operand::Immediate(imm)],
         kind,
         FlowKind::Fallthrough,
@@ -644,6 +753,26 @@ fn decode_sse_binary(
     ))
 }
 
+fn decode_setcc(bytes: &[u8], address: u64, prefixes: Prefixes, opcode: u8) -> Result<Instruction> {
+    let modrm_offset = prefixes.opcode_offset + 2;
+    require_len(bytes, modrm_offset + 1)?;
+    let (rm, consumed) = parse_rm_operand(bytes, modrm_offset, prefixes.rex, 8)?;
+    let kind = if matches!(rm, Operand::Memory(_)) {
+        InstructionKind::Store
+    } else {
+        InstructionKind::Move
+    };
+    Ok(base(
+        bytes[..consumed].to_vec(),
+        address,
+        mnemonic_for_setcc(opcode),
+        vec![rm],
+        kind,
+        FlowKind::Fallthrough,
+        None,
+    ))
+}
+
 fn parse_prefixes(bytes: &[u8]) -> Result<Prefixes> {
     require_len(bytes, 1)?;
     let mut offset = 0;
@@ -712,6 +841,11 @@ fn read_i8(bytes: &[u8], offset: usize) -> Result<i8> {
     Ok(bytes[offset] as i8)
 }
 
+fn read_u8(bytes: &[u8], offset: usize) -> Result<u8> {
+    require_len(bytes, offset + 1)?;
+    Ok(bytes[offset])
+}
+
 fn read_i16(bytes: &[u8], offset: usize) -> Result<i16> {
     require_len(bytes, offset + 2)?;
     Ok(i16::from_le_bytes([bytes[offset], bytes[offset + 1]]))
@@ -741,7 +875,7 @@ fn parse_rm_operand(
     let modrm = parse_modrm(bytes[modrm_offset]);
     let mut consumed = modrm_offset + 1;
     if modrm.mode == 0b11 {
-        let reg = reg64(extend_reg(modrm.rm, rex.b));
+        let reg = reg_for_width(extend_reg(modrm.rm, rex.b), width_bits, rex.present);
         return Ok((Operand::Register(reg), consumed));
     }
 
@@ -820,6 +954,15 @@ fn absolute_target(target: u64) -> Vec<Operand> {
     vec![Operand::AbsoluteAddress(target)]
 }
 
+fn reg_for_width(index: u8, width_bits: u16, rex_present: bool) -> crate::model::Register {
+    match width_bits {
+        8 => reg8(index, rex_present),
+        16 => reg16(index),
+        32 => reg32(index),
+        _ => reg64(index),
+    }
+}
+
 fn mnemonic_for_jcc(opcode: u8) -> &'static str {
     match opcode & 0x0f {
         0x0 => "jo",
@@ -838,6 +981,27 @@ fn mnemonic_for_jcc(opcode: u8) -> &'static str {
         0xd => "jge",
         0xe => "jle",
         _ => "jg",
+    }
+}
+
+fn mnemonic_for_setcc(opcode: u8) -> &'static str {
+    match opcode & 0x0f {
+        0x0 => "seto",
+        0x1 => "setno",
+        0x2 => "setb",
+        0x3 => "setae",
+        0x4 => "sete",
+        0x5 => "setne",
+        0x6 => "setbe",
+        0x7 => "seta",
+        0x8 => "sets",
+        0x9 => "setns",
+        0xa => "setp",
+        0xb => "setnp",
+        0xc => "setl",
+        0xd => "setge",
+        0xe => "setle",
+        _ => "setg",
     }
 }
 
