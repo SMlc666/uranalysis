@@ -4,7 +4,9 @@ use crate::{
         registers::{mm, reg16, reg32, reg64, reg8, xmm, ymm},
     },
     error::{DecodeError, Result},
-    model::{DecodeStatus, FlowKind, Instruction, InstructionKind, MemoryOperand, Operand},
+    model::{
+        Architecture, DecodeStatus, FlowKind, Instruction, InstructionKind, MemoryOperand, Operand,
+    },
 };
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -3267,6 +3269,7 @@ fn base(
     branch_target: Option<u64>,
 ) -> Instruction {
     Instruction {
+        architecture: Architecture::X86_64,
         address,
         size: bytes.len() as u8,
         bytes,
@@ -3277,6 +3280,7 @@ fn base(
         flow,
         branch_target,
         status: DecodeStatus::Complete,
+        form: Some(format!("x86_64.{}", mnemonic)),
     }
 }
 

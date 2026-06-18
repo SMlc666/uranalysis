@@ -705,6 +705,7 @@ fn parse_move_wide(text: &str, address: u64) -> Option<Instruction> {
         return None;
     }
     let bytes = encode_move_wide(&Instruction {
+        architecture: Architecture::Aarch64,
         address,
         size: 4,
         bytes: Vec::new(),
@@ -715,6 +716,7 @@ fn parse_move_wide(text: &str, address: u64) -> Option<Instruction> {
         flow: FlowKind::Fallthrough,
         branch_target: None,
         status: DecodeStatus::Complete,
+        form: Some(format!("aarch64.{}", mnemonic.replace('.', "_"))),
     })?;
     Some(base(
         u32::from_le_bytes(bytes.try_into().ok()?),
@@ -788,6 +790,7 @@ fn parse_logical_imm(text: &str, address: u64) -> Option<Instruction> {
         )
     };
     let bytes = encode_logical_imm(&Instruction {
+        architecture: Architecture::Aarch64,
         address,
         size: 4,
         bytes: Vec::new(),
@@ -798,6 +801,7 @@ fn parse_logical_imm(text: &str, address: u64) -> Option<Instruction> {
         flow: FlowKind::Fallthrough,
         branch_target: None,
         status: DecodeStatus::Complete,
+        form: Some(format!("aarch64.{}", mnemonic.replace('.', "_"))),
     })?;
     Some(base(
         u32::from_le_bytes(bytes.try_into().ok()?),
@@ -865,6 +869,7 @@ fn parse_bitfield_alias(text: &str, address: u64) -> Option<Instruction> {
     }
     let operands = parse_two_registers_and_immediate(text, mnemonic)?;
     let bytes = encode_bitfield_alias(&Instruction {
+        architecture: Architecture::Aarch64,
         address,
         size: 4,
         bytes: Vec::new(),
@@ -875,6 +880,7 @@ fn parse_bitfield_alias(text: &str, address: u64) -> Option<Instruction> {
         flow: FlowKind::Fallthrough,
         branch_target: None,
         status: DecodeStatus::Complete,
+        form: Some(format!("aarch64.{}", mnemonic.replace('.', "_"))),
     })?;
     Some(base(
         u32::from_le_bytes(bytes.try_into().ok()?),
@@ -1046,6 +1052,7 @@ fn parse_b_or_bl(text: &str, address: u64, mnemonic: &str, link: bool) -> Option
     let target = parse_absolute_target(text, mnemonic)?;
     let word = encode_b_or_bl(
         &Instruction {
+            architecture: Architecture::Aarch64,
             address,
             size: 4,
             bytes: Vec::new(),
@@ -1064,6 +1071,7 @@ fn parse_b_or_bl(text: &str, address: u64, mnemonic: &str, link: bool) -> Option
             },
             branch_target: Some(target),
             status: DecodeStatus::Complete,
+            form: Some(format!("aarch64.{}", mnemonic.replace('.', "_"))),
         },
         mnemonic,
         link,
@@ -1277,6 +1285,7 @@ fn parse_adr_family(text: &str, address: u64, mnemonic: &str, page: bool) -> Opt
     let (reg, target) = parse_register_and_target(text, mnemonic)?;
     let bytes = encode_adr_family(
         &Instruction {
+            architecture: Architecture::Aarch64,
             address,
             size: 4,
             bytes: Vec::new(),
@@ -1290,6 +1299,7 @@ fn parse_adr_family(text: &str, address: u64, mnemonic: &str, page: bool) -> Opt
             flow: FlowKind::Fallthrough,
             branch_target: None,
             status: DecodeStatus::Complete,
+            form: Some(format!("aarch64.{}", mnemonic.replace('.', "_"))),
         },
         mnemonic,
         page,
@@ -1398,6 +1408,7 @@ fn parse_add_sub_imm_instruction(text: &str, address: u64, mnemonic: &str) -> Op
     };
     let bytes = encode_add_sub_imm_instruction(
         &Instruction {
+            architecture: Architecture::Aarch64,
             address,
             size: 4,
             bytes: Vec::new(),
@@ -1408,6 +1419,7 @@ fn parse_add_sub_imm_instruction(text: &str, address: u64, mnemonic: &str) -> Op
             flow: FlowKind::Fallthrough,
             branch_target: None,
             status: DecodeStatus::Complete,
+            form: Some(format!("aarch64.{}", mnemonic.replace('.', "_"))),
         },
         mnemonic,
     )?;
@@ -1515,6 +1527,7 @@ fn base(
     branch_target: Option<u64>,
 ) -> Instruction {
     Instruction {
+        architecture: Architecture::Aarch64,
         address,
         size: 4,
         bytes: word.to_le_bytes().to_vec(),
@@ -1525,6 +1538,7 @@ fn base(
         flow,
         branch_target,
         status: DecodeStatus::Complete,
+        form: Some(format!("aarch64.{}", mnemonic.replace('.', "_"))),
     }
 }
 

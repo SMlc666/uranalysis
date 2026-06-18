@@ -4,7 +4,7 @@ use crate::{
         registers::{x, x_or_zr},
     },
     bits::{bits, sign_extend},
-    model::{DecodeStatus, FlowKind, Instruction, InstructionKind, Operand},
+    model::{Architecture, DecodeStatus, FlowKind, Instruction, InstructionKind, Operand},
 };
 
 struct Pattern {
@@ -175,6 +175,7 @@ fn base(
     branch_target: Option<u64>,
 ) -> Instruction {
     Instruction {
+        architecture: Architecture::Aarch64,
         address,
         size: 4,
         bytes: word.to_le_bytes().to_vec(),
@@ -185,6 +186,7 @@ fn base(
         flow,
         branch_target,
         status: DecodeStatus::Complete,
+        form: Some(format!("aarch64.{}", mnemonic.replace('.', "_"))),
     }
 }
 
@@ -1061,6 +1063,7 @@ fn decode_brk(word: u32, address: u64) -> Instruction {
 pub fn unknown(word: u32, address: u64) -> Instruction {
     let operands = vec![Operand::AbsoluteAddress(u64::from(word))];
     Instruction {
+        architecture: Architecture::Aarch64,
         address,
         size: 4,
         bytes: word.to_le_bytes().to_vec(),
@@ -1071,5 +1074,6 @@ pub fn unknown(word: u32, address: u64) -> Instruction {
         flow: FlowKind::Fallthrough,
         branch_target: None,
         status: DecodeStatus::Unknown,
+        form: Some("aarch64.unknown".to_string()),
     }
 }
