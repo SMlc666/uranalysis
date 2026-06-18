@@ -1171,6 +1171,11 @@ fn decodes_x86_64_mmx_forms() {
     assert_eq!(cvtps2pi.size, 3);
     assert_eq!(cvtps2pi.kind, InstructionKind::Arithmetic);
 
+    let cvtpi2ps = decode(&[0x0f, 0x2a, 0xc1], 0x401000);
+    assert_eq!(cvtpi2ps.text, "cvtpi2ps xmm0, mm1");
+    assert_eq!(cvtpi2ps.size, 3);
+    assert_eq!(cvtpi2ps.kind, InstructionKind::Arithmetic);
+
     let movd = decode(&[0x0f, 0x7e, 0xc0], 0x401000);
     assert_eq!(movd.text, "movd eax, mm0");
     assert_eq!(movd.size, 3);

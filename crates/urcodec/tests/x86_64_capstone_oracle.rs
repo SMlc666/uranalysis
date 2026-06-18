@@ -244,6 +244,14 @@ const CASES: &[OracleCase] = &[
         operands: &[OperandShape::Reg, OperandShape::Reg],
     },
     OracleCase {
+        name: "cvtpi2ps",
+        bytes: &[0x0f, 0x2a, 0xc1],
+        urcodec_text: "cvtpi2ps xmm0, mm1",
+        mnemonic: "cvtpi2ps",
+        size: 3,
+        operands: &[OperandShape::Reg, OperandShape::Reg],
+    },
+    OracleCase {
         name: "punpcklbw_xmm",
         bytes: &[0x66, 0x0f, 0x60, 0xc0],
         urcodec_text: "punpcklbw xmm0, xmm0",

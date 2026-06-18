@@ -400,6 +400,8 @@ pub fn decode_instruction(bytes: &[u8], address: u64) -> Result<Instruction> {
                 decode_bit_test_imm(bytes, address, prefixes)
             } else if matches!(second, 0x10 | 0x11 | 0x28 | 0x29) {
                 decode_sse_move(bytes, address, prefixes, second)
+            } else if second == 0x2a {
+                decode_cvtpi2ps(bytes, address, prefixes)
             } else if second == 0x2d {
                 decode_cvtps2pi(bytes, address, prefixes)
             } else if matches!(second, 0x2e | 0x2f) {
@@ -2585,6 +2587,23 @@ fn decode_cvtps2pi(bytes: &[u8], address: u64, prefixes: Prefixes) -> Result<Ins
         bytes[..consumed].to_vec(),
         address,
         "cvtps2pi",
+        vec![dst, src],
+        InstructionKind::Arithmetic,
+        FlowKind::Fallthrough,
+        None,
+    ))
+}
+
+fn decode_cvtpi2ps(bytes: &[u8], address: u64, prefixes: Prefixes) -> Result<Instruction> {
+    let modrm_offset = prefixes.opcode_offset + 2;
+    require_len(bytes, modrm_offset + 1)?;
+    let modrm = parse_modrm(bytes[modrm_offset]);
+    let dst = Operand::Register(xmm(extend_reg(modrm.reg, prefixes.rex.r)));
+    let (src, consumed) = parse_mmx_rm_operand(bytes, modrm_offset, prefixes.rex)?;
+    Ok(base(
+        bytes[..consumed].to_vec(),
+        address,
+        "cvtpi2ps",
         vec![dst, src],
         InstructionKind::Arithmetic,
         FlowKind::Fallthrough,
