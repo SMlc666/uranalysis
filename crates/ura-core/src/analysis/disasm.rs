@@ -32,7 +32,7 @@ fn disassemble_aarch64(
     if reached_instruction_limit(&out, max_instructions) {
         return Ok(out);
     }
-    for (start, end) in image.executable_ranges() {
+    for (start, end) in executable_ranges_for_analysis(image, max_instructions) {
         let size = (end - start) as usize;
         let Some(bytes) = image.bytes_at(start, size) else {
             continue;
@@ -65,7 +65,7 @@ fn disassemble_x86_64(
     if reached_instruction_limit(&out, max_instructions) {
         return Ok(out);
     }
-    for (start, end) in image.executable_ranges() {
+    for (start, end) in executable_ranges_for_analysis(image, max_instructions) {
         let mut addr = start;
         while addr < end {
             let remaining = (end - addr).min(15) as usize;
@@ -95,6 +95,28 @@ fn disassemble_x86_64(
         }
     }
     Ok(out)
+}
+
+fn executable_ranges_for_analysis(
+    image: &AnalysisImage<'_>,
+    max_instructions: Option<usize>,
+) -> Vec<(u64, u64)> {
+    let ranges = image.executable_ranges();
+    if max_instructions.is_none() {
+        return ranges;
+    }
+    let mut prioritized = Vec::new();
+    for (start, end) in &ranges {
+        if image.entry >= *start && image.entry < *end {
+            prioritized.push((image.entry, *end));
+        }
+    }
+    prioritized.extend(
+        ranges
+            .into_iter()
+            .filter(|(start, end)| !(image.entry >= *start && image.entry < *end)),
+    );
+    prioritized
 }
 
 fn reached_instruction_limit(out: &[Instruction], max_instructions: Option<usize>) -> bool {
