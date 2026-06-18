@@ -25,6 +25,10 @@ pub fn minimal_elf64_aarch64_executable() -> Vec<u8> {
     bytes
 }
 
+pub fn load_minimal_aarch64_image() -> urloader::LoadedImage {
+    urloader::load(&minimal_elf64_aarch64_executable()).expect("fixture should load")
+}
+
 #[allow(dead_code)]
 pub fn minimal_pe32_plus_x86_64() -> Vec<u8> {
     let mut bytes = vec![0u8; 0x800];
