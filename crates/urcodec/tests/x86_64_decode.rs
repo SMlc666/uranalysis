@@ -967,6 +967,51 @@ fn decodes_x86_64_vex_avx_forms() {
     assert_eq!(vsubsd.text, "vsubsd xmm0, xmm0, xmm3");
     assert_eq!(vsubsd.size, 4);
     assert_eq!(vsubsd.kind, InstructionKind::Arithmetic);
+
+    let vmovsd = decode(&[0xc5, 0xfb, 0x10, 0x2d, 0xb4, 0x92, 0x14, 0x00], 0x401000);
+    assert_eq!(vmovsd.text, "vmovsd xmm5, [rip+0x1492b4]");
+    assert_eq!(vmovsd.size, 8);
+    assert_eq!(vmovsd.kind, InstructionKind::Load);
+
+    let vmovapd = decode(&[0xc5, 0xf9, 0x28, 0xc2], 0x401000);
+    assert_eq!(vmovapd.text, "vmovapd xmm0, xmm2");
+    assert_eq!(vmovapd.size, 4);
+    assert_eq!(vmovapd.kind, InstructionKind::Move);
+
+    let vaddsd = decode(&[0xc5, 0xfb, 0x58, 0xc1], 0x401000);
+    assert_eq!(vaddsd.text, "vaddsd xmm0, xmm0, xmm1");
+    assert_eq!(vaddsd.size, 4);
+    assert_eq!(vaddsd.kind, InstructionKind::Arithmetic);
+
+    let vdivsd = decode(&[0xc5, 0xfb, 0x5e, 0xca], 0x401000);
+    assert_eq!(vdivsd.text, "vdivsd xmm1, xmm0, xmm2");
+    assert_eq!(vdivsd.size, 4);
+    assert_eq!(vdivsd.kind, InstructionKind::Arithmetic);
+
+    let vpxor = decode(&[0xc5, 0xd1, 0xef, 0xed], 0x401000);
+    assert_eq!(vpxor.text, "vpxor xmm5, xmm5, xmm5");
+    assert_eq!(vpxor.size, 4);
+    assert_eq!(vpxor.kind, InstructionKind::Logical);
+
+    let vpsubd = decode(&[0xc5, 0xd1, 0xfa, 0x2d, 0x6e, 0x92, 0x14, 0x00], 0x401000);
+    assert_eq!(vpsubd.text, "vpsubd xmm5, xmm5, [rip+0x14926e]");
+    assert_eq!(vpsubd.size, 8);
+    assert_eq!(vpsubd.kind, InstructionKind::Arithmetic);
+
+    let vpsubq = decode(&[0xc5, 0xe1, 0xfb, 0x1d, 0x1b, 0x93, 0x14, 0x00], 0x401000);
+    assert_eq!(vpsubq.text, "vpsubq xmm3, xmm3, [rip+0x14931b]");
+    assert_eq!(vpsubq.size, 8);
+    assert_eq!(vpsubq.kind, InstructionKind::Arithmetic);
+
+    let vpsrlq = decode(&[0xc5, 0xe1, 0x73, 0xd2, 0x34], 0x401000);
+    assert_eq!(vpsrlq.text, "vpsrlq xmm3, xmm2, 0x34");
+    assert_eq!(vpsrlq.size, 5);
+    assert_eq!(vpsrlq.kind, InstructionKind::Logical);
+
+    let vpsllq = decode(&[0xc5, 0xe1, 0x73, 0xf3, 0x20], 0x401000);
+    assert_eq!(vpsllq.text, "vpsllq xmm3, xmm3, 0x20");
+    assert_eq!(vpsllq.size, 5);
+    assert_eq!(vpsllq.kind, InstructionKind::Logical);
 }
 
 #[test]

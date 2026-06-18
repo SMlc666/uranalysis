@@ -1314,9 +1314,15 @@ fn decode_vex(bytes: &[u8], address: u64, prefixes: Prefixes) -> Result<Instruct
             FlowKind::Fallthrough,
             None,
         )),
+        0x10 if vex.pp == 3 => decode_vex_reg_rm_move(bytes, address, vex, "vmovsd"),
+        0x28 if vex.pp == 1 => decode_vex_reg_rm_move(bytes, address, vex, "vmovapd"),
         0x6f | 0x7f if matches!(vex.pp, 1 | 2) => decode_vex_move(bytes, address, vex, opcode),
+        0x73 if vex.pp == 1 => decode_vex_packed_shift_imm(bytes, address, vex),
         0xe7 if vex.pp == 1 => decode_vex_movntdq(bytes, address, vex),
         0xd7 if vex.pp == 1 => decode_vex_pmovmskb(bytes, address, vex),
+        0x58 if vex.pp == 3 => {
+            decode_vex_ternary_binary(bytes, address, vex, "vaddsd", InstructionKind::Arithmetic)
+        }
         0x59 if matches!(vex.pp, 0 | 3) => decode_vex_ternary_binary(
             bytes,
             address,
@@ -1327,14 +1333,53 @@ fn decode_vex(bytes: &[u8], address: u64, prefixes: Prefixes) -> Result<Instruct
         0x5c if vex.pp == 3 => {
             decode_vex_ternary_binary(bytes, address, vex, "vsubsd", InstructionKind::Arithmetic)
         }
+        0x5e if vex.pp == 3 => {
+            decode_vex_ternary_binary(bytes, address, vex, "vdivsd", InstructionKind::Arithmetic)
+        }
         0xdb if vex.pp == 1 => {
             decode_vex_ternary_binary(bytes, address, vex, "vpand", InstructionKind::Logical)
         }
         0xeb if vex.pp == 1 => {
             decode_vex_ternary_binary(bytes, address, vex, "vpor", InstructionKind::Logical)
         }
+        0xef if vex.pp == 1 => {
+            decode_vex_ternary_binary(bytes, address, vex, "vpxor", InstructionKind::Logical)
+        }
+        0xfa if vex.pp == 1 => {
+            decode_vex_ternary_binary(bytes, address, vex, "vpsubd", InstructionKind::Arithmetic)
+        }
+        0xfb if vex.pp == 1 => {
+            decode_vex_ternary_binary(bytes, address, vex, "vpsubq", InstructionKind::Arithmetic)
+        }
         _ => Ok(unknown(bytes[prefixes.opcode_offset], address)),
     }
+}
+
+fn decode_vex_reg_rm_move(
+    bytes: &[u8],
+    address: u64,
+    vex: Vex,
+    mnemonic: &str,
+) -> Result<Instruction> {
+    let modrm_offset = vex.opcode_offset + 1;
+    require_len(bytes, modrm_offset + 1)?;
+    let modrm = parse_modrm(bytes[modrm_offset]);
+    let dst = Operand::Register(vector_reg(extend_reg(modrm.reg, vex.rex.r), vex));
+    let (src, consumed) = parse_vector_rm_operand(bytes, modrm_offset, vex)?;
+    let kind = if matches!(src, Operand::Memory(_)) {
+        InstructionKind::Load
+    } else {
+        InstructionKind::Move
+    };
+    Ok(base(
+        bytes[..consumed].to_vec(),
+        address,
+        mnemonic,
+        vec![dst, src],
+        kind,
+        FlowKind::Fallthrough,
+        None,
+    ))
 }
 
 fn decode_vex_move(bytes: &[u8], address: u64, vex: Vex, opcode: u8) -> Result<Instruction> {
@@ -1395,6 +1440,30 @@ fn decode_vex_pmovmskb(bytes: &[u8], address: u64, vex: Vex) -> Result<Instructi
         "vpmovmskb",
         vec![dst, src],
         InstructionKind::Move,
+        FlowKind::Fallthrough,
+        None,
+    ))
+}
+
+fn decode_vex_packed_shift_imm(bytes: &[u8], address: u64, vex: Vex) -> Result<Instruction> {
+    let modrm_offset = vex.opcode_offset + 1;
+    require_len(bytes, modrm_offset + 1)?;
+    let modrm = parse_modrm(bytes[modrm_offset]);
+    let mnemonic = match modrm.reg {
+        0x2 => "vpsrlq",
+        0x6 => "vpsllq",
+        _ => return Ok(unknown(bytes[0], address)),
+    };
+    let dst = Operand::Register(vector_reg(vex.vvvv, vex));
+    let (src, consumed_without_imm) = parse_vector_rm_operand(bytes, modrm_offset, vex)?;
+    let size = consumed_without_imm + 1;
+    let imm = i64::from(read_u8(bytes, consumed_without_imm)?);
+    Ok(base(
+        bytes[..size].to_vec(),
+        address,
+        mnemonic,
+        vec![dst, src, Operand::Immediate(imm)],
+        InstructionKind::Logical,
         FlowKind::Fallthrough,
         None,
     ))
