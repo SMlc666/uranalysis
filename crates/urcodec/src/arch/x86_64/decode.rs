@@ -292,6 +292,7 @@ pub fn decode_instruction(bytes: &[u8], address: u64) -> Result<Instruction> {
             false,
         ),
         0x83 => decode_group83(bytes, address, prefixes),
+        0xf7 => decode_group_f7(bytes, address, prefixes),
         0x50..=0x57 => Ok(base(
             bytes[..prefixes.opcode_offset + 1].to_vec(),
             address,
@@ -358,17 +359,58 @@ fn decode_group83(bytes: &[u8], address: u64, prefixes: Prefixes) -> Result<Inst
     let consumed = consumed_without_imm + 1;
     let (mnemonic, kind) = match modrm.reg {
         0 => ("add", InstructionKind::Arithmetic),
+        1 => ("or", InstructionKind::Logical),
+        2 => ("adc", InstructionKind::Arithmetic),
+        3 => ("sbb", InstructionKind::Arithmetic),
+        4 => ("and", InstructionKind::Logical),
         5 => ("sub", InstructionKind::Arithmetic),
+        6 => ("xor", InstructionKind::Logical),
         7 => ("cmp", InstructionKind::Compare),
-        _ => {
-            return Ok(unknown(bytes[prefixes.opcode_offset], address));
-        }
+        _ => unreachable!("ModRM reg field is three bits"),
     };
     Ok(base(
         bytes[..consumed].to_vec(),
         address,
         mnemonic,
         vec![rm, Operand::Immediate(imm)],
+        kind,
+        FlowKind::Fallthrough,
+        None,
+    ))
+}
+
+fn decode_group_f7(bytes: &[u8], address: u64, prefixes: Prefixes) -> Result<Instruction> {
+    let modrm_offset = prefixes.opcode_offset + 1;
+    require_len(bytes, modrm_offset + 1)?;
+    let modrm = parse_modrm(bytes[modrm_offset]);
+    let (rm, consumed_without_imm) = parse_rm_operand(bytes, modrm_offset, prefixes.rex, 64)?;
+    if modrm.reg <= 1 {
+        let imm = i64::from(read_i32(bytes, consumed_without_imm)?);
+        let consumed = consumed_without_imm + 4;
+        return Ok(base(
+            bytes[..consumed].to_vec(),
+            address,
+            "test",
+            vec![rm, Operand::Immediate(imm)],
+            InstructionKind::Compare,
+            FlowKind::Fallthrough,
+            None,
+        ));
+    }
+    let (mnemonic, kind) = match modrm.reg {
+        2 => ("not", InstructionKind::Logical),
+        3 => ("neg", InstructionKind::Arithmetic),
+        4 => ("mul", InstructionKind::Arithmetic),
+        5 => ("imul", InstructionKind::Arithmetic),
+        6 => ("div", InstructionKind::Arithmetic),
+        7 => ("idiv", InstructionKind::Arithmetic),
+        _ => unreachable!("ModRM reg field is three bits"),
+    };
+    Ok(base(
+        bytes[..consumed_without_imm].to_vec(),
+        address,
+        mnemonic,
+        vec![rm],
         kind,
         FlowKind::Fallthrough,
         None,

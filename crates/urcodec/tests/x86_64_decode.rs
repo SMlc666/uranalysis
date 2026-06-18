@@ -188,6 +188,26 @@ fn decodes_x86_64_arithmetic_and_logical_forms() {
     assert_eq!(add_imm.text, "add rax, 0x8");
     assert_eq!(add_imm.kind, InstructionKind::Arithmetic);
 
+    let or_imm = decode(&[0x48, 0x83, 0xc8, 0x01], 0x401000);
+    assert_eq!(or_imm.text, "or rax, 0x1");
+    assert_eq!(or_imm.kind, InstructionKind::Logical);
+
+    let adc_imm = decode(&[0x48, 0x83, 0xd0, 0x02], 0x401000);
+    assert_eq!(adc_imm.text, "adc rax, 0x2");
+    assert_eq!(adc_imm.kind, InstructionKind::Arithmetic);
+
+    let sbb_imm = decode(&[0x48, 0x83, 0xd8, 0x03], 0x401000);
+    assert_eq!(sbb_imm.text, "sbb rax, 0x3");
+    assert_eq!(sbb_imm.kind, InstructionKind::Arithmetic);
+
+    let and_imm = decode(&[0x48, 0x83, 0xe0, 0x0f], 0x401000);
+    assert_eq!(and_imm.text, "and rax, 0xf");
+    assert_eq!(and_imm.kind, InstructionKind::Logical);
+
+    let xor_imm = decode(&[0x48, 0x83, 0xf0, 0x7f], 0x401000);
+    assert_eq!(xor_imm.text, "xor rax, 0x7f");
+    assert_eq!(xor_imm.kind, InstructionKind::Logical);
+
     let sub_reg = decode(&[0x48, 0x29, 0xd8], 0x401000);
     assert_eq!(sub_reg.text, "sub rax, rbx");
     assert_eq!(sub_reg.kind, InstructionKind::Arithmetic);
@@ -203,6 +223,33 @@ fn decodes_x86_64_arithmetic_and_logical_forms() {
     let xor_reg = decode(&[0x48, 0x31, 0xc0], 0x401000);
     assert_eq!(xor_reg.text, "xor rax, rax");
     assert_eq!(xor_reg.kind, InstructionKind::Logical);
+}
+
+#[test]
+fn decodes_x86_64_group_f7_forms() {
+    let test = decode(&[0x48, 0xf7, 0xc0, 0x34, 0x12, 0x00, 0x00], 0x401000);
+    assert_eq!(test.text, "test rax, 0x1234");
+    assert_eq!(test.size, 7);
+    assert_eq!(test.kind, InstructionKind::Compare);
+
+    let not = decode(&[0x48, 0xf7, 0xd0], 0x401000);
+    assert_eq!(not.text, "not rax");
+    assert_eq!(not.size, 3);
+    assert_eq!(not.kind, InstructionKind::Logical);
+
+    let neg = decode(&[0x48, 0xf7, 0xd8], 0x401000);
+    assert_eq!(neg.text, "neg rax");
+    assert_eq!(neg.size, 3);
+    assert_eq!(neg.kind, InstructionKind::Arithmetic);
+
+    let imul = decode(&[0x48, 0xf7, 0x6b, 0x08], 0x401000);
+    assert_eq!(imul.text, "imul [rbx+0x8]");
+    assert_eq!(imul.size, 4);
+    assert_eq!(imul.kind, InstructionKind::Arithmetic);
+
+    let idiv = decode(&[0x48, 0xf7, 0xf8], 0x401000);
+    assert_eq!(idiv.text, "idiv rax");
+    assert_eq!(idiv.kind, InstructionKind::Arithmetic);
 }
 
 #[test]
