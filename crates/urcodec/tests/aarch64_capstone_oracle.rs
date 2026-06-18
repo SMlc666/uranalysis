@@ -8,6 +8,9 @@ enum OperandShape {
     Imm,
 }
 
+const ORR_IMMEDIATE_ALIAS_SHAPES: &[OperandShape] =
+    &[OperandShape::Reg, OperandShape::Reg, OperandShape::Imm];
+
 #[derive(Debug)]
 struct OracleCase {
     name: &'static str,
@@ -187,11 +190,53 @@ const CASES: &[OracleCase] = &[
         operands: &[OperandShape::Reg, OperandShape::Reg, OperandShape::Mem],
     },
     OracleCase {
+        name: "stp_pre_index",
+        word: 0xa9ba7bfd,
+        urcodec_text: "stp x29, x30, [sp, #-0x60]!",
+        mnemonic: "stp",
+        operands: &[OperandShape::Reg, OperandShape::Reg, OperandShape::Mem],
+    },
+    OracleCase {
+        name: "ldp_post_index",
+        word: 0xa8c67bfd,
+        urcodec_text: "ldp x29, x30, [sp], #0x60",
+        mnemonic: "ldp",
+        operands: &[OperandShape::Reg, OperandShape::Reg, OperandShape::Mem],
+    },
+    OracleCase {
+        name: "ldp_q_signed_offset",
+        word: 0xad4387e0,
+        urcodec_text: "ldp q0, q1, [sp, #0x70]",
+        mnemonic: "ldp",
+        operands: &[OperandShape::Reg, OperandShape::Reg, OperandShape::Mem],
+    },
+    OracleCase {
+        name: "stp_q_signed_offset",
+        word: 0xad008740,
+        urcodec_text: "stp q0, q1, [x26, #0x10]",
+        mnemonic: "stp",
+        operands: &[OperandShape::Reg, OperandShape::Reg, OperandShape::Mem],
+    },
+    OracleCase {
         name: "brk",
         word: 0xd4200020,
         urcodec_text: "brk #0x1",
         mnemonic: "brk",
         operands: &[OperandShape::Imm],
+    },
+    OracleCase {
+        name: "and_logical_immediate",
+        word: 0x12001c08,
+        urcodec_text: "and w8, w0, #0xff",
+        mnemonic: "and",
+        operands: &[OperandShape::Reg, OperandShape::Reg, OperandShape::Imm],
+    },
+    OracleCase {
+        name: "mov_logical_immediate_alias",
+        word: 0xb24107ec,
+        urcodec_text: "mov x12, #-0x7fffffffffffffff",
+        mnemonic: "mov",
+        operands: &[OperandShape::Reg, OperandShape::Imm],
     },
 ];
 
@@ -229,7 +274,7 @@ fn capstone_operand_shapes(capstone: &Capstone, insn: &Insn) -> Vec<OperandShape
     let arm64_detail = arch_detail
         .arm64()
         .unwrap_or_else(|| panic!("expected arm64 capstone detail"));
-    arm64_detail
+    let mut shapes: Vec<_> = arm64_detail
         .operands()
         .map(|operand| match operand.op_type {
             Arm64OperandType::Reg(_) => OperandShape::Reg,
@@ -247,7 +292,27 @@ fn capstone_operand_shapes(capstone: &Capstone, insn: &Insn) -> Vec<OperandShape
                 panic!("capstone produced unsupported arm64 operand shape")
             }
         })
-        .collect()
+        .collect();
+    if shapes.ends_with(&[OperandShape::Mem, OperandShape::Imm]) {
+        shapes.pop();
+    }
+    shapes
+}
+
+fn expected_capstone_mnemonic(case: &OracleCase) -> &'static str {
+    if case.name == "mov_logical_immediate_alias" {
+        "orr"
+    } else {
+        case.mnemonic
+    }
+}
+
+fn expected_capstone_operands(case: &OracleCase) -> &'static [OperandShape] {
+    if case.name == "mov_logical_immediate_alias" {
+        ORR_IMMEDIATE_ALIAS_SHAPES
+    } else {
+        case.operands
+    }
 }
 
 #[test]
@@ -279,10 +344,15 @@ fn aarch64_complete_fixture_decode_matches_capstone_oracle() {
             .next()
             .unwrap_or_else(|| panic!("{}: capstone produced no instruction", case.name));
         assert_eq!(oracle.bytes().len(), 4, "{}", case.name);
-        assert_eq!(oracle.mnemonic(), Some(case.mnemonic), "{}", case.name);
+        assert_eq!(
+            oracle.mnemonic(),
+            Some(expected_capstone_mnemonic(case)),
+            "{}",
+            case.name
+        );
         assert_eq!(
             capstone_operand_shapes(&capstone, oracle),
-            case.operands,
+            expected_capstone_operands(case),
             "{}",
             case.name
         );

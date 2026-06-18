@@ -15,6 +15,12 @@ pub fn w(reg: u32) -> Register {
     }
 }
 
+pub fn q(reg: u32) -> Register {
+    Register {
+        name: format!("q{reg}"),
+    }
+}
+
 pub fn x_or_sp(reg: u32) -> Register {
     Register {
         name: if reg == 31 {
@@ -63,6 +69,7 @@ mod tests {
     fn formats_general_registers() {
         assert_eq!(x(0).name, "x0");
         assert_eq!(w(1).name, "w1");
+        assert_eq!(q(2).name, "q2");
         assert_eq!(x(30).name, "lr");
     }
 

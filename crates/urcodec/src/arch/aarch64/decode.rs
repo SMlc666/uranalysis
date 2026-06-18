@@ -85,14 +85,29 @@ const PATTERNS: &[Pattern] = &[
         decode: decode_logical_shifted_register,
     },
     Pattern {
+        mask: 0x1f80_0000,
+        value: 0x1200_0000,
+        decode: decode_logical_immediate,
+    },
+    Pattern {
         mask: 0x7fe0_fc00,
         value: 0x1ac0_2400,
         decode: decode_lsr_register,
     },
     Pattern {
-        mask: 0x7f80_0000,
+        mask: 0x7b80_0000,
+        value: 0x2880_0000,
+        decode: decode_load_store_pair,
+    },
+    Pattern {
+        mask: 0x7b80_0000,
         value: 0x2900_0000,
-        decode: decode_load_store_pair_offset,
+        decode: decode_load_store_pair,
+    },
+    Pattern {
+        mask: 0x7b80_0000,
+        value: 0x2980_0000,
+        decode: decode_load_store_pair,
     },
     Pattern {
         mask: 0x3b00_0000,
@@ -610,6 +625,106 @@ fn decode_lsr_register(word: u32, address: u64) -> Instruction {
     )
 }
 
+fn decode_logical_immediate(word: u32, address: u64) -> Instruction {
+    let is_64 = bits(word, 31, 31) == 1;
+    let opc = bits(word, 29, 30);
+    let n = bits(word, 22, 22);
+    let immr = bits(word, 16, 21);
+    let imms = bits(word, 10, 15);
+    let rn = bits(word, 5, 9);
+    let rd = bits(word, 0, 4);
+    let reg_size = if is_64 { 64 } else { 32 };
+    let Some(mask) = decode_logical_immediate_mask(n, immr, imms, reg_size) else {
+        return unknown(word, address);
+    };
+
+    let dst = if is_64 {
+        crate::arch::aarch64::registers::x_or_zr(rd)
+    } else {
+        crate::arch::aarch64::registers::w_or_zr(rd)
+    };
+    let src = if is_64 {
+        crate::arch::aarch64::registers::x_or_zr(rn)
+    } else {
+        crate::arch::aarch64::registers::w_or_zr(rn)
+    };
+    let mnemonic = match (opc, rn == 31) {
+        (0b00, _) => "and",
+        (0b01, true) => "mov",
+        (0b01, false) => "orr",
+        (0b10, _) => "eor",
+        _ => "ands",
+    };
+    let operands = if mnemonic == "mov" {
+        vec![Operand::Register(dst), Operand::Immediate(mask as i64)]
+    } else {
+        vec![
+            Operand::Register(dst),
+            Operand::Register(src),
+            Operand::Immediate(mask as i64),
+        ]
+    };
+    base(
+        word,
+        address,
+        mnemonic,
+        operands,
+        if mnemonic == "mov" {
+            InstructionKind::Move
+        } else {
+            InstructionKind::Logical
+        },
+        FlowKind::Fallthrough,
+        None,
+    )
+}
+
+fn decode_logical_immediate_mask(n: u32, immr: u32, imms: u32, reg_size: u32) -> Option<u64> {
+    let selector = (n << 6) | ((!imms) & 0x3f);
+    if selector == 0 {
+        return None;
+    }
+    let len = 31 - selector.leading_zeros();
+    if len < 1 || (reg_size == 32 && len > 5) {
+        return None;
+    }
+    let levels = (1u32 << len) - 1;
+    let s = imms & levels;
+    let r = immr & levels;
+    if s == levels {
+        return None;
+    }
+
+    let element_size = 1u32 << len;
+    let ones = low_bits_mask(s + 1);
+    let element_mask = low_bits_mask(element_size);
+    let rotated = rotate_right_with_width(ones, r, element_size) & element_mask;
+    let mut mask = 0u64;
+    let mut shift = 0;
+    while shift < reg_size {
+        mask |= rotated << shift;
+        shift += element_size;
+    }
+    Some(mask)
+}
+
+fn low_bits_mask(width: u32) -> u64 {
+    if width == 64 {
+        u64::MAX
+    } else {
+        (1u64 << width) - 1
+    }
+}
+
+fn rotate_right_with_width(value: u64, rotate: u32, width: u32) -> u64 {
+    let rotate = rotate % width;
+    if rotate == 0 {
+        value
+    } else {
+        (value >> rotate) | (value << (width - rotate))
+    }
+}
+
 fn access_size_bytes(word: u32) -> i64 {
     1i64 << bits(word, 30, 31)
 }
@@ -622,19 +737,25 @@ fn access_register(word: u32, rt: u32) -> crate::model::Register {
     }
 }
 
-fn pair_access_size_bytes(word: u32) -> i64 {
-    if bits(word, 31, 31) == 1 {
-        8
-    } else {
-        4
+fn pair_access_size_bytes(word: u32) -> Option<i64> {
+    let vector = bits(word, 26, 26) == 1;
+    let high = bits(word, 31, 31) == 1;
+    match (vector, high) {
+        (false, false) => Some(4),
+        (false, true) => Some(8),
+        (true, true) => Some(16),
+        (true, false) => None,
     }
 }
 
-fn pair_access_register(word: u32, rt: u32) -> crate::model::Register {
-    if bits(word, 31, 31) == 1 {
-        crate::arch::aarch64::registers::x_or_zr(rt)
-    } else {
-        crate::arch::aarch64::registers::w_or_zr(rt)
+fn pair_access_register(word: u32, rt: u32) -> Option<crate::model::Register> {
+    let vector = bits(word, 26, 26) == 1;
+    let high = bits(word, 31, 31) == 1;
+    match (vector, high) {
+        (false, false) => Some(crate::arch::aarch64::registers::w_or_zr(rt)),
+        (false, true) => Some(crate::arch::aarch64::registers::x_or_zr(rt)),
+        (true, true) => Some(crate::arch::aarch64::registers::q(rt)),
+        (true, false) => None,
     }
 }
 
@@ -667,15 +788,32 @@ fn decode_load_store_unsigned(word: u32, address: u64) -> Instruction {
     )
 }
 
-fn decode_load_store_pair_offset(word: u32, address: u64) -> Instruction {
+fn decode_load_store_pair(word: u32, address: u64) -> Instruction {
     let load = bits(word, 22, 22) == 1;
-    let imm = sign_extend(bits(word, 15, 21), 7) * pair_access_size_bytes(word);
+    let Some(size_bytes) = pair_access_size_bytes(word) else {
+        return unknown(word, address);
+    };
+    let imm = sign_extend(bits(word, 15, 21), 7) * size_bytes;
+    let post_index = bits(word, 23, 24) == 0b01;
+    let pre_index = bits(word, 23, 24) == 0b11;
     let rt2 = bits(word, 10, 14);
     let rn = bits(word, 5, 9);
     let rt = bits(word, 0, 4);
-    let reg = pair_access_register(word, rt);
-    let reg2 = pair_access_register(word, rt2);
+    let Some(reg) = pair_access_register(word, rt) else {
+        return unknown(word, address);
+    };
+    let Some(reg2) = pair_access_register(word, rt2) else {
+        return unknown(word, address);
+    };
     let base_reg = crate::arch::aarch64::registers::x_or_sp(rn);
+    let mut memory =
+        crate::model::MemoryOperand::base_offset(base_reg, imm, Some((size_bytes * 8) as u16));
+    if pre_index {
+        memory = memory.with_writeback();
+    }
+    if post_index {
+        memory = memory.with_post_index();
+    }
     base(
         word,
         address,
@@ -683,11 +821,7 @@ fn decode_load_store_pair_offset(word: u32, address: u64) -> Instruction {
         vec![
             Operand::Register(reg),
             Operand::Register(reg2),
-            Operand::Memory(crate::model::MemoryOperand::base_offset(
-                base_reg,
-                imm,
-                Some((pair_access_size_bytes(word) * 8) as u16),
-            )),
+            Operand::Memory(memory),
         ],
         if load {
             InstructionKind::Load

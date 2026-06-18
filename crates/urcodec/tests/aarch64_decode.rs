@@ -158,6 +158,22 @@ fn decodes_common_load_store_forms() {
     let ldp = decode(0xa9522748, 0x400100);
     assert_eq!(ldp.text, "ldp x8, x9, [x26, #0x120]");
     assert_eq!(ldp.kind, InstructionKind::Load);
+
+    let stp_pre = decode(0xa9ba7bfd, 0x400100);
+    assert_eq!(stp_pre.text, "stp x29, x30, [sp, #-0x60]!");
+    assert_eq!(stp_pre.kind, InstructionKind::Store);
+
+    let ldp_post = decode(0xa8c67bfd, 0x400100);
+    assert_eq!(ldp_post.text, "ldp x29, x30, [sp], #0x60");
+    assert_eq!(ldp_post.kind, InstructionKind::Load);
+
+    let ldp_q = decode(0xad4387e0, 0x400100);
+    assert_eq!(ldp_q.text, "ldp q0, q1, [sp, #0x70]");
+    assert_eq!(ldp_q.kind, InstructionKind::Load);
+
+    let stp_q = decode(0xad008740, 0x400100);
+    assert_eq!(stp_q.text, "stp q0, q1, [x26, #0x10]");
+    assert_eq!(stp_q.kind, InstructionKind::Store);
 }
 
 #[test]
@@ -166,4 +182,15 @@ fn decodes_breakpoint_system_instruction() {
     assert_eq!(brk.text, "brk #0x1");
     assert_eq!(brk.kind, InstructionKind::System);
     assert_eq!(brk.flow, FlowKind::Fallthrough);
+}
+
+#[test]
+fn decodes_common_logical_immediate_forms() {
+    let and = decode(0x12001c08, 0x400100);
+    assert_eq!(and.text, "and w8, w0, #0xff");
+    assert_eq!(and.kind, InstructionKind::Logical);
+
+    let mov = decode(0xb24107ec, 0x400100);
+    assert_eq!(mov.text, "mov x12, #-0x7fffffffffffffff");
+    assert_eq!(mov.kind, InstructionKind::Move);
 }
