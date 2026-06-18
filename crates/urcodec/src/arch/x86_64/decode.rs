@@ -1317,7 +1317,22 @@ fn decode_vex(bytes: &[u8], address: u64, prefixes: Prefixes) -> Result<Instruct
         0x6f | 0x7f if matches!(vex.pp, 1 | 2) => decode_vex_move(bytes, address, vex, opcode),
         0xe7 if vex.pp == 1 => decode_vex_movntdq(bytes, address, vex),
         0xd7 if vex.pp == 1 => decode_vex_pmovmskb(bytes, address, vex),
-        0x59 if matches!(vex.pp, 0 | 3) => decode_vex_mul(bytes, address, vex),
+        0x59 if matches!(vex.pp, 0 | 3) => decode_vex_ternary_binary(
+            bytes,
+            address,
+            vex,
+            if vex.pp == 3 { "vmulsd" } else { "vmulps" },
+            InstructionKind::Arithmetic,
+        ),
+        0x5c if vex.pp == 3 => {
+            decode_vex_ternary_binary(bytes, address, vex, "vsubsd", InstructionKind::Arithmetic)
+        }
+        0xdb if vex.pp == 1 => {
+            decode_vex_ternary_binary(bytes, address, vex, "vpand", InstructionKind::Logical)
+        }
+        0xeb if vex.pp == 1 => {
+            decode_vex_ternary_binary(bytes, address, vex, "vpor", InstructionKind::Logical)
+        }
         _ => Ok(unknown(bytes[prefixes.opcode_offset], address)),
     }
 }
@@ -1385,7 +1400,13 @@ fn decode_vex_pmovmskb(bytes: &[u8], address: u64, vex: Vex) -> Result<Instructi
     ))
 }
 
-fn decode_vex_mul(bytes: &[u8], address: u64, vex: Vex) -> Result<Instruction> {
+fn decode_vex_ternary_binary(
+    bytes: &[u8],
+    address: u64,
+    vex: Vex,
+    mnemonic: &str,
+    kind: InstructionKind,
+) -> Result<Instruction> {
     let modrm_offset = vex.opcode_offset + 1;
     require_len(bytes, modrm_offset + 1)?;
     let modrm = parse_modrm(bytes[modrm_offset]);
@@ -1395,9 +1416,9 @@ fn decode_vex_mul(bytes: &[u8], address: u64, vex: Vex) -> Result<Instruction> {
     Ok(base(
         bytes[..consumed].to_vec(),
         address,
-        if vex.pp == 3 { "vmulsd" } else { "vmulps" },
+        mnemonic,
         vec![dst, src1, src2],
-        InstructionKind::Arithmetic,
+        kind,
         FlowKind::Fallthrough,
         None,
     ))

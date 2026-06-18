@@ -20,7 +20,7 @@ Current fixture scope:
 - AArch64 core control flow, address, arithmetic, move, load, and store forms.
 - X86-64 control flow, selected `0f` scalar forms, MMX/SSE shifts, SSE
   arithmetic/logical forms, packed integer, packed shuffle, MXCSR memory forms,
-  and AVX cleanup forms.
+  selected VEX logical/scalar arithmetic forms, and AVX cleanup forms.
 
 When adding corpus-driven decoder coverage, add a Capstone oracle fixture for
 the representative bytes if Capstone can decode the instruction and the opcode

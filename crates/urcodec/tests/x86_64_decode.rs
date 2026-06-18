@@ -952,6 +952,21 @@ fn decodes_x86_64_vex_avx_forms() {
     assert_eq!(vmulps.text, "vmulps xmm2, xmm0, xmm1");
     assert_eq!(vmulps.size, 4);
     assert_eq!(vmulps.kind, InstructionKind::Arithmetic);
+
+    let vpand = decode(&[0xc5, 0xf9, 0xdb, 0x1d, 0x05, 0x93, 0x14, 0x00], 0x401000);
+    assert_eq!(vpand.text, "vpand xmm3, xmm0, [rip+0x149305]");
+    assert_eq!(vpand.size, 8);
+    assert_eq!(vpand.kind, InstructionKind::Logical);
+
+    let vpor = decode(&[0xc5, 0xf1, 0xeb, 0x0d, 0x93, 0x93, 0x14, 0x00], 0x401000);
+    assert_eq!(vpor.text, "vpor xmm1, xmm1, [rip+0x149393]");
+    assert_eq!(vpor.size, 8);
+    assert_eq!(vpor.kind, InstructionKind::Logical);
+
+    let vsubsd = decode(&[0xc5, 0xfb, 0x5c, 0xc3], 0x401000);
+    assert_eq!(vsubsd.text, "vsubsd xmm0, xmm0, xmm3");
+    assert_eq!(vsubsd.size, 4);
+    assert_eq!(vsubsd.kind, InstructionKind::Arithmetic);
 }
 
 #[test]

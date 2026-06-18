@@ -227,6 +227,30 @@ const CASES: &[OracleCase] = &[
         size: 3,
         operands: &[],
     },
+    OracleCase {
+        name: "vpand_xmm_rip",
+        bytes: &[0xc5, 0xf9, 0xdb, 0x1d, 0x05, 0x93, 0x14, 0x00],
+        urcodec_text: "vpand xmm3, xmm0, [rip+0x149305]",
+        mnemonic: "vpand",
+        size: 8,
+        operands: &[OperandShape::Reg, OperandShape::Reg, OperandShape::Mem],
+    },
+    OracleCase {
+        name: "vpor_xmm_rip",
+        bytes: &[0xc5, 0xf1, 0xeb, 0x0d, 0x93, 0x93, 0x14, 0x00],
+        urcodec_text: "vpor xmm1, xmm1, [rip+0x149393]",
+        mnemonic: "vpor",
+        size: 8,
+        operands: &[OperandShape::Reg, OperandShape::Reg, OperandShape::Mem],
+    },
+    OracleCase {
+        name: "vsubsd_reg",
+        bytes: &[0xc5, 0xfb, 0x5c, 0xc3],
+        urcodec_text: "vsubsd xmm0, xmm0, xmm3",
+        mnemonic: "vsubsd",
+        size: 4,
+        operands: &[OperandShape::Reg, OperandShape::Reg, OperandShape::Reg],
+    },
 ];
 
 fn urcodec_decoder() -> Decoder {
