@@ -2,6 +2,10 @@
 
 The CI corpus gate records sample-level codec totals and unknown rates. Per-encoding corpus attribution is still not measured in this matrix.
 
+## Codec Seed Forms
+
+The first declarative forms cover `ret` and `b imm26`. These forms drive decode compatibility, encode, canonical text, text parsing, and roundtrip tests from one form table.
+
 | Encoding group | Representative mnemonics | Decode | Format | Flow semantics | Golden tests | Corpus evidence | Notes |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | Unconditional branch immediate | `b`, `bl` | Implemented | Implemented | Implemented | Yes | Not measured | Direct targets use absolute addresses. |

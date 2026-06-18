@@ -3,13 +3,9 @@ use crate::{
     model::{Architecture, Instruction},
 };
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct EncodeOptions;
-
-impl Default for EncodeOptions {
-    fn default() -> Self {
-        Self
-    }
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct EncodeOptions {
+    _reserved: (),
 }
 
 #[derive(Debug, Clone)]

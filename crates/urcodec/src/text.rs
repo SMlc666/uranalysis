@@ -3,13 +3,9 @@ use crate::{
     model::{Architecture, Instruction},
 };
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct TextOptions;
-
-impl Default for TextOptions {
-    fn default() -> Self {
-        Self
-    }
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct TextOptions {
+    _reserved: (),
 }
 
 #[derive(Debug, Clone)]
