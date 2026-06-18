@@ -1,7 +1,7 @@
 use crate::{
     arch::x86_64::{
         format::render_instruction,
-        registers::{mm, reg16, reg32, reg64, reg8, xmm},
+        registers::{mm, reg16, reg32, reg64, reg8, xmm, ymm},
     },
     error::{DecodeError, Result},
     model::{DecodeStatus, FlowKind, Instruction, InstructionKind, MemoryOperand, Operand},
@@ -28,6 +28,16 @@ struct ModRm {
     mode: u8,
     reg: u8,
     rm: u8,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct Vex {
+    rex: Rex,
+    vvvv: u8,
+    map: u8,
+    pp: u8,
+    l_256: bool,
+    opcode_offset: usize,
 }
 
 pub fn decode_instruction(bytes: &[u8], address: u64) -> Result<Instruction> {
@@ -496,6 +506,7 @@ pub fn decode_instruction(bytes: &[u8], address: u64) -> Result<Instruction> {
         0x80 => decode_group1_imm8_width(bytes, address, prefixes, 8, false),
         0x81 => decode_group1_imm32(bytes, address, prefixes),
         0x83 => decode_group1_imm8(bytes, address, prefixes),
+        0xc4 | 0xc5 => decode_vex(bytes, address, prefixes),
         0xc0 => decode_group2_imm8(bytes, address, prefixes, 8),
         0xc1 => decode_group2_imm8(bytes, address, prefixes, default_operand_width(prefixes)),
         0xd0 => decode_group2_one(bytes, address, prefixes, 8),
@@ -974,6 +985,113 @@ fn decode_multibyte_nop(bytes: &[u8], address: u64, prefixes: Prefixes) -> Resul
     ))
 }
 
+fn decode_vex(bytes: &[u8], address: u64, prefixes: Prefixes) -> Result<Instruction> {
+    let vex = parse_vex(bytes, prefixes.opcode_offset)?;
+    require_len(bytes, vex.opcode_offset + 1)?;
+    let opcode = bytes[vex.opcode_offset];
+    if vex.map != 0x01 {
+        return Ok(unknown(bytes[prefixes.opcode_offset], address));
+    }
+
+    match opcode {
+        0x77 if vex.pp == 0 => Ok(base(
+            bytes[..vex.opcode_offset + 1].to_vec(),
+            address,
+            "vzeroupper",
+            Vec::new(),
+            InstructionKind::System,
+            FlowKind::Fallthrough,
+            None,
+        )),
+        0x6f | 0x7f if matches!(vex.pp, 1 | 2) => decode_vex_move(bytes, address, vex, opcode),
+        0xe7 if vex.pp == 1 => decode_vex_movntdq(bytes, address, vex),
+        0xd7 if vex.pp == 1 => decode_vex_pmovmskb(bytes, address, vex),
+        0x59 if matches!(vex.pp, 0 | 3) => decode_vex_mul(bytes, address, vex),
+        _ => Ok(unknown(bytes[prefixes.opcode_offset], address)),
+    }
+}
+
+fn decode_vex_move(bytes: &[u8], address: u64, vex: Vex, opcode: u8) -> Result<Instruction> {
+    let modrm_offset = vex.opcode_offset + 1;
+    require_len(bytes, modrm_offset + 1)?;
+    let modrm = parse_modrm(bytes[modrm_offset]);
+    let reg = Operand::Register(vector_reg(extend_reg(modrm.reg, vex.rex.r), vex));
+    let (rm, consumed) = parse_vector_rm_operand(bytes, modrm_offset, vex)?;
+    let is_store = opcode == 0x7f;
+    let operands = if is_store {
+        vec![rm.clone(), reg]
+    } else {
+        vec![reg, rm.clone()]
+    };
+    let mnemonic = if vex.pp == 1 { "vmovdqa" } else { "vmovdqu" };
+    let kind = match (is_store, matches!(rm, Operand::Memory(_))) {
+        (true, true) => InstructionKind::Store,
+        (false, true) => InstructionKind::Load,
+        _ => InstructionKind::Move,
+    };
+    Ok(base(
+        bytes[..consumed].to_vec(),
+        address,
+        mnemonic,
+        operands,
+        kind,
+        FlowKind::Fallthrough,
+        None,
+    ))
+}
+
+fn decode_vex_movntdq(bytes: &[u8], address: u64, vex: Vex) -> Result<Instruction> {
+    let modrm_offset = vex.opcode_offset + 1;
+    require_len(bytes, modrm_offset + 1)?;
+    let modrm = parse_modrm(bytes[modrm_offset]);
+    let src = Operand::Register(vector_reg(extend_reg(modrm.reg, vex.rex.r), vex));
+    let (dst, consumed) = parse_vector_rm_operand(bytes, modrm_offset, vex)?;
+    Ok(base(
+        bytes[..consumed].to_vec(),
+        address,
+        "vmovntdq",
+        vec![dst, src],
+        InstructionKind::Store,
+        FlowKind::Fallthrough,
+        None,
+    ))
+}
+
+fn decode_vex_pmovmskb(bytes: &[u8], address: u64, vex: Vex) -> Result<Instruction> {
+    let modrm_offset = vex.opcode_offset + 1;
+    require_len(bytes, modrm_offset + 1)?;
+    let modrm = parse_modrm(bytes[modrm_offset]);
+    let dst = Operand::Register(reg32(extend_reg(modrm.reg, vex.rex.r)));
+    let (src, consumed) = parse_vector_rm_operand(bytes, modrm_offset, vex)?;
+    Ok(base(
+        bytes[..consumed].to_vec(),
+        address,
+        "vpmovmskb",
+        vec![dst, src],
+        InstructionKind::Move,
+        FlowKind::Fallthrough,
+        None,
+    ))
+}
+
+fn decode_vex_mul(bytes: &[u8], address: u64, vex: Vex) -> Result<Instruction> {
+    let modrm_offset = vex.opcode_offset + 1;
+    require_len(bytes, modrm_offset + 1)?;
+    let modrm = parse_modrm(bytes[modrm_offset]);
+    let dst = Operand::Register(vector_reg(extend_reg(modrm.reg, vex.rex.r), vex));
+    let src1 = Operand::Register(vector_reg(vex.vvvv, vex));
+    let (src2, consumed) = parse_vector_rm_operand(bytes, modrm_offset, vex)?;
+    Ok(base(
+        bytes[..consumed].to_vec(),
+        address,
+        if vex.pp == 3 { "vmulsd" } else { "vmulps" },
+        vec![dst, src1, src2],
+        InstructionKind::Arithmetic,
+        FlowKind::Fallthrough,
+        None,
+    ))
+}
+
 fn decode_cmovcc(
     bytes: &[u8],
     address: u64,
@@ -1276,6 +1394,45 @@ fn parse_prefixes(bytes: &[u8]) -> Result<Prefixes> {
     })
 }
 
+fn parse_vex(bytes: &[u8], offset: usize) -> Result<Vex> {
+    require_len(bytes, offset + 2)?;
+    if bytes[offset] == 0xc5 {
+        let byte = bytes[offset + 1];
+        return Ok(Vex {
+            rex: Rex {
+                present: false,
+                w: false,
+                r: byte & 0x80 == 0,
+                x: false,
+                b: false,
+            },
+            vvvv: (!((byte >> 3) & 0x0f)) & 0x0f,
+            map: 0x01,
+            pp: byte & 0x03,
+            l_256: byte & 0x04 != 0,
+            opcode_offset: offset + 2,
+        });
+    }
+
+    require_len(bytes, offset + 3)?;
+    let byte2 = bytes[offset + 1];
+    let byte3 = bytes[offset + 2];
+    Ok(Vex {
+        rex: Rex {
+            present: false,
+            w: byte3 & 0x80 != 0,
+            r: byte2 & 0x80 == 0,
+            x: byte2 & 0x40 == 0,
+            b: byte2 & 0x20 == 0,
+        },
+        vvvv: (!((byte3 >> 3) & 0x0f)) & 0x0f,
+        map: byte2 & 0x1f,
+        pp: byte3 & 0x03,
+        l_256: byte3 & 0x04 != 0,
+        opcode_offset: offset + 3,
+    })
+}
+
 fn parse_modrm(byte: u8) -> ModRm {
     ModRm {
         mode: byte >> 6,
@@ -1406,6 +1563,22 @@ fn parse_xmm_rm_operand(bytes: &[u8], modrm_offset: usize, rex: Rex) -> Result<(
     parse_rm_operand(bytes, modrm_offset, rex, 128)
 }
 
+fn parse_vector_rm_operand(
+    bytes: &[u8],
+    modrm_offset: usize,
+    vex: Vex,
+) -> Result<(Operand, usize)> {
+    require_len(bytes, modrm_offset + 1)?;
+    let modrm = parse_modrm(bytes[modrm_offset]);
+    if modrm.mode == 0b11 {
+        return Ok((
+            Operand::Register(vector_reg(extend_reg(modrm.rm, vex.rex.b), vex)),
+            modrm_offset + 1,
+        ));
+    }
+    parse_rm_operand(bytes, modrm_offset, vex.rex, vector_width_bits(vex))
+}
+
 fn parse_mmx_rm_operand(bytes: &[u8], modrm_offset: usize, rex: Rex) -> Result<(Operand, usize)> {
     require_len(bytes, modrm_offset + 1)?;
     let modrm = parse_modrm(bytes[modrm_offset]);
@@ -1434,6 +1607,22 @@ fn reg_for_width(index: u8, width_bits: u16, rex_present: bool) -> crate::model:
         16 => reg16(index),
         32 => reg32(index),
         _ => reg64(index),
+    }
+}
+
+fn vector_reg(index: u8, vex: Vex) -> crate::model::Register {
+    if vex.l_256 {
+        ymm(index)
+    } else {
+        xmm(index)
+    }
+}
+
+fn vector_width_bits(vex: Vex) -> u16 {
+    if vex.l_256 {
+        256
+    } else {
+        128
     }
 }
 

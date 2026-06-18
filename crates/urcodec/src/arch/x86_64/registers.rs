@@ -110,6 +110,12 @@ pub fn xmm(index: u8) -> Register {
     }
 }
 
+pub fn ymm(index: u8) -> Register {
+    Register {
+        name: format!("ymm{}", index & 0x0f),
+    }
+}
+
 pub fn mm(index: u8) -> Register {
     Register {
         name: format!("mm{}", index & 0x07),

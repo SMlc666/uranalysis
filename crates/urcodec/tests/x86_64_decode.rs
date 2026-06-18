@@ -572,6 +572,58 @@ fn decodes_x86_64_mmx_forms() {
 }
 
 #[test]
+fn decodes_x86_64_vex_avx_forms() {
+    let vzeroupper = decode(&[0xc5, 0xf8, 0x77], 0x401000);
+    assert_eq!(vzeroupper.text, "vzeroupper");
+    assert_eq!(vzeroupper.size, 3);
+    assert_eq!(vzeroupper.kind, InstructionKind::System);
+
+    let vmovdqa_load = decode(&[0xc5, 0xf9, 0x6f, 0x74, 0x24, 0x20], 0x401000);
+    assert_eq!(vmovdqa_load.text, "vmovdqa xmm6, [rsp+0x20]");
+    assert_eq!(vmovdqa_load.size, 6);
+    assert_eq!(vmovdqa_load.kind, InstructionKind::Load);
+
+    let vmovdqu_load = decode(&[0xc5, 0xfe, 0x6f, 0x52, 0x20], 0x401000);
+    assert_eq!(vmovdqu_load.text, "vmovdqu ymm2, [rdx+0x20]");
+    assert_eq!(vmovdqu_load.size, 5);
+    assert_eq!(vmovdqu_load.kind, InstructionKind::Load);
+
+    let vmovdqu_indexed = decode(
+        &[0xc4, 0xa1, 0x7e, 0x6f, 0x8c, 0x0a, 0x00, 0xff, 0xff, 0xff],
+        0x401000,
+    );
+    assert_eq!(vmovdqu_indexed.text, "vmovdqu ymm1, [rdx+r9+-0x100]");
+    assert_eq!(vmovdqu_indexed.size, 10);
+    assert_eq!(vmovdqu_indexed.kind, InstructionKind::Load);
+
+    let vmovdqu_store = decode(
+        &[0xc4, 0xa1, 0x7e, 0x7f, 0x8c, 0x09, 0x00, 0xff, 0xff, 0xff],
+        0x401000,
+    );
+    assert_eq!(vmovdqu_store.text, "vmovdqu [rcx+r9+-0x100], ymm1");
+    assert_eq!(vmovdqu_store.size, 10);
+    assert_eq!(vmovdqu_store.kind, InstructionKind::Store);
+
+    let vmovntdq = decode(
+        &[0xc4, 0xa1, 0x7d, 0xe7, 0x8c, 0x09, 0x00, 0xff, 0xff, 0xff],
+        0x401000,
+    );
+    assert_eq!(vmovntdq.text, "vmovntdq [rcx+r9+-0x100], ymm1");
+    assert_eq!(vmovntdq.size, 10);
+    assert_eq!(vmovntdq.kind, InstructionKind::Store);
+
+    let vpmovmskb = decode(&[0xc5, 0xf9, 0xd7, 0xc0], 0x401000);
+    assert_eq!(vpmovmskb.text, "vpmovmskb eax, xmm0");
+    assert_eq!(vpmovmskb.size, 4);
+    assert_eq!(vpmovmskb.kind, InstructionKind::Move);
+
+    let vmulps = decode(&[0xc5, 0xf8, 0x59, 0xd1], 0x401000);
+    assert_eq!(vmulps.text, "vmulps xmm2, xmm0, xmm1");
+    assert_eq!(vmulps.size, 4);
+    assert_eq!(vmulps.kind, InstructionKind::Arithmetic);
+}
+
+#[test]
 fn decodes_x86_64_ud2() {
     let ud2 = decode(&[0x0f, 0x0b], 0x401000);
 
