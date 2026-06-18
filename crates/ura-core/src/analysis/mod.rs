@@ -1,12 +1,14 @@
+pub mod cfg;
 pub mod diagnostics;
 pub mod disasm;
 pub mod functions;
+pub mod refresh;
 pub mod strings;
 pub mod target;
 pub mod xrefs;
 
 use crate::{
-    model::{Diagnostic, Function, Instruction, Segment, StringRef, Xref},
+    model::{BasicBlock, CfgEdge, Diagnostic, Function, Instruction, Segment, StringRef, Xref},
     Result,
 };
 
@@ -45,6 +47,8 @@ impl AnalysisImage<'_> {
 
 pub struct AnalysisOutput {
     pub instructions: Vec<Instruction>,
+    pub basic_blocks: Vec<BasicBlock>,
+    pub cfg_edges: Vec<CfgEdge>,
     pub strings: Vec<StringRef>,
     pub functions: Vec<Function>,
     pub xrefs: Vec<Xref>,
@@ -65,11 +69,30 @@ pub fn run_initial_analysis_with_instruction_limit(
 ) -> Result<AnalysisOutput> {
     let instructions = disasm::linear_disassemble_with_limit(image, max_instructions)?;
     let strings = strings::extract_strings(image);
-    let functions = functions::discover_functions(image.entry, &instructions, user_functions);
-    let xrefs = xrefs::build_xrefs(&instructions, &strings);
-    let diagnostics = diagnostics::collect_diagnostics(&instructions);
+    let window = refresh::AnalysisWindow {
+        start: image.entry,
+        end: image.entry.saturating_add(4),
+        reason: refresh::RefreshReason::SourceBytesChanged,
+    };
+    let cfg = cfg::build_cfg(&instructions, &[image.entry], window)?;
+    let functions = functions::discover_functions(
+        image.entry,
+        &instructions,
+        &cfg.basic_blocks,
+        &cfg.cfg_edges,
+        user_functions,
+    );
+    let xrefs = xrefs::build_xrefs(&instructions, &strings, &cfg.cfg_edges);
+    let mut diagnostics = diagnostics::collect_diagnostics(&instructions);
+    diagnostics.extend(diagnostics::collect_graph_diagnostics(&cfg.cfg_edges));
+    diagnostics.extend(diagnostics::collect_user_function_diagnostics(
+        &functions,
+        &instructions,
+    ));
     Ok(AnalysisOutput {
         instructions,
+        basic_blocks: cfg.basic_blocks,
+        cfg_edges: cfg.cfg_edges,
         strings,
         functions,
         xrefs,

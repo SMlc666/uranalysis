@@ -1,26 +1,33 @@
 use std::collections::{HashMap, HashSet};
 
-use crate::model::{FlowKind, Instruction, InstructionKind, StringRef, Xref, XrefKind};
+use crate::model::{CfgEdge, CfgEdgeKind, Instruction, StringRef, Xref, XrefKind};
 
-pub fn build_xrefs(instructions: &[Instruction], strings: &[StringRef]) -> Vec<Xref> {
+pub fn build_xrefs(
+    instructions: &[Instruction],
+    strings: &[StringRef],
+    cfg_edges: &[CfgEdge],
+) -> Vec<Xref> {
     let mut out = Vec::new();
+    for edge in cfg_edges {
+        let Some(to_addr) = edge.to_addr else {
+            continue;
+        };
+        let kind = match edge.kind {
+            CfgEdgeKind::Call => XrefKind::Call,
+            CfgEdgeKind::Branch | CfgEdgeKind::ConditionalTrue | CfgEdgeKind::ConditionalFalse => {
+                XrefKind::Code
+            }
+            CfgEdgeKind::Fallthrough | CfgEdgeKind::Return | CfgEdgeKind::Indirect => continue,
+        };
+        out.push(Xref {
+            from_addr: edge.from_addr,
+            to_addr,
+            kind,
+        });
+    }
+
     let strings_by_operand = strings_by_operand(strings);
     for insn in instructions {
-        if let Some(target) = insn.branch_target {
-            let kind = if matches!(insn.flow, FlowKind::Call | FlowKind::IndirectCall)
-                || insn.kind == InstructionKind::Call
-            {
-                XrefKind::Call
-            } else {
-                XrefKind::Code
-            };
-            out.push(Xref {
-                from_addr: insn.addr,
-                to_addr: target,
-                kind,
-            });
-        }
-
         let mut matched_strings = HashSet::new();
         for token in hex_address_tokens(&insn.operands) {
             let Some(addresses) = strings_by_operand.get(&token) else {
@@ -61,18 +68,30 @@ fn hex_address_tokens(operands: &str) -> impl Iterator<Item = String> + '_ {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::DecodeStatus;
+    use crate::model::{DecodeStatus, FlowKind, InstructionKind};
 
     #[test]
     fn string_xrefs_match_whole_hex_operands() {
         let instructions = vec![instruction("mov x0, #0x10")];
         let strings = vec![string_ref(0x1), string_ref(0x10)];
 
-        let xrefs = build_xrefs(&instructions, &strings);
+        let xrefs = build_xrefs(&instructions, &strings, &[]);
 
         assert_eq!(xrefs.len(), 1);
         assert_eq!(xrefs[0].to_addr, 0x10);
         assert_eq!(xrefs[0].kind, XrefKind::String);
+    }
+
+    #[test]
+    fn code_xrefs_require_cfg_edges() {
+        let mut instructions = vec![instruction("b 0x401000")];
+        instructions[0].branch_target = Some(0x401000);
+        instructions[0].flow = FlowKind::Branch;
+        instructions[0].kind = InstructionKind::Branch;
+
+        let xrefs = build_xrefs(&instructions, &[], &[]);
+
+        assert!(xrefs.is_empty());
     }
 
     fn instruction(operands: &str) -> Instruction {

@@ -19,7 +19,7 @@ fn creates_and_reopens_empty_project() -> Result<()> {
 
     let reopened = Project::open(&path)?;
     assert_eq!(reopened.source_hash()?, "hash-for-test");
-    assert_eq!(reopened.schema_version()?, 3);
+    assert_eq!(reopened.schema_version()?, 4);
     Ok(())
 }
 
@@ -39,7 +39,7 @@ fn creates_project_from_elf_and_persists_metadata() -> Result<()> {
 }
 
 #[test]
-fn project_schema_v3_records_decode_metadata() -> Result<()> {
+fn project_schema_v4_records_decode_metadata() -> Result<()> {
     let dir = tempdir()?;
     let input = dir.path().join("sample.elf");
     let project = dir.path().join("sample.ura");
@@ -49,7 +49,7 @@ fn project_schema_v3_records_decode_metadata() -> Result<()> {
     let info = commands::info(&project)?;
     let disasm = commands::disasm(&project, 0x400080, 1)?;
 
-    assert_eq!(info.schema_version, 3);
+    assert_eq!(info.schema_version, 4);
     assert_eq!(disasm[0].text, "ret");
     assert_eq!(disasm[0].kind, InstructionKind::Return);
     assert_eq!(disasm[0].flow, FlowKind::Return);
@@ -60,7 +60,7 @@ fn project_schema_v3_records_decode_metadata() -> Result<()> {
 }
 
 #[test]
-fn project_schema_v3_records_structured_target_and_decode_semantics() -> Result<()> {
+fn project_schema_v4_records_structured_target_and_decode_semantics() -> Result<()> {
     let dir = tempdir()?;
     let input = dir.path().join("sample.elf");
     let project = dir.path().join("sample.ura");
@@ -70,7 +70,7 @@ fn project_schema_v3_records_structured_target_and_decode_semantics() -> Result<
     let info = commands::info(&project)?;
     let disasm = commands::disasm(&project, 0x400080, 1)?;
 
-    assert_eq!(info.schema_version, 3);
+    assert_eq!(info.schema_version, 4);
     assert_eq!(info.format, ura_core::model::BinaryFormat::Elf);
     assert_eq!(info.architecture, ura_core::model::Architecture::Aarch64);
     assert_eq!(info.class, ura_core::model::ImageClass::Bits64);
@@ -81,6 +81,24 @@ fn project_schema_v3_records_structured_target_and_decode_semantics() -> Result<
         disasm[0].decode_status,
         ura_core::model::DecodeStatus::Complete
     );
+    Ok(())
+}
+
+#[test]
+fn project_schema_v4_persists_source_bytes_and_graph_fields() -> Result<()> {
+    let dir = tempdir()?;
+    let input = dir.path().join("sample.elf");
+    let project_path = dir.path().join("sample.ura");
+    let bytes = fixtures::minimal_elf64_aarch64_executable();
+    std::fs::write(&input, &bytes)?;
+
+    commands::new_project(&input, &project_path)?;
+    let project = Project::open(&project_path)?;
+
+    assert_eq!(project.schema_version()?, 4);
+    assert_eq!(project.file().source_bytes, bytes);
+    assert!(!project.file().basic_blocks.is_empty());
+    assert!(!project.file().cfg_edges.is_empty());
     Ok(())
 }
 

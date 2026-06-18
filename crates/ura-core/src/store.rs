@@ -9,25 +9,28 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     model::{
-        Architecture, BinaryFormat, Diagnostic, Endian, Function, ImageClass, Instruction,
-        LoadProfile, ProjectInfo, Section, Segment, StringRef, Symbol, Xref,
+        Architecture, BasicBlock, BinaryFormat, CfgEdge, Diagnostic, Endian, Function, ImageClass,
+        Instruction, LoadProfile, ProjectInfo, Section, Segment, StringRef, Symbol, Xref,
     },
     Result, UraError,
 };
 
 pub const PROJECT_MAGIC: [u8; 4] = *b"URA0";
 pub const PROJECT_CONTAINER_VERSION: u32 = 1;
-pub const PROJECT_SCHEMA_VERSION: i64 = 3;
+pub const PROJECT_SCHEMA_VERSION: i64 = 4;
 
 const HEADER_LEN: usize = 16;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProjectFile {
     pub info: ProjectInfo,
+    pub source_bytes: Vec<u8>,
     pub segments: Vec<Segment>,
     pub sections: Vec<Section>,
     pub symbols: Vec<Symbol>,
     pub instructions: Vec<Instruction>,
+    pub basic_blocks: Vec<BasicBlock>,
+    pub cfg_edges: Vec<CfgEdge>,
     pub functions: Vec<Function>,
     pub xrefs: Vec<Xref>,
     pub strings: Vec<StringRef>,
@@ -49,10 +52,13 @@ impl ProjectFile {
                 endian: Endian::Little,
                 profile: LoadProfile::StrippedLike,
             },
+            source_bytes: Vec::new(),
             segments: Vec::new(),
             sections: Vec::new(),
             symbols: Vec::new(),
             instructions: Vec::new(),
+            basic_blocks: Vec::new(),
+            cfg_edges: Vec::new(),
             functions: Vec::new(),
             xrefs: Vec::new(),
             strings: Vec::new(),

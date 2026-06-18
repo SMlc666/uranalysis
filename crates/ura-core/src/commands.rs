@@ -6,7 +6,12 @@ use std::{
 };
 
 use crate::{
-    analysis::{self, target::AnalysisTarget, AnalysisImage},
+    analysis::{
+        self,
+        refresh::{refresh_policy, AnalysisWindow, ProjectEvent, RefreshPlan},
+        target::AnalysisTarget,
+        AnalysisImage,
+    },
     model::{
         Diagnostic, Function, FunctionSource, Instruction, LoadProfile, ProjectInfo, Section,
         Segment, StringRef, Symbol, Xref,
@@ -71,6 +76,14 @@ pub fn strings(project_path: impl AsRef<Path>, filter: Option<&str>) -> Result<V
 
 pub fn functions(project_path: impl AsRef<Path>) -> Result<Vec<Function>> {
     Ok(Project::open(project_path)?.file().functions.clone())
+}
+
+pub fn basic_blocks(project_path: impl AsRef<Path>) -> Result<Vec<crate::model::BasicBlock>> {
+    Ok(Project::open(project_path)?.file().basic_blocks.clone())
+}
+
+pub fn cfg_edges(project_path: impl AsRef<Path>) -> Result<Vec<crate::model::CfgEdge>> {
+    Ok(Project::open(project_path)?.file().cfg_edges.clone())
 }
 
 pub fn xrefs(project_path: impl AsRef<Path>, addr: u64) -> Result<Vec<Xref>> {
@@ -139,6 +152,8 @@ pub fn make_function(project_path: impl AsRef<Path>, addr: u64) -> Result<()> {
             source: FunctionSource::User,
         },
     );
+    let plan = refresh_policy(ProjectEvent::ManualFunctionAdded { addr });
+    apply_refresh_plan(project.file_mut(), plan)?;
     project.save()
 }
 
@@ -166,6 +181,12 @@ pub fn set_function_range(
             source: FunctionSource::User,
         },
     );
+    let plan = refresh_policy(ProjectEvent::ManualFunctionRangeChanged {
+        addr: function_addr,
+        start,
+        end,
+    });
+    apply_refresh_plan(project.file_mut(), plan)?;
     project.save()
 }
 
@@ -206,10 +227,13 @@ fn build_project_file(
             endian: target.endian,
             profile: convert_profile(loaded.profile),
         },
+        source_bytes: loaded.bytes.clone(),
         segments,
         sections,
         symbols,
         instructions: analysis.instructions,
+        basic_blocks: analysis.basic_blocks,
+        cfg_edges: analysis.cfg_edges,
         functions: analysis.functions,
         xrefs: analysis.xrefs,
         strings: analysis.strings,
@@ -279,6 +303,72 @@ fn upsert_user_function(project: &mut ProjectFile, function: Function) {
     project.functions.retain(|func| func.addr != function.addr);
     project.functions.push(function);
     project.functions.sort_by_key(|func| func.addr);
+}
+
+fn apply_refresh_plan(project_file: &mut ProjectFile, plan: RefreshPlan) -> Result<()> {
+    match plan {
+        RefreshPlan::None => Ok(()),
+        RefreshPlan::GraphWindow(window) => refresh_graph_window(project_file, window),
+        RefreshPlan::DecodeWindow(window) => Err(UraError::Analysis(format!(
+            "decode-window refresh is not available for 0x{:x}..0x{:x}",
+            window.start, window.end
+        ))),
+        RefreshPlan::FullImport => Err(UraError::Analysis(
+            "full import is only valid during source import".to_string(),
+        )),
+    }
+}
+
+fn refresh_graph_window(project_file: &mut ProjectFile, window: AnalysisWindow) -> Result<()> {
+    let mut roots = project_file
+        .functions
+        .iter()
+        .filter(|func| func.source == FunctionSource::User)
+        .map(|func| func.addr)
+        .collect::<Vec<_>>();
+    if !roots.contains(&window.start) {
+        roots.push(window.start);
+    }
+    if roots.is_empty() {
+        return Ok(());
+    }
+
+    let cfg = analysis::cfg::build_cfg(&project_file.instructions, &roots, window)?;
+    project_file.basic_blocks = cfg.basic_blocks;
+    project_file.cfg_edges = cfg.cfg_edges;
+    let user_functions = project_file
+        .functions
+        .iter()
+        .filter(|func| func.source == FunctionSource::User)
+        .cloned()
+        .collect::<Vec<_>>();
+    let entry = project_file
+        .instructions
+        .first()
+        .map(|insn| insn.addr)
+        .unwrap_or(window.start);
+    project_file.functions = analysis::functions::discover_functions(
+        entry,
+        &project_file.instructions,
+        &project_file.basic_blocks,
+        &project_file.cfg_edges,
+        &user_functions,
+    );
+    project_file.xrefs = analysis::xrefs::build_xrefs(
+        &project_file.instructions,
+        &project_file.strings,
+        &project_file.cfg_edges,
+    );
+    let mut diagnostics = analysis::diagnostics::collect_diagnostics(&project_file.instructions);
+    diagnostics.extend(analysis::diagnostics::collect_graph_diagnostics(
+        &project_file.cfg_edges,
+    ));
+    diagnostics.extend(analysis::diagnostics::collect_user_function_diagnostics(
+        &project_file.functions,
+        &project_file.instructions,
+    ));
+    project_file.diagnostics = diagnostics;
+    Ok(())
 }
 
 fn stable_hash(bytes: &[u8]) -> String {
