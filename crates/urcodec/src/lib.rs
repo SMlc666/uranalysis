@@ -11,7 +11,7 @@ pub mod text;
 pub use decoder::Decoder;
 pub use encode::{EncodeOptions, Encoder};
 pub use error::{DecodeError, EncodeError, Result, TextError};
-pub use form::FormId;
+pub use form::{FormId, InstructionForm};
 pub use model::{
     Architecture, DecodeOptions, DecodeStatus, Endian, FlowKind, Instruction, InstructionKind,
     MemoryOperand, Operand, Register,

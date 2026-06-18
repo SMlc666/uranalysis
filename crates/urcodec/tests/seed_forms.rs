@@ -30,3 +30,24 @@ fn aarch64_ret_roundtrips_through_decode_encode_and_text() {
     let parsed = parser.parse_one("ret", 0x400080).unwrap();
     assert_eq!(encoder.encode_one(&parsed).unwrap(), bytes.to_vec());
 }
+
+#[test]
+fn seed_form_ids_are_exposed_once_per_architecture() {
+    let x86_forms = urcodec::arch::x86_64::forms::all_forms();
+    let aarch64_forms = urcodec::arch::aarch64::forms::all_forms();
+
+    assert_eq!(
+        x86_forms
+            .iter()
+            .filter(|form| form.id().local_name() == "ret")
+            .count(),
+        1
+    );
+    assert_eq!(
+        aarch64_forms
+            .iter()
+            .filter(|form| form.id().local_name() == "ret")
+            .count(),
+        1
+    );
+}

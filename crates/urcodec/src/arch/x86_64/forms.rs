@@ -1,32 +1,54 @@
 use crate::{
     error::{EncodeError, TextError},
-    model::{DecodeStatus, FlowKind, Instruction, InstructionKind},
+    form::{FormId, InstructionForm},
+    model::{Architecture, DecodeStatus, FlowKind, Instruction, InstructionKind},
 };
 
+static FORMS: &[InstructionForm] = &[InstructionForm::new(
+    FormId::new(Architecture::X86_64, "ret"),
+    "ret",
+    InstructionKind::Return,
+    FlowKind::Return,
+    encode_ret,
+    parse_ret,
+)];
+
+pub fn all_forms() -> &'static [InstructionForm] {
+    FORMS
+}
+
 pub fn encode(instruction: &Instruction) -> Result<Vec<u8>, EncodeError> {
-    if instruction.mnemonic == "ret"
-        && instruction.operands.is_empty()
-        && instruction.flow == FlowKind::Return
-    {
-        return Ok(vec![0xc3]);
-    }
-    Err(EncodeError::UnsupportedForm(instruction.mnemonic.clone()))
+    FORMS
+        .iter()
+        .find_map(|form| form.encode(instruction))
+        .ok_or_else(|| EncodeError::UnsupportedForm(instruction.mnemonic.clone()))
 }
 
 pub fn parse(text: &str, address: u64) -> Result<Instruction, TextError> {
-    if text.trim() == "ret" {
-        return Ok(Instruction {
-            address,
-            size: 1,
-            bytes: vec![0xc3],
-            mnemonic: "ret".to_string(),
-            operands: Vec::new(),
-            text: "ret".to_string(),
-            kind: InstructionKind::Return,
-            flow: FlowKind::Return,
-            branch_target: None,
-            status: DecodeStatus::Complete,
-        });
-    }
-    Err(TextError::UnknownMnemonic(text.trim().to_string()))
+    FORMS
+        .iter()
+        .find_map(|form| form.parse(text, address))
+        .ok_or_else(|| TextError::UnknownMnemonic(text.trim().to_string()))
+}
+
+fn encode_ret(instruction: &Instruction) -> Option<Vec<u8>> {
+    (instruction.mnemonic == "ret"
+        && instruction.operands.is_empty()
+        && instruction.flow == FlowKind::Return)
+        .then(|| vec![0xc3])
+}
+
+fn parse_ret(text: &str, address: u64) -> Option<Instruction> {
+    (text.trim() == "ret").then(|| Instruction {
+        address,
+        size: 1,
+        bytes: vec![0xc3],
+        mnemonic: "ret".to_string(),
+        operands: Vec::new(),
+        text: "ret".to_string(),
+        kind: InstructionKind::Return,
+        flow: FlowKind::Return,
+        branch_target: None,
+        status: DecodeStatus::Complete,
+    })
 }
