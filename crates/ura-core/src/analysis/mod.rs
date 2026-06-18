@@ -76,6 +76,22 @@ fn segments_from_loaded(segments: &[urloader::Segment]) -> Vec<Segment> {
         .collect()
 }
 
+fn segments_from_view(ranges: &[urloader::MappedRange]) -> Vec<Segment> {
+    ranges
+        .iter()
+        .enumerate()
+        .map(|(idx, range)| Segment {
+            id: idx as i64,
+            name: range.provenance.clone(),
+            vaddr: range.start,
+            file_offset: range.file_offset,
+            file_size: range.file_size,
+            mem_size: range.mem_size,
+            permissions: range.permissions.clone(),
+        })
+        .collect()
+}
+
 pub fn run_initial_analysis(
     image: &AnalysisImage<'_>,
     user_functions: &[Function],
@@ -153,6 +169,44 @@ pub fn build_state_from_loaded_with_instruction_limit(
         target,
         entry: loaded.entry,
         bytes: &loaded.bytes,
+        segments: &segments,
+    };
+    let user_functions = functions::manual_functions_from_facts(user_facts);
+    let output =
+        run_initial_analysis_with_instruction_limit(&image, &user_functions, max_instructions)?;
+
+    Ok(AnalysisState {
+        instructions: output.instructions,
+        strings: output.strings,
+        basic_blocks: output.basic_blocks,
+        cfg_edges: output.cfg_edges,
+        functions: output.functions,
+        xrefs: output.xrefs,
+        diagnostics: output.diagnostics,
+    })
+}
+
+pub fn build_state_from_view(
+    view: &urloader::BinaryView<'_>,
+    user_facts: &UserFacts,
+) -> Result<AnalysisState> {
+    build_state_from_view_with_instruction_limit(view, user_facts, None)
+}
+
+pub fn build_state_from_view_with_instruction_limit(
+    view: &urloader::BinaryView<'_>,
+    user_facts: &UserFacts,
+    max_instructions: Option<usize>,
+) -> Result<AnalysisState> {
+    let segments = segments_from_view(&view.ranges);
+    let target = target::AnalysisTarget::from_view(view)?;
+    let entry = view
+        .entry
+        .ok_or_else(|| crate::UraError::Unsupported("binary view missing analysis entry".to_string()))?;
+    let image = AnalysisImage {
+        target,
+        entry,
+        bytes: view.bytes,
         segments: &segments,
     };
     let user_functions = functions::manual_functions_from_facts(user_facts);

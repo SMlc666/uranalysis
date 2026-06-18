@@ -18,6 +18,7 @@ impl SessionProject {
             urloader::load(&stored.source.source_bytes).map_err(|err| anyhow!(err.to_string()))?;
         let session = ura_core::analysis::session::AnalysisSession::from_parts(
             ura_core::analysis::session::AnalysisInputs {
+                source_bytes: stored.source.source_bytes.clone(),
                 loaded,
                 user_facts: stored.user_truth.facts.clone(),
             },

@@ -23,6 +23,17 @@ impl AnalysisTarget {
         Ok(target)
     }
 
+    pub fn from_view(view: &urloader::BinaryView<'_>) -> Result<Self> {
+        let target = Self {
+            format: convert_format(view.target.format),
+            architecture: convert_architecture(view.target.architecture)?,
+            class: convert_class(view.target.class),
+            endian: convert_endian(view.target.endian)?,
+        };
+        target.ensure_supported()?;
+        Ok(target)
+    }
+
     fn ensure_supported(self) -> Result<()> {
         match (self.format, self.architecture, self.class, self.endian) {
             (BinaryFormat::Elf, Architecture::Aarch64, ImageClass::Bits64, Endian::Little)

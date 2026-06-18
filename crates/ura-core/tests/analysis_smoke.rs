@@ -13,6 +13,23 @@ fn load_image(bytes: &[u8]) -> Result<urloader::LoadedImage> {
     urloader::load(bytes).map_err(|err| UraError::Analysis(err.to_string()))
 }
 
+#[test]
+fn build_state_from_binary_view_preserves_disassembly_entry() -> Result<()> {
+    let bytes = fixtures::minimal_elf64_aarch64_executable();
+    let raw = urloader::load(&bytes).expect("raw image should load");
+    let view = raw.analysis_view(&bytes).expect("binary view should build");
+
+    let state = ura_core::analysis::build_state_from_view_with_instruction_limit(
+        &view,
+        &ura_core::model::UserFacts::default(),
+        Some(16),
+    )?;
+
+    assert_eq!(state.instructions[0].addr, 0x400080);
+    assert_eq!(state.instructions[0].text, "ret");
+    Ok(())
+}
+
 fn build_session(bytes: &[u8]) -> Result<AnalysisSession> {
     let loaded = load_image(bytes)?;
     let mut session = AnalysisSession::new(AnalysisInputs::from_loaded(&loaded));

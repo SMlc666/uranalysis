@@ -2,7 +2,6 @@ use urloader::LoadedImage;
 
 use crate::{
     analysis::{
-        build_state_from_loaded,
         invalidation::DirtyInputs,
         scheduler::{build_refresh_plan, RefreshPlan},
     },
@@ -12,6 +11,7 @@ use crate::{
 
 #[derive(Debug, Clone)]
 pub struct AnalysisInputs {
+    pub source_bytes: Vec<u8>,
     pub loaded: LoadedImage,
     pub user_facts: UserFacts,
 }
@@ -19,6 +19,7 @@ pub struct AnalysisInputs {
 impl AnalysisInputs {
     pub fn from_loaded(loaded: &LoadedImage) -> Self {
         Self {
+            source_bytes: loaded.bytes.clone(),
             loaded: loaded.clone(),
             user_facts: UserFacts::default(),
         }
@@ -75,7 +76,13 @@ impl AnalysisSession {
         let ran = if plan.pass_ids().is_empty() {
             Vec::new()
         } else {
-            self.state = build_state_from_loaded(&self.inputs.loaded, &self.inputs.user_facts)?;
+            let view = self
+                .inputs
+                .loaded
+                .analysis_view(&self.inputs.source_bytes)
+                .map_err(|err| crate::UraError::Analysis(err.to_string()))?;
+            self.state =
+                crate::analysis::build_state_from_view(&view, &self.inputs.user_facts)?;
             plan.clone_ids()
         };
         self.dirty = DirtyInputs::default();
