@@ -1,5 +1,12 @@
-use capstone::{arch, prelude::*};
-use urcodec::{Architecture, DecodeOptions, DecodeStatus, Decoder};
+use capstone::{arch, arch::x86::X86OperandType, prelude::*, Insn};
+use urcodec::{Architecture, DecodeOptions, DecodeStatus, Decoder, Operand};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum OperandShape {
+    Reg,
+    Mem,
+    Imm,
+}
 
 #[derive(Debug)]
 struct OracleCase {
@@ -8,6 +15,7 @@ struct OracleCase {
     urcodec_text: &'static str,
     mnemonic: &'static str,
     size: u8,
+    operands: &'static [OperandShape],
 }
 
 const CASES: &[OracleCase] = &[
@@ -17,6 +25,7 @@ const CASES: &[OracleCase] = &[
         urcodec_text: "ret",
         mnemonic: "ret",
         size: 1,
+        operands: &[],
     },
     OracleCase {
         name: "cmpxchg_dword",
@@ -24,6 +33,7 @@ const CASES: &[OracleCase] = &[
         urcodec_text: "cmpxchg eax, ecx",
         mnemonic: "cmpxchg",
         size: 3,
+        operands: &[OperandShape::Reg, OperandShape::Reg],
     },
     OracleCase {
         name: "bsf_reg",
@@ -31,6 +41,39 @@ const CASES: &[OracleCase] = &[
         urcodec_text: "bsf ecx, eax",
         mnemonic: "bsf",
         size: 3,
+        operands: &[OperandShape::Reg, OperandShape::Reg],
+    },
+    OracleCase {
+        name: "bsr_reg",
+        bytes: &[0x0f, 0xbd, 0xc9],
+        urcodec_text: "bsr ecx, ecx",
+        mnemonic: "bsr",
+        size: 3,
+        operands: &[OperandShape::Reg, OperandShape::Reg],
+    },
+    OracleCase {
+        name: "bts_reg",
+        bytes: &[0x0f, 0xab, 0xc1],
+        urcodec_text: "bts ecx, eax",
+        mnemonic: "bts",
+        size: 3,
+        operands: &[OperandShape::Reg, OperandShape::Reg],
+    },
+    OracleCase {
+        name: "bswap_eax",
+        bytes: &[0x0f, 0xc8],
+        urcodec_text: "bswap eax",
+        mnemonic: "bswap",
+        size: 2,
+        operands: &[OperandShape::Reg],
+    },
+    OracleCase {
+        name: "cpuid",
+        bytes: &[0x0f, 0xa2],
+        urcodec_text: "cpuid",
+        mnemonic: "cpuid",
+        size: 2,
+        operands: &[],
     },
     OracleCase {
         name: "imul_mem",
@@ -38,6 +81,7 @@ const CASES: &[OracleCase] = &[
         urcodec_text: "imul rcx, [rax]",
         mnemonic: "imul",
         size: 4,
+        operands: &[OperandShape::Reg, OperandShape::Mem],
     },
     OracleCase {
         name: "movzx_word",
@@ -45,6 +89,7 @@ const CASES: &[OracleCase] = &[
         urcodec_text: "movzx eax, [rdi]",
         mnemonic: "movzx",
         size: 3,
+        operands: &[OperandShape::Reg, OperandShape::Mem],
     },
     OracleCase {
         name: "btr_imm",
@@ -52,6 +97,7 @@ const CASES: &[OracleCase] = &[
         urcodec_text: "btr [rbx], 0x7",
         mnemonic: "btr",
         size: 4,
+        operands: &[OperandShape::Mem, OperandShape::Imm],
     },
     OracleCase {
         name: "psrlq_mmx_imm",
@@ -59,6 +105,7 @@ const CASES: &[OracleCase] = &[
         urcodec_text: "psrlq mm0, 0x8",
         mnemonic: "psrlq",
         size: 4,
+        operands: &[OperandShape::Reg, OperandShape::Imm],
     },
     OracleCase {
         name: "psrldq_xmm_imm",
@@ -66,6 +113,7 @@ const CASES: &[OracleCase] = &[
         urcodec_text: "psrldq xmm1, 0x5",
         mnemonic: "psrldq",
         size: 5,
+        operands: &[OperandShape::Reg, OperandShape::Imm],
     },
     OracleCase {
         name: "addps",
@@ -73,6 +121,7 @@ const CASES: &[OracleCase] = &[
         urcodec_text: "addps xmm0, xmm1",
         mnemonic: "addps",
         size: 3,
+        operands: &[OperandShape::Reg, OperandShape::Reg],
     },
     OracleCase {
         name: "addsd",
@@ -80,6 +129,7 @@ const CASES: &[OracleCase] = &[
         urcodec_text: "addsd xmm0, xmm3",
         mnemonic: "addsd",
         size: 4,
+        operands: &[OperandShape::Reg, OperandShape::Reg],
     },
     OracleCase {
         name: "pshufd",
@@ -87,6 +137,7 @@ const CASES: &[OracleCase] = &[
         urcodec_text: "pshufd xmm0, xmm1, 0x1b",
         mnemonic: "pshufd",
         size: 5,
+        operands: &[OperandShape::Reg, OperandShape::Reg, OperandShape::Imm],
     },
     OracleCase {
         name: "vzeroupper",
@@ -94,6 +145,7 @@ const CASES: &[OracleCase] = &[
         urcodec_text: "vzeroupper",
         mnemonic: "vzeroupper",
         size: 3,
+        operands: &[],
     },
 ];
 
@@ -106,8 +158,41 @@ fn capstone_x86_64() -> Capstone {
         .x86()
         .mode(arch::x86::ArchMode::Mode64)
         .syntax(arch::x86::ArchSyntax::Intel)
+        .detail(true)
         .build()
         .unwrap()
+}
+
+fn urcodec_operand_shapes(operands: &[Operand]) -> Vec<OperandShape> {
+    operands
+        .iter()
+        .map(|operand| match operand {
+            Operand::Register(_) => OperandShape::Reg,
+            Operand::Memory(_) => OperandShape::Mem,
+            Operand::Immediate(_) | Operand::AbsoluteAddress(_) | Operand::Condition(_) => {
+                OperandShape::Imm
+            }
+        })
+        .collect()
+}
+
+fn capstone_operand_shapes(capstone: &Capstone, insn: &Insn) -> Vec<OperandShape> {
+    let detail = capstone
+        .insn_detail(insn)
+        .unwrap_or_else(|err| panic!("capstone detail failed: {err}"));
+    let arch_detail = detail.arch_detail();
+    let x86_detail = arch_detail
+        .x86()
+        .unwrap_or_else(|| panic!("expected x86 capstone detail"));
+    x86_detail
+        .operands()
+        .map(|operand| match operand.op_type {
+            X86OperandType::Reg(_) => OperandShape::Reg,
+            X86OperandType::Mem(_) => OperandShape::Mem,
+            X86OperandType::Imm(_) => OperandShape::Imm,
+            X86OperandType::Invalid => panic!("capstone produced invalid x86 operand"),
+        })
+        .collect()
 }
 
 #[test]
@@ -123,6 +208,12 @@ fn x86_64_complete_fixture_decode_matches_capstone_oracle() {
         assert_eq!(decoded.size, case.size, "{}", case.name);
         assert_eq!(decoded.text, case.urcodec_text, "{}", case.name);
         assert_eq!(decoded.mnemonic, case.mnemonic, "{}", case.name);
+        assert_eq!(
+            urcodec_operand_shapes(&decoded.operands),
+            case.operands,
+            "{}",
+            case.name
+        );
 
         let oracle = capstone
             .disasm_count(case.bytes, 0x401000, 1)
@@ -138,5 +229,11 @@ fn x86_64_complete_fixture_decode_matches_capstone_oracle() {
             case.name
         );
         assert_eq!(oracle.mnemonic(), Some(case.mnemonic), "{}", case.name);
+        assert_eq!(
+            capstone_operand_shapes(&capstone, oracle),
+            case.operands,
+            "{}",
+            case.name
+        );
     }
 }

@@ -2,7 +2,7 @@
 
 `urcodec` uses Capstone as a test-only decode oracle for selected fixture bytes.
 The oracle verifies that high-risk complete decodes agree with an external
-decoder on instruction length and mnemonic family.
+decoder on instruction length, mnemonic family, and coarse operand shape.
 
 Capstone is not part of the runtime decode path. It is declared only under
 `crates/urcodec` dev-dependencies, and `ura-core` continues to depend on
@@ -12,8 +12,8 @@ The oracle tests intentionally do not compare Capstone operand text as the
 project contract. `urcodec` owns its canonical text format, structured operands,
 instruction kind, flow semantics, and unknown-instruction policy. Capstone is
 used to catch obvious decode drift such as wrong instruction length, wrong
-mnemonic family, or completing bytes that should be reviewed against an external
-decoder before landing.
+mnemonic family, wrong Reg/Mem/Imm operand shape, or completing bytes that
+should be reviewed against an external decoder before landing.
 
 Current fixture scope:
 

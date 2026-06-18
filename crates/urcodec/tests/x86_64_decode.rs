@@ -97,6 +97,11 @@ fn decodes_x86_64_system_0f_forms() {
     assert_eq!(sfence.text, "sfence");
     assert_eq!(sfence.size, 3);
     assert_eq!(sfence.kind, InstructionKind::System);
+
+    let cpuid = decode(&[0x0f, 0xa2], 0x401000);
+    assert_eq!(cpuid.text, "cpuid");
+    assert_eq!(cpuid.size, 2);
+    assert_eq!(cpuid.kind, InstructionKind::System);
 }
 
 #[test]
@@ -208,6 +213,11 @@ fn decodes_x86_64_mov_register_forms() {
     assert_eq!(movsxd_64.text, "movsxd rax, ecx");
     assert_eq!(movsxd_64.size, 3);
     assert_eq!(movsxd_64.kind, InstructionKind::Move);
+
+    let bswap = decode(&[0x0f, 0xc8], 0x401000);
+    assert_eq!(bswap.text, "bswap eax");
+    assert_eq!(bswap.size, 2);
+    assert_eq!(bswap.kind, InstructionKind::Move);
 }
 
 #[test]
@@ -390,6 +400,11 @@ fn decodes_x86_64_arithmetic_and_logical_forms() {
     assert_eq!(bsf_mem.size, 4);
     assert_eq!(bsf_mem.kind, InstructionKind::Logical);
 
+    let bsr_reg = decode(&[0x0f, 0xbd, 0xc9], 0x401000);
+    assert_eq!(bsr_reg.text, "bsr ecx, ecx");
+    assert_eq!(bsr_reg.size, 3);
+    assert_eq!(bsr_reg.kind, InstructionKind::Logical);
+
     let movzx_word = decode(&[0x0f, 0xb7, 0x07], 0x401000);
     assert_eq!(movzx_word.text, "movzx eax, [rdi]");
     assert_eq!(movzx_word.size, 3);
@@ -409,6 +424,11 @@ fn decodes_x86_64_arithmetic_and_logical_forms() {
     assert_eq!(bts_imm.text, "bts [rbx], 0x8");
     assert_eq!(bts_imm.size, 4);
     assert_eq!(bts_imm.kind, InstructionKind::Logical);
+
+    let bts_reg = decode(&[0x0f, 0xab, 0xc1], 0x401000);
+    assert_eq!(bts_reg.text, "bts ecx, eax");
+    assert_eq!(bts_reg.size, 3);
+    assert_eq!(bts_reg.kind, InstructionKind::Logical);
 
     let btr_imm = decode(&[0x0f, 0xba, 0x33, 0x07], 0x401000);
     assert_eq!(btr_imm.text, "btr [rbx], 0x7");

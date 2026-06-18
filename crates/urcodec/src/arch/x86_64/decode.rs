@@ -188,6 +188,16 @@ pub fn decode_instruction(bytes: &[u8], address: u64) -> Result<Instruction> {
                     FlowKind::Fallthrough,
                     None,
                 ))
+            } else if second == 0xa2 {
+                Ok(base(
+                    bytes[..opcode_offset + 2].to_vec(),
+                    address,
+                    "cpuid",
+                    Vec::new(),
+                    InstructionKind::System,
+                    FlowKind::Fallthrough,
+                    None,
+                ))
             } else if second == 0x01 {
                 decode_0f01_system(bytes, address, prefixes)
             } else if second == 0x6f || second == 0x7f {
@@ -215,7 +225,9 @@ pub fn decode_instruction(bytes: &[u8], address: u64) -> Result<Instruction> {
             } else if matches!(second, 0xd7 | 0xe0 | 0xeb | 0xef | 0xf1 | 0xf5 | 0xfd) {
                 decode_mmx_opcode(bytes, address, prefixes, second)
             } else if second == 0xa3 {
-                decode_bt(bytes, address, prefixes)
+                decode_bit_test_reg(bytes, address, prefixes, "bt", InstructionKind::Compare)
+            } else if second == 0xab {
+                decode_bit_test_reg(bytes, address, prefixes, "bts", InstructionKind::Logical)
             } else if second == 0xba {
                 decode_bit_test_imm(bytes, address, prefixes)
             } else if matches!(second, 0x10 | 0x11 | 0x28 | 0x29) {
@@ -257,8 +269,12 @@ pub fn decode_instruction(bytes: &[u8], address: u64) -> Result<Instruction> {
                 decode_imul_rm(bytes, address, prefixes)
             } else if second == 0xb7 {
                 decode_movzx_word(bytes, address, prefixes)
+            } else if second == 0xbd {
+                decode_bit_scan(bytes, address, prefixes, "bsr")
             } else if second == 0xb6 || second == 0xbe {
                 decode_mov_extend(bytes, address, prefixes, second)
+            } else if (0xc8..=0xcf).contains(&second) {
+                decode_bswap(bytes, address, prefixes, second)
             } else {
                 Ok(unknown(opcode, address))
             }
@@ -1393,7 +1409,13 @@ fn decode_cmovcc(
     ))
 }
 
-fn decode_bt(bytes: &[u8], address: u64, prefixes: Prefixes) -> Result<Instruction> {
+fn decode_bit_test_reg(
+    bytes: &[u8],
+    address: u64,
+    prefixes: Prefixes,
+    mnemonic: &str,
+    kind: InstructionKind,
+) -> Result<Instruction> {
     let modrm_offset = prefixes.opcode_offset + 2;
     require_len(bytes, modrm_offset + 1)?;
     let modrm = parse_modrm(bytes[modrm_offset]);
@@ -1407,9 +1429,9 @@ fn decode_bt(bytes: &[u8], address: u64, prefixes: Prefixes) -> Result<Instructi
     Ok(base(
         bytes[..consumed].to_vec(),
         address,
-        "bt",
+        mnemonic,
         vec![rm, reg],
-        InstructionKind::Compare,
+        kind,
         FlowKind::Fallthrough,
         None,
     ))
@@ -1585,6 +1607,15 @@ fn decode_xadd(
 }
 
 fn decode_bsf(bytes: &[u8], address: u64, prefixes: Prefixes) -> Result<Instruction> {
+    decode_bit_scan(bytes, address, prefixes, "bsf")
+}
+
+fn decode_bit_scan(
+    bytes: &[u8],
+    address: u64,
+    prefixes: Prefixes,
+    mnemonic: &str,
+) -> Result<Instruction> {
     let modrm_offset = prefixes.opcode_offset + 2;
     require_len(bytes, modrm_offset + 1)?;
     let modrm = parse_modrm(bytes[modrm_offset]);
@@ -1598,9 +1629,27 @@ fn decode_bsf(bytes: &[u8], address: u64, prefixes: Prefixes) -> Result<Instruct
     Ok(base(
         bytes[..consumed].to_vec(),
         address,
-        "bsf",
+        mnemonic,
         vec![dst, src],
         InstructionKind::Logical,
+        FlowKind::Fallthrough,
+        None,
+    ))
+}
+
+fn decode_bswap(bytes: &[u8], address: u64, prefixes: Prefixes, opcode: u8) -> Result<Instruction> {
+    let reg = extend_reg(opcode - 0xc8, prefixes.rex.b);
+    let width_bits = if prefixes.rex.w { 64 } else { 32 };
+    Ok(base(
+        bytes[..prefixes.opcode_offset + 2].to_vec(),
+        address,
+        "bswap",
+        vec![Operand::Register(reg_for_width(
+            reg,
+            width_bits,
+            prefixes.rex.present,
+        ))],
+        InstructionKind::Move,
         FlowKind::Fallthrough,
         None,
     ))
