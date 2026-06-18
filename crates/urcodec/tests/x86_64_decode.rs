@@ -796,6 +796,30 @@ fn decodes_x86_64_group_fe_forms() {
 }
 
 #[test]
+fn decodes_x86_64_x87_memory_forms() {
+    let fimul = decode(&[0xda, 0x0b], 0x401000);
+    assert_eq!(fimul.text, "fimul [rbx]");
+    assert_eq!(fimul.size, 2);
+    assert_eq!(fimul.kind, InstructionKind::Arithmetic);
+    let fimul_mem = memory_operand(&fimul.operands[0]);
+    assert_eq!(fimul_mem.width_bits, Some(32));
+
+    let fistp = decode(&[0xdb, 0x19], 0x401000);
+    assert_eq!(fistp.text, "fistp [rcx]");
+    assert_eq!(fistp.size, 2);
+    assert_eq!(fistp.kind, InstructionKind::Store);
+    let fistp_mem = memory_operand(&fistp.operands[0]);
+    assert_eq!(fistp_mem.width_bits, Some(32));
+
+    let fstp = decode(&[0xdd, 0x1a], 0x401000);
+    assert_eq!(fstp.text, "fstp [rdx]");
+    assert_eq!(fstp.size, 2);
+    assert_eq!(fstp.kind, InstructionKind::Store);
+    let fstp_mem = memory_operand(&fstp.operands[0]);
+    assert_eq!(fstp_mem.width_bits, Some(64));
+}
+
+#[test]
 fn decodes_x86_64_group_ff_forms() {
     let inc = decode(&[0x48, 0xff, 0xc0], 0x401000);
     assert_eq!(inc.text, "inc rax");

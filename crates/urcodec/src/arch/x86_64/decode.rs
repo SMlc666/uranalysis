@@ -849,6 +849,7 @@ pub fn decode_instruction(bytes: &[u8], address: u64) -> Result<Instruction> {
         0xd1 => decode_group2_one(bytes, address, prefixes, default_operand_width(prefixes)),
         0xd2 => decode_group2_cl(bytes, address, prefixes, 8),
         0xd3 => decode_group2_cl(bytes, address, prefixes, default_operand_width(prefixes)),
+        0xda | 0xdb | 0xdd => decode_x87_memory(bytes, address, prefixes, opcode),
         0xc6 => decode_mov_imm8_rm(bytes, address, prefixes),
         0xc7 => decode_mov_imm_rm(bytes, address, prefixes),
         0xfe => decode_group_fe(bytes, address, prefixes),
@@ -1556,6 +1557,36 @@ fn decode_group_fe(bytes: &[u8], address: u64, prefixes: Prefixes) -> Result<Ins
         mnemonic,
         vec![rm],
         InstructionKind::Arithmetic,
+        FlowKind::Fallthrough,
+        None,
+    ))
+}
+
+fn decode_x87_memory(
+    bytes: &[u8],
+    address: u64,
+    prefixes: Prefixes,
+    opcode: u8,
+) -> Result<Instruction> {
+    let modrm_offset = prefixes.opcode_offset + 1;
+    require_len(bytes, modrm_offset + 1)?;
+    let modrm = parse_modrm(bytes[modrm_offset]);
+    if modrm.mode == 0b11 {
+        return Ok(unknown(bytes[prefixes.opcode_offset], address));
+    }
+    let (mnemonic, width_bits, kind) = match (opcode, modrm.reg) {
+        (0xda, 1) => ("fimul", 32, InstructionKind::Arithmetic),
+        (0xdb, 3) => ("fistp", 32, InstructionKind::Store),
+        (0xdd, 3) => ("fstp", 64, InstructionKind::Store),
+        _ => return Ok(unknown(bytes[prefixes.opcode_offset], address)),
+    };
+    let (rm, consumed) = parse_rm_operand(bytes, modrm_offset, prefixes.rex, width_bits)?;
+    Ok(base(
+        bytes[..consumed].to_vec(),
+        address,
+        mnemonic,
+        vec![rm],
+        kind,
         FlowKind::Fallthrough,
         None,
     ))
