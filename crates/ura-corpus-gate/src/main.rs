@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 use tempfile::tempdir;
 
 const MAX_CORPUS_INSTRUCTIONS_PER_SAMPLE: usize = 20_000;
+const X86_64_UNKNOWN_CONTEXT_BYTES: usize = 8;
 
 #[derive(Debug, Deserialize)]
 struct Manifest {
@@ -61,6 +62,7 @@ struct SampleReport {
 struct UnknownClusterReport {
     architecture: String,
     bytes: String,
+    context_bytes: String,
     decoder: String,
     count: usize,
     samples: Vec<String>,
@@ -271,16 +273,18 @@ fn collect_unknown_clusters(
     instructions: &[ura_core::model::Instruction],
 ) -> Vec<UnknownClusterReport> {
     let mut clusters =
-        BTreeMap::<(String, String, String, String), UnknownClusterAccumulator>::new();
-    for instruction in instructions {
+        BTreeMap::<(String, String, String, String, String), UnknownClusterAccumulator>::new();
+    for (index, instruction) in instructions.iter().enumerate() {
         if instruction.decode_status != ura_core::model::DecodeStatus::Unknown {
             continue;
         }
         let bytes = format_bytes(&instruction.bytes);
+        let context_bytes = format_bytes(&unknown_context_bytes(architecture, instructions, index));
         let candidate_family = candidate_family(architecture, &instruction.bytes);
         let key = (
             architecture.to_string(),
             bytes.clone(),
+            context_bytes.clone(),
             instruction.decoder.clone(),
             candidate_family.clone(),
         );
@@ -289,6 +293,7 @@ fn collect_unknown_clusters(
             .or_insert_with(|| UnknownClusterAccumulator {
                 architecture: architecture.to_string(),
                 bytes,
+                context_bytes,
                 decoder: instruction.decoder.clone(),
                 count: 0,
                 samples: BTreeSet::new(),
@@ -308,12 +313,13 @@ fn collect_unknown_clusters(
 
 fn aggregate_unknown_clusters(reports: &[SampleReport]) -> Vec<UnknownClusterReport> {
     let mut clusters =
-        BTreeMap::<(String, String, String, String), UnknownClusterAccumulator>::new();
+        BTreeMap::<(String, String, String, String, String), UnknownClusterAccumulator>::new();
     for report in reports {
         for cluster in &report.unknown_clusters {
             let key = (
                 cluster.architecture.clone(),
                 cluster.bytes.clone(),
+                cluster.context_bytes.clone(),
                 cluster.decoder.clone(),
                 cluster.candidate_family.clone(),
             );
@@ -322,6 +328,7 @@ fn aggregate_unknown_clusters(reports: &[SampleReport]) -> Vec<UnknownClusterRep
                 .or_insert_with(|| UnknownClusterAccumulator {
                     architecture: cluster.architecture.clone(),
                     bytes: cluster.bytes.clone(),
+                    context_bytes: cluster.context_bytes.clone(),
                     decoder: cluster.decoder.clone(),
                     count: 0,
                     samples: BTreeSet::new(),
@@ -344,6 +351,7 @@ fn aggregate_unknown_clusters(reports: &[SampleReport]) -> Vec<UnknownClusterRep
 struct UnknownClusterAccumulator {
     architecture: String,
     bytes: String,
+    context_bytes: String,
     decoder: String,
     count: usize,
     samples: BTreeSet<String>,
@@ -356,6 +364,7 @@ impl UnknownClusterAccumulator {
         UnknownClusterReport {
             architecture: self.architecture,
             bytes: self.bytes,
+            context_bytes: self.context_bytes,
             decoder: self.decoder,
             count: self.count,
             samples: self.samples.into_iter().collect(),
@@ -375,9 +384,37 @@ fn sorted_unknown_clusters(
             .cmp(&left.count)
             .then_with(|| left.architecture.cmp(&right.architecture))
             .then_with(|| left.bytes.cmp(&right.bytes))
+            .then_with(|| left.context_bytes.cmp(&right.context_bytes))
             .then_with(|| left.decoder.cmp(&right.decoder))
     });
     clusters
+}
+
+fn unknown_context_bytes(
+    architecture: &str,
+    instructions: &[ura_core::model::Instruction],
+    index: usize,
+) -> Vec<u8> {
+    let instruction = &instructions[index];
+    if architecture != "x86_64" {
+        return instruction.bytes.clone();
+    }
+
+    let mut context = Vec::new();
+    let mut expected_addr = instruction.addr;
+    for next in &instructions[index..] {
+        if next.addr != expected_addr {
+            break;
+        }
+        for byte in &next.bytes {
+            if context.len() == X86_64_UNKNOWN_CONTEXT_BYTES {
+                return context;
+            }
+            context.push(*byte);
+        }
+        expected_addr = expected_addr.wrapping_add(next.bytes.len() as u64);
+    }
+    context
 }
 
 fn format_bytes(bytes: &[u8]) -> String {
@@ -440,14 +477,15 @@ fn render_summary(report: &Report) -> String {
     }
     out.push_str("\n## Unknown Instruction Clusters\n\n");
     out.push_str(
-        "| Architecture | Bytes | Decoder | Count | Samples | First Address | Candidate Family |\n",
+        "| Architecture | Bytes | Context Bytes | Decoder | Count | Samples | First Address | Candidate Family |\n",
     );
-    out.push_str("| --- | --- | --- | ---: | --- | --- | --- |\n");
+    out.push_str("| --- | --- | --- | --- | ---: | --- | --- | --- |\n");
     for cluster in &report.unknown_clusters {
         out.push_str(&format!(
-            "| {} | `{}` | {} | {} | {} | 0x{:x} | {} |\n",
+            "| {} | `{}` | `{}` | {} | {} | {} | 0x{:x} | {} |\n",
             cluster.architecture,
             cluster.bytes,
+            cluster.context_bytes,
             cluster.decoder,
             cluster.count,
             cluster.samples.join(","),
@@ -516,7 +554,7 @@ mod tests {
 
         assert!(summary.contains("## Unknown Instruction Clusters"));
         assert!(summary.contains(
-            "| Architecture | Bytes | Decoder | Count | Samples | First Address | Candidate Family |"
+            "| Architecture | Bytes | Context Bytes | Decoder | Count | Samples | First Address | Candidate Family |"
         ));
     }
 
@@ -524,7 +562,7 @@ mod tests {
     fn unknown_clusters_group_by_architecture_decoder_and_bytes() {
         let instructions = vec![
             instruction(0x1000, &[0xff], ura_core::model::DecodeStatus::Unknown),
-            instruction(0x1001, &[0xff], ura_core::model::DecodeStatus::Unknown),
+            instruction(0x2000, &[0xff], ura_core::model::DecodeStatus::Unknown),
             instruction(0x1002, &[0xc3], ura_core::model::DecodeStatus::Complete),
         ];
 
@@ -533,6 +571,7 @@ mod tests {
         assert_eq!(clusters.len(), 1);
         assert_eq!(clusters[0].architecture, "x86_64");
         assert_eq!(clusters[0].bytes, "ff");
+        assert_eq!(clusters[0].context_bytes, "ff");
         assert_eq!(clusters[0].decoder, "urcodec/x86_64");
         assert_eq!(clusters[0].count, 2);
         assert_eq!(clusters[0].samples, vec!["sample".to_string()]);
@@ -541,6 +580,34 @@ mod tests {
             clusters[0].candidate_family,
             "x86_64_unknown_opcode_or_prefix"
         );
+    }
+
+    #[test]
+    fn x86_unknown_clusters_include_contiguous_context_bytes() {
+        let instructions = vec![
+            instruction(0x1000, &[0x0f], ura_core::model::DecodeStatus::Unknown),
+            instruction(0x1001, &[0x84], ura_core::model::DecodeStatus::Unknown),
+            instruction(0x1002, &[0x11], ura_core::model::DecodeStatus::Unknown),
+            instruction(0x1003, &[0x22], ura_core::model::DecodeStatus::Unknown),
+            instruction(0x1004, &[0x33], ura_core::model::DecodeStatus::Unknown),
+            instruction(0x1005, &[0x44], ura_core::model::DecodeStatus::Unknown),
+            instruction(0x2000, &[0x0f], ura_core::model::DecodeStatus::Unknown),
+            instruction(0x2001, &[0x85], ura_core::model::DecodeStatus::Unknown),
+        ];
+
+        let clusters = collect_unknown_clusters("sample", "x86_64", &instructions);
+
+        let two_byte_clusters = clusters
+            .iter()
+            .filter(|cluster| cluster.bytes == "0f")
+            .collect::<Vec<_>>();
+        assert_eq!(two_byte_clusters.len(), 2);
+        assert!(two_byte_clusters
+            .iter()
+            .any(|cluster| cluster.context_bytes == "0f 84 11 22 33 44"));
+        assert!(two_byte_clusters
+            .iter()
+            .any(|cluster| cluster.context_bytes == "0f 85"));
     }
 
     fn instruction(
