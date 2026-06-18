@@ -221,7 +221,9 @@ fn main() -> Result<()> {
         Command::MakeFunc { project, addr } => {
             let mut project = SessionProject::load(&project)?;
             let addr = parse_addr(&addr)?;
-            project.session.update_manual_function_range(addr, addr, addr + 4)?;
+            project
+                .session
+                .update_manual_function_range(addr, addr, addr + 4)?;
             project.refresh()?;
             project.save()?;
         }

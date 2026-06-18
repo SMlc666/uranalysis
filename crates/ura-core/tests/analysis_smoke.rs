@@ -5,9 +5,7 @@ use ura_core::{
         self,
         session::{AnalysisInputs, AnalysisSession},
     },
-    model::{
-        Architecture, BinaryFormat, Endian, FunctionSource, ImageClass, UserFacts, XrefKind,
-    },
+    model::{Architecture, BinaryFormat, Endian, FunctionSource, ImageClass, UserFacts, XrefKind},
     Result, UraError,
 };
 
@@ -48,7 +46,10 @@ fn new_project_records_basic_blocks_and_cfg_edges() -> Result<()> {
     assert_eq!(session.state.basic_blocks[0].start, 0x400080);
     assert_eq!(session.state.basic_blocks[0].end, 0x400084);
     assert_eq!(session.state.cfg_edges.len(), 1);
-    assert_eq!(session.state.cfg_edges[0].kind, ura_core::model::CfgEdgeKind::Return);
+    assert_eq!(
+        session.state.cfg_edges[0].kind,
+        ura_core::model::CfgEdgeKind::Return
+    );
     Ok(())
 }
 
@@ -102,9 +103,11 @@ fn invalid_user_function_root_is_retained_and_diagnosed() -> Result<()> {
     session.update_manual_function_range(0x500000, 0x500000, 0x500004)?;
     session.refresh()?;
 
-    assert!(session.state.functions.iter().any(|func| {
-        func.addr == 0x500000 && func.source == FunctionSource::User
-    }));
+    assert!(session
+        .state
+        .functions
+        .iter()
+        .any(|func| { func.addr == 0x500000 && func.source == FunctionSource::User }));
     assert!(session.state.diagnostics.iter().any(|diag| {
         diag.addr == Some(0x500000)
             && diag
@@ -123,8 +126,16 @@ fn branch_and_call_xrefs_use_decoder_flow() -> Result<()> {
     bytes[0x90..0x94].copy_from_slice(&0xd65f03c0u32.to_le_bytes());
 
     let session = build_session(&bytes)?;
-    assert!(session.state.xrefs.iter().any(|xref| xref.from_addr == 0x400080 && xref.to_addr == 0x400088));
-    assert!(session.state.xrefs.iter().any(|xref| xref.from_addr == 0x400084 && xref.to_addr == 0x400090));
+    assert!(session
+        .state
+        .xrefs
+        .iter()
+        .any(|xref| xref.from_addr == 0x400080 && xref.to_addr == 0x400088));
+    assert!(session
+        .state
+        .xrefs
+        .iter()
+        .any(|xref| xref.from_addr == 0x400084 && xref.to_addr == 0x400090));
     Ok(())
 }
 
@@ -186,7 +197,11 @@ fn conditional_branch_target_stays_in_entry_function() -> Result<()> {
         .functions
         .iter()
         .any(|func| { func.addr == 0x400080 && func.start == 0x400080 && func.end == 0x40008c }));
-    assert!(!session.state.functions.iter().any(|func| func.addr == 0x400088));
+    assert!(!session
+        .state
+        .functions
+        .iter()
+        .any(|func| func.addr == 0x400088));
     Ok(())
 }
 

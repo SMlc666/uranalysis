@@ -14,7 +14,8 @@ impl SessionProject {
     pub fn load(path: impl AsRef<Path>) -> Result<Self> {
         let path = path.as_ref().to_path_buf();
         let stored = urastore::load_project(&path)?;
-        let loaded = urloader::load(&stored.source.source_bytes).map_err(|err| anyhow!(err.to_string()))?;
+        let loaded =
+            urloader::load(&stored.source.source_bytes).map_err(|err| anyhow!(err.to_string()))?;
         let session = ura_core::analysis::session::AnalysisSession::from_parts(
             ura_core::analysis::session::AnalysisInputs {
                 loaded,

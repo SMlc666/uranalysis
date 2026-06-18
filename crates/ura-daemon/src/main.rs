@@ -4,7 +4,7 @@ use std::{
     collections::HashMap,
     io::{BufRead, BufReader, Write},
     net::{TcpListener, TcpStream},
-    path::PathBuf,
+    path::{Path, PathBuf},
 };
 
 use anyhow::{anyhow, Result};
@@ -43,9 +43,10 @@ fn handle_client(stream: TcpStream) -> Result<()> {
     Ok(())
 }
 
-fn load_session_project(path: &PathBuf) -> Result<SessionProject> {
+fn load_session_project(path: &Path) -> Result<SessionProject> {
     let stored = urastore::load_project(path)?;
-    let loaded = urloader::load(&stored.source.source_bytes).map_err(|err| anyhow!(err.to_string()))?;
+    let loaded =
+        urloader::load(&stored.source.source_bytes).map_err(|err| anyhow!(err.to_string()))?;
     let session = ura_core::analysis::session::AnalysisSession::from_parts(
         ura_core::analysis::session::AnalysisInputs {
             loaded,
@@ -59,7 +60,7 @@ fn load_session_project(path: &PathBuf) -> Result<SessionProject> {
     Ok(SessionProject { stored, session })
 }
 
-fn save_session_project(path: &PathBuf, project: &mut SessionProject) -> Result<()> {
+fn save_session_project(path: &Path, project: &mut SessionProject) -> Result<()> {
     if project.stored.user_truth.facts != project.session.inputs.user_facts {
         project.stored.user_truth.revision += 1;
     }
@@ -104,10 +105,12 @@ fn handle_request(
                 "entry": project.stored.source.entry,
             }))
         }),
-        Request::ListFunctions { id, session_id } => with_project(id, session_id, sessions, |path| {
-            let project = load_session_project(path)?;
-            serde_json::to_value(project.session.state.functions).map_err(anyhow::Error::from)
-        }),
+        Request::ListFunctions { id, session_id } => {
+            with_project(id, session_id, sessions, |path| {
+                let project = load_session_project(path)?;
+                serde_json::to_value(project.session.state.functions).map_err(anyhow::Error::from)
+            })
+        }
         Request::GetDisassembly {
             id,
             session_id,
@@ -211,7 +214,7 @@ fn handle_request(
 
 fn with_project<F>(id: u64, session_id: u64, sessions: &HashMap<u64, PathBuf>, f: F) -> String
 where
-    F: FnOnce(&PathBuf) -> Result<serde_json::Value>,
+    F: FnOnce(&Path) -> Result<serde_json::Value>,
 {
     let Some(path) = sessions.get(&session_id) else {
         return serde_json::to_string(&Response::<serde_json::Value>::err(id, "unknown session"))

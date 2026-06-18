@@ -55,6 +55,28 @@ fn cli_creates_project_and_prints_info() {
 }
 
 #[test]
+fn cli_new_writes_urastore_container_magic() -> Result<(), Box<dyn std::error::Error>> {
+    let dir = tempdir()?;
+    let input = dir.path().join("sample.elf");
+    let project = dir.path().join("sample.ura");
+    std::fs::write(&input, minimal_elf64_aarch64_executable())?;
+
+    Command::cargo_bin("ura")?
+        .args([
+            "new",
+            input.to_str().unwrap(),
+            "-o",
+            project.to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    let bytes = std::fs::read(&project)?;
+    assert_eq!(&bytes[..4], b"URS1");
+    Ok(())
+}
+
+#[test]
 fn cli_reanalyze_rebuilds_stale_cache() -> Result<(), Box<dyn std::error::Error>> {
     let dir = tempdir()?;
     let input = dir.path().join("sample.elf");
@@ -62,7 +84,12 @@ fn cli_reanalyze_rebuilds_stale_cache() -> Result<(), Box<dyn std::error::Error>
     std::fs::write(&input, minimal_elf64_aarch64_executable())?;
 
     Command::cargo_bin("ura")?
-        .args(["new", input.to_str().unwrap(), "-o", project.to_str().unwrap()])
+        .args([
+            "new",
+            input.to_str().unwrap(),
+            "-o",
+            project.to_str().unwrap(),
+        ])
         .assert()
         .success();
 

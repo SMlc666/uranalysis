@@ -80,7 +80,9 @@ pub fn run(project: PathBuf) -> Result<()> {
             }
             "make-func" => {
                 let addr = parse_shell_addr(parts.next().unwrap_or(""), current_addr)?;
-                project.session.update_manual_function_range(addr, addr, addr + 4)?;
+                project
+                    .session
+                    .update_manual_function_range(addr, addr, addr + 4)?;
                 project.refresh()?;
                 project.save()?;
             }

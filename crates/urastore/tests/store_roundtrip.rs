@@ -1,7 +1,7 @@
 use tempfile::tempdir;
 use urastore::{
-    load_project, save_project, AnalysisCache, CacheMetadata, ProjectSource, StoredProject,
-    StoreError, UserTruth,
+    load_project, save_project, AnalysisCache, CacheMetadata, ProjectSource, StoreError,
+    StoredProject, UserTruth,
 };
 
 #[test]

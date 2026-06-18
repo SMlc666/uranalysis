@@ -83,13 +83,19 @@ impl AnalysisSession {
     }
 
     pub fn rename(&mut self, addr: u64, name: &str) -> Result<()> {
-        self.inputs.user_facts.renames.insert(addr, name.to_string());
+        self.inputs
+            .user_facts
+            .renames
+            .insert(addr, name.to_string());
         self.dirty.renames = true;
         Ok(())
     }
 
     pub fn comment(&mut self, addr: u64, text: &str) -> Result<()> {
-        self.inputs.user_facts.comments.insert(addr, text.to_string());
+        self.inputs
+            .user_facts
+            .comments
+            .insert(addr, text.to_string());
         self.dirty.comments = true;
         Ok(())
     }

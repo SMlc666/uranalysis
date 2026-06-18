@@ -156,7 +156,8 @@ pub fn build_state_from_loaded_with_instruction_limit(
         segments: &segments,
     };
     let user_functions = functions::manual_functions_from_facts(user_facts);
-    let output = run_initial_analysis_with_instruction_limit(&image, &user_functions, max_instructions)?;
+    let output =
+        run_initial_analysis_with_instruction_limit(&image, &user_functions, max_instructions)?;
 
     Ok(AnalysisState {
         instructions: output.instructions,

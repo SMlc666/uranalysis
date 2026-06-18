@@ -201,7 +201,7 @@ fn analyze_sample(root: &Path, sample: &Sample) -> Result<SampleReport> {
         unknown as f64 / instructions.len() as f64
     };
     let unknown_clusters =
-        collect_unknown_clusters(&sample.id, &detected_architecture, &instructions);
+        collect_unknown_clusters(&sample.id, &detected_architecture, instructions);
 
     let mut failures = Vec::new();
     if detected_format != sample.format {
