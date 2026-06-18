@@ -103,7 +103,16 @@ fn executable_ranges_for_analysis(
 ) -> Vec<(u64, u64)> {
     let ranges = image.executable_ranges();
     if max_instructions.is_none() {
-        return ranges;
+        return ranges
+            .into_iter()
+            .flat_map(|(start, end)| {
+                if image.entry > start && image.entry < end {
+                    vec![(start, image.entry), (image.entry, end)]
+                } else {
+                    vec![(start, end)]
+                }
+            })
+            .collect();
     }
     let mut prioritized = Vec::new();
     for (start, end) in &ranges {

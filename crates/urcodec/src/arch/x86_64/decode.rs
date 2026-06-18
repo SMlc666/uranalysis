@@ -63,6 +63,19 @@ pub fn decode_instruction(bytes: &[u8], address: u64) -> Result<Instruction> {
             FlowKind::Fallthrough,
             None,
         )),
+        0xcd => {
+            let size = opcode_offset + 2;
+            let imm = i64::from(read_u8(bytes, opcode_offset + 1)?);
+            Ok(base(
+                bytes[..size].to_vec(),
+                address,
+                "int",
+                vec![Operand::Immediate(imm)],
+                InstructionKind::System,
+                FlowKind::Fallthrough,
+                None,
+            ))
+        }
         0x90 => Ok(base(
             bytes[..opcode_offset + 1].to_vec(),
             address,
@@ -248,6 +261,7 @@ pub fn decode_instruction(bytes: &[u8], address: u64) -> Result<Instruction> {
                 None,
             ))
         }
+        0x63 => decode_movsxd(bytes, address, prefixes),
         0x89 | 0x8b | 0x8d => {
             let modrm_offset = opcode_offset + 1;
             require_len(bytes, modrm_offset + 1)?;
@@ -295,6 +309,7 @@ pub fn decode_instruction(bytes: &[u8], address: u64) -> Result<Instruction> {
             8,
         ),
         0x04 => decode_al_imm8(bytes, address, prefixes, "add", InstructionKind::Arithmetic),
+        0x05 => decode_acc_imm32(bytes, address, prefixes, "add", InstructionKind::Arithmetic),
         0x01 => decode_reg_rm_binary(
             bytes,
             address,
@@ -308,6 +323,40 @@ pub fn decode_instruction(bytes: &[u8], address: u64) -> Result<Instruction> {
             address,
             prefixes,
             "add",
+            InstructionKind::Arithmetic,
+            true,
+        ),
+        0x10 => decode_reg_rm_binary_width(
+            bytes,
+            address,
+            prefixes,
+            "adc",
+            InstructionKind::Arithmetic,
+            false,
+            8,
+        ),
+        0x12 => decode_reg_rm_binary_width(
+            bytes,
+            address,
+            prefixes,
+            "adc",
+            InstructionKind::Arithmetic,
+            true,
+            8,
+        ),
+        0x11 => decode_reg_rm_binary_default_width(
+            bytes,
+            address,
+            prefixes,
+            "adc",
+            InstructionKind::Arithmetic,
+            false,
+        ),
+        0x13 => decode_reg_rm_binary_default_width(
+            bytes,
+            address,
+            prefixes,
+            "adc",
             InstructionKind::Arithmetic,
             true,
         ),
@@ -330,6 +379,40 @@ pub fn decode_instruction(bytes: &[u8], address: u64) -> Result<Instruction> {
             8,
         ),
         0x0c => decode_al_imm8(bytes, address, prefixes, "or", InstructionKind::Logical),
+        0x18 => decode_reg_rm_binary_width(
+            bytes,
+            address,
+            prefixes,
+            "sbb",
+            InstructionKind::Arithmetic,
+            false,
+            8,
+        ),
+        0x1a => decode_reg_rm_binary_width(
+            bytes,
+            address,
+            prefixes,
+            "sbb",
+            InstructionKind::Arithmetic,
+            true,
+            8,
+        ),
+        0x19 => decode_reg_rm_binary_default_width(
+            bytes,
+            address,
+            prefixes,
+            "sbb",
+            InstructionKind::Arithmetic,
+            false,
+        ),
+        0x1b => decode_reg_rm_binary_default_width(
+            bytes,
+            address,
+            prefixes,
+            "sbb",
+            InstructionKind::Arithmetic,
+            true,
+        ),
         0x29 => decode_reg_rm_binary(
             bytes,
             address,
@@ -365,6 +448,7 @@ pub fn decode_instruction(bytes: &[u8], address: u64) -> Result<Instruction> {
             8,
         ),
         0x2c => decode_al_imm8(bytes, address, prefixes, "sub", InstructionKind::Arithmetic),
+        0x2d => decode_acc_imm32(bytes, address, prefixes, "sub", InstructionKind::Arithmetic),
         0x20 => decode_reg_rm_binary_width(
             bytes,
             address,
@@ -384,6 +468,7 @@ pub fn decode_instruction(bytes: &[u8], address: u64) -> Result<Instruction> {
             8,
         ),
         0x24 => decode_al_imm8(bytes, address, prefixes, "and", InstructionKind::Logical),
+        0x25 => decode_acc_imm32(bytes, address, prefixes, "and", InstructionKind::Logical),
         0x21 => decode_reg_rm_binary(
             bytes,
             address,
@@ -506,6 +591,7 @@ pub fn decode_instruction(bytes: &[u8], address: u64) -> Result<Instruction> {
         0x80 => decode_group1_imm8_width(bytes, address, prefixes, 8, false),
         0x81 => decode_group1_imm32(bytes, address, prefixes),
         0x83 => decode_group1_imm8(bytes, address, prefixes),
+        0x87 => decode_xchg(bytes, address, prefixes),
         0xc4 | 0xc5 => decode_vex(bytes, address, prefixes),
         0xc0 => decode_group2_imm8(bytes, address, prefixes, 8),
         0xc1 => decode_group2_imm8(bytes, address, prefixes, default_operand_width(prefixes)),
@@ -573,6 +659,25 @@ fn decode_reg_rm_binary(
     ))
 }
 
+fn decode_reg_rm_binary_default_width(
+    bytes: &[u8],
+    address: u64,
+    prefixes: Prefixes,
+    mnemonic: &str,
+    kind: InstructionKind,
+    reg_is_dst: bool,
+) -> Result<Instruction> {
+    decode_reg_rm_binary_width(
+        bytes,
+        address,
+        prefixes,
+        mnemonic,
+        kind,
+        reg_is_dst,
+        default_operand_width(prefixes),
+    )
+}
+
 fn decode_reg_rm_binary_width(
     bytes: &[u8],
     address: u64,
@@ -602,6 +707,32 @@ fn decode_reg_rm_binary_width(
         mnemonic,
         operands,
         kind,
+        FlowKind::Fallthrough,
+        None,
+    ))
+}
+
+fn decode_movsxd(bytes: &[u8], address: u64, prefixes: Prefixes) -> Result<Instruction> {
+    let modrm_offset = prefixes.opcode_offset + 1;
+    require_len(bytes, modrm_offset + 1)?;
+    let modrm = parse_modrm(bytes[modrm_offset]);
+    let dst_width = default_operand_width(prefixes);
+    let dst = Operand::Register(reg_for_width(
+        extend_reg(modrm.reg, prefixes.rex.r),
+        dst_width,
+        prefixes.rex.present,
+    ));
+    let (src, consumed) = parse_rm_operand(bytes, modrm_offset, prefixes.rex, 32)?;
+    Ok(base(
+        bytes[..consumed].to_vec(),
+        address,
+        "movsxd",
+        vec![dst, src.clone()],
+        if matches!(src, Operand::Memory(_)) {
+            InstructionKind::Load
+        } else {
+            InstructionKind::Move
+        },
         FlowKind::Fallthrough,
         None,
     ))
@@ -643,6 +774,37 @@ fn decode_byte_mov(
     ))
 }
 
+fn decode_acc_imm32(
+    bytes: &[u8],
+    address: u64,
+    prefixes: Prefixes,
+    mnemonic: &str,
+    kind: InstructionKind,
+) -> Result<Instruction> {
+    let size = prefixes.opcode_offset + 5;
+    let imm = if prefixes.rex.w {
+        i64::from(read_i32(bytes, prefixes.opcode_offset + 1)?)
+    } else {
+        i64::from(read_u32(bytes, prefixes.opcode_offset + 1)?)
+    };
+    Ok(base(
+        bytes[..size].to_vec(),
+        address,
+        mnemonic,
+        vec![
+            Operand::Register(reg_for_width(
+                0,
+                default_operand_width(prefixes),
+                prefixes.rex.present,
+            )),
+            Operand::Immediate(imm),
+        ],
+        kind,
+        FlowKind::Fallthrough,
+        None,
+    ))
+}
+
 fn decode_al_imm8(
     bytes: &[u8],
     address: u64,
@@ -661,6 +823,28 @@ fn decode_al_imm8(
             Operand::Immediate(imm),
         ],
         kind,
+        FlowKind::Fallthrough,
+        None,
+    ))
+}
+
+fn decode_xchg(bytes: &[u8], address: u64, prefixes: Prefixes) -> Result<Instruction> {
+    let modrm_offset = prefixes.opcode_offset + 1;
+    require_len(bytes, modrm_offset + 1)?;
+    let modrm = parse_modrm(bytes[modrm_offset]);
+    let width_bits = default_operand_width(prefixes);
+    let reg = Operand::Register(reg_for_width(
+        extend_reg(modrm.reg, prefixes.rex.r),
+        width_bits,
+        prefixes.rex.present,
+    ));
+    let (rm, consumed) = parse_rm_operand(bytes, modrm_offset, prefixes.rex, width_bits)?;
+    Ok(base(
+        bytes[..consumed].to_vec(),
+        address,
+        "xchg",
+        vec![rm, reg],
+        InstructionKind::Move,
         FlowKind::Fallthrough,
         None,
     ))
@@ -1473,6 +1657,16 @@ fn read_i16(bytes: &[u8], offset: usize) -> Result<i16> {
 fn read_i32(bytes: &[u8], offset: usize) -> Result<i32> {
     require_len(bytes, offset + 4)?;
     Ok(i32::from_le_bytes([
+        bytes[offset],
+        bytes[offset + 1],
+        bytes[offset + 2],
+        bytes[offset + 3],
+    ]))
+}
+
+fn read_u32(bytes: &[u8], offset: usize) -> Result<u32> {
+    require_len(bytes, offset + 4)?;
+    Ok(u32::from_le_bytes([
         bytes[offset],
         bytes[offset + 1],
         bytes[offset + 2],

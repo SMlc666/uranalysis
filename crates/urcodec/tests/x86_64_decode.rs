@@ -77,6 +77,16 @@ fn decodes_x86_64_int3() {
 }
 
 #[test]
+fn decodes_x86_64_int_imm8() {
+    let int = decode(&[0xcd, 0x29], 0x401000);
+
+    assert_eq!(int.text, "int 0x29");
+    assert_eq!(int.size, 2);
+    assert_eq!(int.kind, InstructionKind::System);
+    assert_eq!(int.flow, FlowKind::Fallthrough);
+}
+
+#[test]
 fn decodes_x86_64_conditional_jumps() {
     let je = decode(&[0x74, 0x05], 0x401000);
     assert_eq!(je.text, "je 0x401007");
@@ -175,6 +185,16 @@ fn decodes_x86_64_mov_register_forms() {
     assert_eq!(movzx.size, 4);
     assert_eq!(movzx.kind, InstructionKind::Load);
     assert_eq!(register_name(&movzx.operands[0]), "eax");
+
+    let movsxd = decode(&[0x63, 0x4e, 0x08], 0x401000);
+    assert_eq!(movsxd.text, "movsxd ecx, [rsi+0x8]");
+    assert_eq!(movsxd.size, 3);
+    assert_eq!(movsxd.kind, InstructionKind::Load);
+
+    let movsxd_64 = decode(&[0x48, 0x63, 0xc1], 0x401000);
+    assert_eq!(movsxd_64.text, "movsxd rax, ecx");
+    assert_eq!(movsxd_64.size, 3);
+    assert_eq!(movsxd_64.kind, InstructionKind::Move);
 }
 
 #[test]
@@ -276,6 +296,31 @@ fn decodes_x86_64_arithmetic_and_logical_forms() {
     assert_eq!(or_byte_reg.text, "or al, cl");
     assert_eq!(or_byte_reg.size, 2);
     assert_eq!(or_byte_reg.kind, InstructionKind::Logical);
+
+    let and_eax_imm = decode(&[0x25, 0xff, 0xff, 0xff, 0x1f], 0x401000);
+    assert_eq!(and_eax_imm.text, "and eax, 0x1fffffff");
+    assert_eq!(and_eax_imm.size, 5);
+    assert_eq!(and_eax_imm.kind, InstructionKind::Logical);
+
+    let add_eax_imm = decode(&[0x05, 0x19, 0x01, 0x00, 0x00], 0x401000);
+    assert_eq!(add_eax_imm.text, "add eax, 0x119");
+    assert_eq!(add_eax_imm.size, 5);
+    assert_eq!(add_eax_imm.kind, InstructionKind::Arithmetic);
+
+    let sub_eax_imm = decode(&[0x2d, 0x20, 0x05, 0x93, 0x19], 0x401000);
+    assert_eq!(sub_eax_imm.text, "sub eax, 0x19930520");
+    assert_eq!(sub_eax_imm.size, 5);
+    assert_eq!(sub_eax_imm.kind, InstructionKind::Arithmetic);
+
+    let adc_reg = decode(&[0x13, 0xd1], 0x401000);
+    assert_eq!(adc_reg.text, "adc edx, ecx");
+    assert_eq!(adc_reg.size, 2);
+    assert_eq!(adc_reg.kind, InstructionKind::Arithmetic);
+
+    let sbb_reg = decode(&[0x1b, 0xc9], 0x401000);
+    assert_eq!(sbb_reg.text, "sbb ecx, ecx");
+    assert_eq!(sbb_reg.size, 2);
+    assert_eq!(sbb_reg.kind, InstructionKind::Arithmetic);
 
     let cmp_byte_reg = decode(&[0x38, 0xc8], 0x401000);
     assert_eq!(cmp_byte_reg.text, "cmp al, cl");
@@ -453,6 +498,19 @@ fn decodes_x86_64_group_ff_forms() {
     let push = decode(&[0x48, 0xff, 0xf0], 0x401000);
     assert_eq!(push.text, "push rax");
     assert_eq!(push.kind, InstructionKind::Store);
+}
+
+#[test]
+fn decodes_x86_64_xchg_forms() {
+    let xchg_reg = decode(&[0x87, 0xc8], 0x401000);
+    assert_eq!(xchg_reg.text, "xchg eax, ecx");
+    assert_eq!(xchg_reg.size, 2);
+    assert_eq!(xchg_reg.kind, InstructionKind::Move);
+
+    let xchg_mem = decode(&[0x87, 0x84, 0xf6, 0xf0, 0xff, 0x4f, 0x00], 0x401000);
+    assert_eq!(xchg_mem.text, "xchg [rsi+rsi*8+0x4ffff0], eax");
+    assert_eq!(xchg_mem.size, 7);
+    assert_eq!(xchg_mem.kind, InstructionKind::Move);
 }
 
 #[test]
