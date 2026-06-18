@@ -782,7 +782,7 @@ dependencies = [
  "serde_json",
  "tempfile",
  "thiserror",
- "urdisassembly",
+ "urcodec",
  "urloader",
 ]
 
