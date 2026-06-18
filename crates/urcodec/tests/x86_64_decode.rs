@@ -269,6 +269,11 @@ fn decodes_x86_64_arithmetic_and_logical_forms() {
     assert_eq!(test_byte_imm.text, "test cl, 0x1");
     assert_eq!(test_byte_imm.kind, InstructionKind::Compare);
 
+    let test_al_imm = decode(&[0xa8, 0x01], 0x401000);
+    assert_eq!(test_al_imm.text, "test al, 0x1");
+    assert_eq!(test_al_imm.size, 2);
+    assert_eq!(test_al_imm.kind, InstructionKind::Compare);
+
     let xor_reg = decode(&[0x48, 0x31, 0xc0], 0x401000);
     assert_eq!(xor_reg.text, "xor rax, rax");
     assert_eq!(xor_reg.kind, InstructionKind::Logical);
@@ -292,6 +297,16 @@ fn decodes_x86_64_shift_groups() {
     assert_eq!(sar_rax.text, "sar rax, 0x3");
     assert_eq!(sar_rax.size, 4);
     assert_eq!(sar_rax.kind, InstructionKind::Logical);
+
+    let shl_eax_one = decode(&[0xd1, 0xe0], 0x401000);
+    assert_eq!(shl_eax_one.text, "shl eax, 0x1");
+    assert_eq!(shl_eax_one.size, 2);
+    assert_eq!(shl_eax_one.kind, InstructionKind::Logical);
+
+    let shr_rax_one = decode(&[0x48, 0xd1, 0xe8], 0x401000);
+    assert_eq!(shr_rax_one.text, "shr rax, 0x1");
+    assert_eq!(shr_rax_one.size, 3);
+    assert_eq!(shr_rax_one.kind, InstructionKind::Logical);
 }
 
 #[test]
@@ -413,6 +428,12 @@ fn decodes_x86_64_push_and_pop() {
 
 #[test]
 fn decodes_x86_64_multibyte_nops() {
+    let single_byte_nop = decode(&[0x90], 0x401000);
+    assert_eq!(single_byte_nop.text, "nop");
+    assert_eq!(single_byte_nop.size, 1);
+    assert_eq!(single_byte_nop.kind, InstructionKind::System);
+    assert_eq!(single_byte_nop.flow, FlowKind::Fallthrough);
+
     let nop = decode(&[0x0f, 0x1f, 0x40, 0x00], 0x401000);
     assert_eq!(nop.text, "nop");
     assert_eq!(nop.size, 4);
@@ -461,6 +482,26 @@ fn decodes_x86_64_sse_move_and_xor_forms() {
     assert_eq!(xorps.text, "xorps xmm0, xmm0");
     assert_eq!(xorps.size, 3);
     assert_eq!(xorps.kind, InstructionKind::Logical);
+
+    let cmpps_reg = decode(&[0x0f, 0xc2, 0xc2, 0x00], 0x401000);
+    assert_eq!(cmpps_reg.text, "cmpps xmm0, xmm2, 0x0");
+    assert_eq!(cmpps_reg.size, 4);
+    assert_eq!(cmpps_reg.kind, InstructionKind::Compare);
+
+    let cmpps_mem = decode(&[0x0f, 0xc2, 0x44, 0x24, 0x20, 0x06], 0x401000);
+    assert_eq!(cmpps_mem.text, "cmpps xmm0, [rsp+0x20], 0x6");
+    assert_eq!(cmpps_mem.size, 6);
+    assert_eq!(cmpps_mem.kind, InstructionKind::Compare);
+}
+
+#[test]
+fn decodes_x86_64_ud2() {
+    let ud2 = decode(&[0x0f, 0x0b], 0x401000);
+
+    assert_eq!(ud2.text, "ud2");
+    assert_eq!(ud2.size, 2);
+    assert_eq!(ud2.kind, InstructionKind::System);
+    assert_eq!(ud2.flow, FlowKind::Fallthrough);
 }
 
 #[test]

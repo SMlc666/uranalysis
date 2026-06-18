@@ -53,6 +53,31 @@ pub fn decode_instruction(bytes: &[u8], address: u64) -> Result<Instruction> {
             FlowKind::Fallthrough,
             None,
         )),
+        0x90 => Ok(base(
+            bytes[..opcode_offset + 1].to_vec(),
+            address,
+            "nop",
+            Vec::new(),
+            InstructionKind::System,
+            FlowKind::Fallthrough,
+            None,
+        )),
+        0xa8 => {
+            let size = opcode_offset + 2;
+            let imm = i64::from(read_u8(bytes, opcode_offset + 1)?);
+            Ok(base(
+                bytes[..size].to_vec(),
+                address,
+                "test",
+                vec![
+                    Operand::Register(reg8(0, prefixes.rex.present)),
+                    Operand::Immediate(imm),
+                ],
+                InstructionKind::Compare,
+                FlowKind::Fallthrough,
+                None,
+            ))
+        }
         0xe8 => {
             let size = opcode_offset + 5;
             let disp = i64::from(read_i32(bytes, opcode_offset + 1)?);
@@ -127,10 +152,22 @@ pub fn decode_instruction(bytes: &[u8], address: u64) -> Result<Instruction> {
                 ))
             } else if second == 0x1f {
                 decode_multibyte_nop(bytes, address, prefixes)
+            } else if second == 0x0b {
+                Ok(base(
+                    bytes[..opcode_offset + 2].to_vec(),
+                    address,
+                    "ud2",
+                    Vec::new(),
+                    InstructionKind::System,
+                    FlowKind::Fallthrough,
+                    None,
+                ))
             } else if matches!(second, 0x10 | 0x11 | 0x28 | 0x29) {
                 decode_sse_move(bytes, address, prefixes, second)
             } else if second == 0x57 {
                 decode_sse_binary(bytes, address, prefixes, "xorps", InstructionKind::Logical)
+            } else if second == 0xc2 {
+                decode_sse_compare(bytes, address, prefixes)
             } else if (0x90..=0x9f).contains(&second) {
                 decode_setcc(bytes, address, prefixes, second)
             } else if second == 0xb6 || second == 0xbe {
@@ -322,6 +359,8 @@ pub fn decode_instruction(bytes: &[u8], address: u64) -> Result<Instruction> {
         0x83 => decode_group1_imm8(bytes, address, prefixes),
         0xc0 => decode_group2_imm8(bytes, address, prefixes, 8),
         0xc1 => decode_group2_imm8(bytes, address, prefixes, default_operand_width(prefixes)),
+        0xd0 => decode_group2_one(bytes, address, prefixes, 8),
+        0xd1 => decode_group2_one(bytes, address, prefixes, default_operand_width(prefixes)),
         0xc6 => decode_mov_imm8_rm(bytes, address, prefixes),
         0xc7 => decode_mov_imm_rm(bytes, address, prefixes),
         0xf6 => decode_group_f6(bytes, address, prefixes),
@@ -540,21 +579,34 @@ fn decode_group2_imm8(
         parse_rm_operand(bytes, modrm_offset, prefixes.rex, width_bits)?;
     let imm = i64::from(read_u8(bytes, consumed_without_imm)?);
     let consumed = consumed_without_imm + 1;
-    let mnemonic = match modrm.reg {
-        0 => "rol",
-        1 => "ror",
-        2 => "rcl",
-        3 => "rcr",
-        4 | 6 => "shl",
-        5 => "shr",
-        7 => "sar",
-        _ => unreachable!("ModRM reg field is three bits"),
-    };
+    let mnemonic = group2_mnemonic(modrm.reg);
     Ok(base(
         bytes[..consumed].to_vec(),
         address,
         mnemonic,
         vec![rm, Operand::Immediate(imm)],
+        InstructionKind::Logical,
+        FlowKind::Fallthrough,
+        None,
+    ))
+}
+
+fn decode_group2_one(
+    bytes: &[u8],
+    address: u64,
+    prefixes: Prefixes,
+    width_bits: u16,
+) -> Result<Instruction> {
+    let modrm_offset = prefixes.opcode_offset + 1;
+    require_len(bytes, modrm_offset + 1)?;
+    let modrm = parse_modrm(bytes[modrm_offset]);
+    let (rm, consumed) = parse_rm_operand(bytes, modrm_offset, prefixes.rex, width_bits)?;
+    let mnemonic = group2_mnemonic(modrm.reg);
+    Ok(base(
+        bytes[..consumed].to_vec(),
+        address,
+        mnemonic,
+        vec![rm, Operand::Immediate(1)],
         InstructionKind::Logical,
         FlowKind::Fallthrough,
         None,
@@ -585,6 +637,19 @@ fn decode_mov_imm8_rm(bytes: &[u8], address: u64, prefixes: Prefixes) -> Result<
         FlowKind::Fallthrough,
         None,
     ))
+}
+
+fn group2_mnemonic(reg: u8) -> &'static str {
+    match reg {
+        0 => "rol",
+        1 => "ror",
+        2 => "rcl",
+        3 => "rcr",
+        4 | 6 => "shl",
+        5 => "shr",
+        7 => "sar",
+        _ => unreachable!("ModRM reg field is three bits"),
+    }
 }
 
 fn decode_group_f6(bytes: &[u8], address: u64, prefixes: Prefixes) -> Result<Instruction> {
@@ -839,6 +904,25 @@ fn decode_sse_binary(
         mnemonic,
         vec![reg, rm],
         kind,
+        FlowKind::Fallthrough,
+        None,
+    ))
+}
+
+fn decode_sse_compare(bytes: &[u8], address: u64, prefixes: Prefixes) -> Result<Instruction> {
+    let modrm_offset = prefixes.opcode_offset + 2;
+    require_len(bytes, modrm_offset + 1)?;
+    let modrm = parse_modrm(bytes[modrm_offset]);
+    let reg = Operand::Register(xmm(extend_reg(modrm.reg, prefixes.rex.r)));
+    let (rm, consumed_without_imm) = parse_xmm_rm_operand(bytes, modrm_offset, prefixes.rex)?;
+    let imm = i64::from(read_u8(bytes, consumed_without_imm)?);
+    let consumed = consumed_without_imm + 1;
+    Ok(base(
+        bytes[..consumed].to_vec(),
+        address,
+        "cmpps",
+        vec![reg, rm, Operand::Immediate(imm)],
+        InstructionKind::Compare,
         FlowKind::Fallthrough,
         None,
     ))
