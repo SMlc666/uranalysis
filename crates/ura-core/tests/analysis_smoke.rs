@@ -66,6 +66,32 @@ fn user_edits_persist_across_reanalysis() -> Result<()> {
 }
 
 #[test]
+fn session_reanalysis_preserves_user_truth() -> Result<()> {
+    let loaded = urloader::load(&fixtures::minimal_elf64_aarch64_executable())
+        .map_err(|err| ura_core::UraError::Analysis(err.to_string()))?;
+    let mut session = ura_core::analysis::session::AnalysisSession::new(
+        ura_core::analysis::session::AnalysisInputs::from_loaded(&loaded),
+    );
+
+    session.refresh()?;
+    session.rename(0x400080, "manual_ret")?;
+    session.comment(0x400080, "manual function")?;
+    session.update_manual_function_range(0x400080, 0x400080, 0x400084)?;
+    session.refresh()?;
+
+    assert!(session
+        .state
+        .functions
+        .iter()
+        .any(|func| func.addr == 0x400080 && func.name == "manual_ret"));
+    assert_eq!(
+        session.inputs.user_facts.comments.get(&0x400080),
+        Some(&"manual function".to_string())
+    );
+    Ok(())
+}
+
+#[test]
 fn set_function_range_refreshes_only_the_graph_window() -> Result<()> {
     let dir = tempdir()?;
     let input = dir.path().join("sample.elf");

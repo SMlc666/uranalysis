@@ -12,6 +12,10 @@ impl RefreshPlan {
     pub fn pass_ids(&self) -> Vec<&'static str> {
         self.pass_ids.iter().map(|id| id.as_str()).collect()
     }
+
+    pub fn clone_ids(&self) -> Vec<PassId> {
+        self.pass_ids.clone()
+    }
 }
 
 pub fn build_refresh_plan(dirty: DirtyInputs) -> RefreshPlan {

@@ -12,7 +12,10 @@ pub mod target;
 pub mod xrefs;
 
 use crate::{
-    model::{BasicBlock, CfgEdge, Diagnostic, Function, Instruction, Segment, StringRef, Xref},
+    model::{
+        AnalysisState, BasicBlock, CfgEdge, Diagnostic, Function, Instruction, Segment, StringRef,
+        UserFacts, Xref,
+    },
     Result,
 };
 
@@ -57,6 +60,21 @@ pub struct AnalysisOutput {
     pub functions: Vec<Function>,
     pub xrefs: Vec<Xref>,
     pub diagnostics: Vec<Diagnostic>,
+}
+
+fn segments_from_loaded(segments: &[urloader::Segment]) -> Vec<Segment> {
+    segments
+        .iter()
+        .map(|segment| Segment {
+            id: segment.id,
+            name: segment.name.clone(),
+            vaddr: segment.vaddr,
+            file_offset: segment.file_offset,
+            file_size: segment.file_size,
+            mem_size: segment.mem_size,
+            permissions: segment.permissions.clone(),
+        })
+        .collect()
 }
 
 pub fn run_initial_analysis(
@@ -115,5 +133,31 @@ pub fn run_initial_analysis_with_instruction_limit(
         functions,
         xrefs,
         diagnostics,
+    })
+}
+
+pub fn build_state_from_loaded(
+    loaded: &urloader::LoadedImage,
+    user_facts: &UserFacts,
+) -> Result<AnalysisState> {
+    let segments = segments_from_loaded(&loaded.segments);
+    let target = target::AnalysisTarget::from_loaded(loaded)?;
+    let image = AnalysisImage {
+        target,
+        entry: loaded.entry,
+        bytes: &loaded.bytes,
+        segments: &segments,
+    };
+    let user_functions = functions::manual_functions_from_facts(user_facts);
+    let output = run_initial_analysis(&image, &user_functions)?;
+
+    Ok(AnalysisState {
+        instructions: output.instructions,
+        strings: output.strings,
+        basic_blocks: output.basic_blocks,
+        cfg_edges: output.cfg_edges,
+        functions: output.functions,
+        xrefs: output.xrefs,
+        diagnostics: output.diagnostics,
     })
 }
