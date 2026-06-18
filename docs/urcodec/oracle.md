@@ -26,8 +26,8 @@ Current fixture scope:
   byte transfer, implicit string move/compare/store/load/scan forms, immediate
   `imul`, CL-count shift/rotate groups, selected `0f` scalar forms, MMX/SSE
   shifts, SSE arithmetic/logical forms, packed integer, packed shuffle, MXCSR
-  memory forms, selected VEX move, logical, scalar arithmetic, packed-shift
-  forms, and AVX cleanup forms.
+  memory forms, selected VEX move, compare, conversion, logical, scalar
+  arithmetic, packed integer, packed-shift forms, and AVX cleanup forms.
 
 When adding corpus-driven decoder coverage, add a Capstone oracle fixture for
 the representative bytes if Capstone can decode the instruction and the opcode

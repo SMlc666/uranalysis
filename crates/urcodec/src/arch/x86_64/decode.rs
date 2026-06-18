@@ -1580,10 +1580,24 @@ fn decode_vex(bytes: &[u8], address: u64, prefixes: Prefixes) -> Result<Instruct
             None,
         )),
         0x10 if vex.pp == 3 => decode_vex_reg_rm_move(bytes, address, vex, "vmovsd"),
+        0x2f if vex.pp == 1 => {
+            decode_vex_binary(bytes, address, vex, "vcomisd", InstructionKind::Compare)
+        }
         0x28 if vex.pp == 1 => decode_vex_reg_rm_move(bytes, address, vex, "vmovapd"),
         0x6f | 0x7f if matches!(vex.pp, 1 | 2) => decode_vex_move(bytes, address, vex, opcode),
+        0x7e if vex.pp == 1 => decode_vex_movd_movq_to_gpr(bytes, address, vex),
         0x73 if vex.pp == 1 => decode_vex_packed_shift_imm(bytes, address, vex),
+        0xd4 if vex.pp == 1 => {
+            decode_vex_ternary_binary(bytes, address, vex, "vpaddq", InstructionKind::Arithmetic)
+        }
         0xe7 if vex.pp == 1 => decode_vex_movntdq(bytes, address, vex),
+        0xe6 if matches!(vex.pp, 2 | 3) => decode_vex_binary(
+            bytes,
+            address,
+            vex,
+            "vcvtdq2pd",
+            InstructionKind::Arithmetic,
+        ),
         0xd7 if vex.pp == 1 => decode_vex_pmovmskb(bytes, address, vex),
         0x58 if vex.pp == 3 => {
             decode_vex_ternary_binary(bytes, address, vex, "vaddsd", InstructionKind::Arithmetic)
@@ -1710,6 +1724,33 @@ fn decode_vex_pmovmskb(bytes: &[u8], address: u64, vex: Vex) -> Result<Instructi
     ))
 }
 
+fn decode_vex_movd_movq_to_gpr(bytes: &[u8], address: u64, vex: Vex) -> Result<Instruction> {
+    let modrm_offset = vex.opcode_offset + 1;
+    require_len(bytes, modrm_offset + 1)?;
+    let modrm = parse_modrm(bytes[modrm_offset]);
+    let width_bits = if vex.rex.w { 64 } else { 32 };
+    let dst = Operand::Register(reg_for_width(
+        extend_reg(modrm.reg, vex.rex.r),
+        width_bits,
+        vex.rex.present,
+    ));
+    let (src, consumed) = parse_vector_rm_operand(bytes, modrm_offset, vex)?;
+    let kind = if matches!(src, Operand::Memory(_)) {
+        InstructionKind::Load
+    } else {
+        InstructionKind::Move
+    };
+    Ok(base(
+        bytes[..consumed].to_vec(),
+        address,
+        if width_bits == 64 { "vmovq" } else { "vmovd" },
+        vec![dst, src],
+        kind,
+        FlowKind::Fallthrough,
+        None,
+    ))
+}
+
 fn decode_vex_packed_shift_imm(bytes: &[u8], address: u64, vex: Vex) -> Result<Instruction> {
     let modrm_offset = vex.opcode_offset + 1;
     require_len(bytes, modrm_offset + 1)?;
@@ -1729,6 +1770,29 @@ fn decode_vex_packed_shift_imm(bytes: &[u8], address: u64, vex: Vex) -> Result<I
         mnemonic,
         vec![dst, src, Operand::Immediate(imm)],
         InstructionKind::Logical,
+        FlowKind::Fallthrough,
+        None,
+    ))
+}
+
+fn decode_vex_binary(
+    bytes: &[u8],
+    address: u64,
+    vex: Vex,
+    mnemonic: &str,
+    kind: InstructionKind,
+) -> Result<Instruction> {
+    let modrm_offset = vex.opcode_offset + 1;
+    require_len(bytes, modrm_offset + 1)?;
+    let modrm = parse_modrm(bytes[modrm_offset]);
+    let dst = Operand::Register(vector_reg(extend_reg(modrm.reg, vex.rex.r), vex));
+    let (src, consumed) = parse_vector_rm_operand(bytes, modrm_offset, vex)?;
+    Ok(base(
+        bytes[..consumed].to_vec(),
+        address,
+        mnemonic,
+        vec![dst, src],
+        kind,
         FlowKind::Fallthrough,
         None,
     ))

@@ -1221,10 +1221,35 @@ fn decodes_x86_64_vex_avx_forms() {
     assert_eq!(vpor.size, 8);
     assert_eq!(vpor.kind, InstructionKind::Logical);
 
+    let vpaddq = decode(&[0xc5, 0xe1, 0xd4, 0xc9], 0x401000);
+    assert_eq!(vpaddq.text, "vpaddq xmm1, xmm3, xmm1");
+    assert_eq!(vpaddq.size, 4);
+    assert_eq!(vpaddq.kind, InstructionKind::Arithmetic);
+
     let vsubsd = decode(&[0xc5, 0xfb, 0x5c, 0xc3], 0x401000);
     assert_eq!(vsubsd.text, "vsubsd xmm0, xmm0, xmm3");
     assert_eq!(vsubsd.size, 4);
     assert_eq!(vsubsd.kind, InstructionKind::Arithmetic);
+
+    let vcomisd_reg = decode(&[0xc5, 0xf9, 0x2f, 0xc5], 0x401000);
+    assert_eq!(vcomisd_reg.text, "vcomisd xmm0, xmm5");
+    assert_eq!(vcomisd_reg.size, 4);
+    assert_eq!(vcomisd_reg.kind, InstructionKind::Compare);
+
+    let vcomisd_mem = decode(&[0xc5, 0xf9, 0x2f, 0x25, 0x07, 0x94, 0x14, 0x00], 0x401000);
+    assert_eq!(vcomisd_mem.text, "vcomisd xmm4, [rip+0x149407]");
+    assert_eq!(vcomisd_mem.size, 8);
+    assert_eq!(vcomisd_mem.kind, InstructionKind::Compare);
+
+    let vcvtdq2pd = decode(&[0xc5, 0xfa, 0xe6, 0xf3], 0x401000);
+    assert_eq!(vcvtdq2pd.text, "vcvtdq2pd xmm6, xmm3");
+    assert_eq!(vcvtdq2pd.size, 4);
+    assert_eq!(vcvtdq2pd.kind, InstructionKind::Arithmetic);
+
+    let vmovq_gpr = decode(&[0xc4, 0xe1, 0xf9, 0x7e, 0xc0], 0x401000);
+    assert_eq!(vmovq_gpr.text, "vmovq rax, xmm0");
+    assert_eq!(vmovq_gpr.size, 5);
+    assert_eq!(vmovq_gpr.kind, InstructionKind::Move);
 
     let vmovsd = decode(&[0xc5, 0xfb, 0x10, 0x2d, 0xb4, 0x92, 0x14, 0x00], 0x401000);
     assert_eq!(vmovsd.text, "vmovsd xmm5, [rip+0x1492b4]");
