@@ -27,6 +27,8 @@ struct Sample {
     max_unknown_rate: f64,
     #[serde(default)]
     unknown_family_budgets: BTreeMap<String, usize>,
+    #[serde(default)]
+    required_capabilities: Vec<String>,
     required_strings: Vec<String>,
 }
 
@@ -56,9 +58,17 @@ struct SampleReport {
     xref_count: usize,
     diagnostic_count: usize,
     cfg_failure_count: usize,
+    front_end: FrontEndReport,
     unknown_family_counts: Vec<UnknownFamilyCountReport>,
     unknown_clusters: Vec<UnknownClusterReport>,
     failure_reason: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct FrontEndReport {
+    capabilities: Vec<String>,
+    fatal_diagnostic_count: usize,
+    warning_diagnostic_count: usize,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -170,6 +180,11 @@ fn run_sample(root: &Path, sample: &Sample) -> SampleReport {
             xref_count: 0,
             diagnostic_count: 0,
             cfg_failure_count: 1,
+            front_end: FrontEndReport {
+                capabilities: Vec::new(),
+                fatal_diagnostic_count: 0,
+                warning_diagnostic_count: 0,
+            },
             unknown_family_counts: Vec::new(),
             unknown_clusters: Vec::new(),
             failure_reason: Some(err.to_string()),
@@ -183,9 +198,10 @@ fn analyze_sample(root: &Path, sample: &Sample) -> Result<SampleReport> {
         bail!("sample output missing: {}", input.display());
     }
     let bytes = fs::read(&input)?;
-    let loaded = urloader::load(&bytes)?;
-    let state = ura_core::analysis::build_state_from_loaded_with_instruction_limit(
-        &loaded,
+    let raw = urloader::load(&bytes)?;
+    let view = raw.analysis_view(&bytes)?;
+    let state = ura_core::analysis::build_state_from_view_with_instruction_limit(
+        &view,
         &ura_core::model::UserFacts::default(),
         Some(MAX_CORPUS_INSTRUCTIONS_PER_SAMPLE),
     )?;
@@ -203,9 +219,9 @@ fn analyze_sample(root: &Path, sample: &Sample) -> Result<SampleReport> {
         })
         .count();
 
-    let detected_format = format!("{:?}", loaded.format).to_ascii_lowercase();
-    let detected_architecture = format!("{:?}", loaded.architecture).to_ascii_lowercase();
-    let detected_class = format!("{:?}", loaded.class).to_ascii_lowercase();
+    let detected_format = format!("{:?}", view.target.format).to_ascii_lowercase();
+    let detected_architecture = format!("{:?}", view.target.architecture).to_ascii_lowercase();
+    let detected_class = format!("{:?}", view.target.class).to_ascii_lowercase();
     let unknown = instructions
         .iter()
         .filter(|insn| insn.decode_status == ura_core::model::DecodeStatus::Unknown)
@@ -223,6 +239,19 @@ fn analyze_sample(root: &Path, sample: &Sample) -> Result<SampleReport> {
         .iter()
         .map(|entry| (entry.candidate_family.clone(), entry.count))
         .collect::<BTreeMap<_, _>>();
+    let front_end = FrontEndReport {
+        capabilities: capability_names(&view),
+        fatal_diagnostic_count: view
+            .diagnostics
+            .iter()
+            .filter(|diag| diag.severity == "error")
+            .count(),
+        warning_diagnostic_count: view
+            .diagnostics
+            .iter()
+            .filter(|diag| diag.severity == "warning")
+            .count(),
+    };
 
     let mut failures = Vec::new();
     if detected_format != sample.format {
@@ -257,6 +286,7 @@ fn analyze_sample(root: &Path, sample: &Sample) -> Result<SampleReport> {
         ));
     }
     failures.extend(validate_family_budgets(sample, &family_count_map));
+    failures.extend(validate_capabilities(sample, &front_end));
     for required in &sample.required_strings {
         if !strings.iter().any(|s| s.value.contains(required)) {
             failures.push(format!("required string not found: {required}"));
@@ -281,6 +311,7 @@ fn analyze_sample(root: &Path, sample: &Sample) -> Result<SampleReport> {
         xref_count: xrefs.len(),
         diagnostic_count: diagnostics.len(),
         cfg_failure_count,
+        front_end,
         unknown_family_counts,
         unknown_clusters,
         failure_reason: if ok { None } else { Some(failures.join("; ")) },
@@ -432,6 +463,53 @@ fn validate_family_budgets(
         }
     }
     failures
+}
+
+fn capability_names(view: &urloader::BinaryView<'_>) -> Vec<String> {
+    let mut out = Vec::new();
+    if view.capabilities.can_map_executable_bytes {
+        out.push("can_map_executable_bytes".to_string());
+    }
+    if view.capabilities.can_translate_va {
+        out.push("can_translate_va".to_string());
+    }
+    if view.capabilities.has_named_sections {
+        out.push("has_named_sections".to_string());
+    }
+    if view.capabilities.has_symbols {
+        out.push("has_symbols".to_string());
+    }
+    if view.capabilities.has_imports {
+        out.push("has_imports".to_string());
+    }
+    if view.capabilities.has_exports {
+        out.push("has_exports".to_string());
+    }
+    if view.capabilities.has_relocations {
+        out.push("has_relocations".to_string());
+    }
+    if view.capabilities.has_debug_lines {
+        out.push("has_debug_lines".to_string());
+    }
+    if view.capabilities.has_debug_function_ranges {
+        out.push("has_debug_function_ranges".to_string());
+    }
+    if view.capabilities.has_unwind_ranges {
+        out.push("has_unwind_ranges".to_string());
+    }
+    if view.capabilities.supports_analysis_entry {
+        out.push("supports_analysis_entry".to_string());
+    }
+    out
+}
+
+fn validate_capabilities(sample: &Sample, report: &FrontEndReport) -> Vec<String> {
+    sample
+        .required_capabilities
+        .iter()
+        .filter(|required| !report.capabilities.iter().any(|have| have == *required))
+        .map(|required| format!("missing required capability {required}"))
+        .collect()
 }
 
 #[derive(Debug)]
@@ -627,6 +705,11 @@ mod tests {
                 xref_count: 1,
                 diagnostic_count: 0,
                 cfg_failure_count: 0,
+                front_end: FrontEndReport {
+                    capabilities: vec!["can_map_executable_bytes".to_string()],
+                    fatal_diagnostic_count: 0,
+                    warning_diagnostic_count: 0,
+                },
                 unknown_family_counts: Vec::new(),
                 unknown_clusters: Vec::new(),
                 failure_reason: None,
@@ -721,6 +804,7 @@ mod tests {
             min_instructions: 1,
             max_unknown_rate: 1.0,
             unknown_family_budgets: BTreeMap::from([("x86_64_two_byte_opcode".to_string(), 0)]),
+            required_capabilities: Vec::new(),
             required_strings: Vec::new(),
         };
         let family_counts = BTreeMap::from([("x86_64_two_byte_opcode".to_string(), 3usize)]);
@@ -759,6 +843,11 @@ mod tests {
                 xref_count: 1,
                 diagnostic_count: 0,
                 cfg_failure_count: 0,
+                front_end: FrontEndReport {
+                    capabilities: vec!["can_map_executable_bytes".to_string()],
+                    fatal_diagnostic_count: 0,
+                    warning_diagnostic_count: 0,
+                },
                 unknown_family_counts: Vec::new(),
                 unknown_clusters: Vec::new(),
                 failure_reason: None,
@@ -768,6 +857,33 @@ mod tests {
 
         let summary = render_summary(&report);
         assert!(summary.contains("## Unknown Family Counts"));
+    }
+
+    #[test]
+    fn validate_capability_expectations_reports_missing_front_end_features() {
+        let sample = Sample {
+            id: "fixture".to_string(),
+            kind: "source".to_string(),
+            output: PathBuf::from("generated/source/fixture"),
+            format: "elf".to_string(),
+            arch: "aarch64".to_string(),
+            class: "bits64".to_string(),
+            min_instructions: 1,
+            max_unknown_rate: 1.0,
+            unknown_family_budgets: BTreeMap::new(),
+            required_capabilities: vec!["has_symbols".to_string(), "has_unwind_ranges".to_string()],
+            required_strings: Vec::new(),
+        };
+        let report = FrontEndReport {
+            capabilities: vec!["has_symbols".to_string()],
+            fatal_diagnostic_count: 0,
+            warning_diagnostic_count: 0,
+        };
+        let failures = validate_capabilities(&sample, &report);
+        assert_eq!(
+            failures,
+            vec!["missing required capability has_unwind_ranges".to_string()]
+        );
     }
 
     fn instruction(

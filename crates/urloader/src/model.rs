@@ -116,7 +116,7 @@ pub enum FormatDetails {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct LoadedImage {
+pub struct RawImage {
     pub format: ImageFormat,
     pub architecture: Architecture,
     pub class: ImageClass,
@@ -132,10 +132,8 @@ pub struct LoadedImage {
     pub relocations: Vec<NormalizedRelocation>,
     pub diagnostics: Vec<Diagnostic>,
     pub format_details: FormatDetails,
-    pub bytes: Vec<u8>,
 }
 
-pub type RawImage = LoadedImage;
 pub type RawSegment = Segment;
 pub type RawSection = Section;
 
@@ -259,12 +257,12 @@ pub struct BinaryView<'a> {
     pub diagnostics: Vec<LoaderDiagnostic>,
 }
 
-impl LoadedImage {
+impl BinaryView<'_> {
     pub fn va_to_offset(&self, addr: u64) -> Option<u64> {
-        self.segments.iter().find_map(|seg| {
-            let end = seg.vaddr.checked_add(seg.file_size)?;
-            if addr >= seg.vaddr && addr < end {
-                Some(seg.file_offset + (addr - seg.vaddr))
+        self.ranges.iter().find_map(|range| {
+            let end = range.start.checked_add(range.file_size)?;
+            if addr >= range.start && addr < end {
+                Some(range.file_offset + (addr - range.start))
             } else {
                 None
             }
@@ -272,14 +270,14 @@ impl LoadedImage {
     }
 
     pub fn rva_to_offset(&self, rva: u64) -> Option<u64> {
-        self.va_to_offset(self.image_base.checked_add(rva)?)
+        self.va_to_offset(self.image_base?.checked_add(rva)?)
     }
 
     pub fn executable_ranges(&self) -> Vec<(u64, u64)> {
-        self.segments
+        self.ranges
             .iter()
-            .filter(|seg| seg.permissions.contains('x'))
-            .map(|seg| (seg.vaddr, seg.vaddr + seg.mem_size))
+            .filter(|range| range.permissions.contains('x'))
+            .map(|range| (range.start, range.end))
             .collect()
     }
 

@@ -14,13 +14,13 @@ pub fn extract_strings(image: &AnalysisImage<'_>) -> Vec<StringRef> {
         if end.saturating_sub(start) >= 4 {
             let value = String::from_utf8_lossy(&image.bytes[start..end]).to_string();
             let addr = image
-                .segments
+                .ranges
                 .iter()
-                .find_map(|seg| {
-                    let seg_start = seg.file_offset as usize;
-                    let seg_end = seg_start.checked_add(seg.file_size as usize)?;
-                    if start >= seg_start && start < seg_end {
-                        Some(seg.vaddr + (start - seg_start) as u64)
+                .find_map(|range| {
+                    let range_start = range.file_offset as usize;
+                    let range_end = range_start.checked_add(range.file_size as usize)?;
+                    if start >= range_start && start < range_end {
+                        Some(range.start + (start - range_start) as u64)
                     } else {
                         None
                     }

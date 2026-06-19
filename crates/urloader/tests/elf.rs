@@ -43,7 +43,9 @@ fn minimal_elf64_x86_64_executable() -> Vec<u8> {
 
 #[test]
 fn loads_minimal_elf64_aarch64_executable_segments() {
-    let image = load(&minimal_elf64_aarch64_executable()).unwrap();
+    let bytes = minimal_elf64_aarch64_executable();
+    let image = load(&bytes).unwrap();
+    let view = image.analysis_view(&bytes).unwrap();
 
     assert_eq!(image.format, ImageFormat::Elf);
     assert_eq!(image.architecture, Architecture::Aarch64);
@@ -58,10 +60,10 @@ fn loads_minimal_elf64_aarch64_executable_segments() {
     assert_eq!(image.segments[0].file_size, 0x1000);
     assert_eq!(image.segments[0].mem_size, 0x1000);
     assert_eq!(image.segments[0].permissions, "r-x");
-    assert_eq!(image.va_to_offset(0x400080), Some(0x80));
-    assert_eq!(image.executable_ranges(), vec![(0x400000, 0x401000)]);
+    assert_eq!(view.va_to_offset(0x400080), Some(0x80));
+    assert_eq!(view.executable_ranges(), vec![(0x400000, 0x401000)]);
     assert_eq!(
-        image.bytes_at(0x400080, 4),
+        view.bytes_at(0x400080, 4),
         Some(&[0xc0, 0x03, 0x5f, 0xd6][..])
     );
 }

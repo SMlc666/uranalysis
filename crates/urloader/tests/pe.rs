@@ -83,7 +83,7 @@ fn pe32_plus_x86_64_with_imports_and_relocs() -> Vec<u8> {
 
     bytes.resize(0x800, 0);
 
-    let import_dir = opt + 112 + (8 * 1);
+    let import_dir = opt + 120;
     bytes[import_dir..import_dir + 4].copy_from_slice(&idata_va.to_le_bytes());
     bytes[import_dir + 4..import_dir + 8].copy_from_slice(&0x40u32.to_le_bytes());
     let reloc_dir = opt + 112 + (8 * 5);
@@ -171,7 +171,9 @@ fn write_section(
 
 #[test]
 fn loads_minimal_pe32_plus_x86_64_sections() {
-    let image = load(&minimal_pe32_plus_x86_64()).unwrap();
+    let bytes = minimal_pe32_plus_x86_64();
+    let image = load(&bytes).unwrap();
+    let view = image.analysis_view(&bytes).unwrap();
 
     assert_eq!(image.format, ImageFormat::Pe);
     assert_eq!(image.architecture, Architecture::X86_64);
@@ -186,10 +188,10 @@ fn loads_minimal_pe32_plus_x86_64_sections() {
     assert_eq!(image.sections[1].name, ".rdata");
     assert_eq!(image.sections[1].addr, 0x140002000);
     assert_eq!(image.sections[1].permissions, "r--");
-    assert_eq!(image.rva_to_offset(0x1000), Some(0x200));
-    assert_eq!(image.va_to_offset(0x140001000), Some(0x200));
+    assert_eq!(view.rva_to_offset(0x1000), Some(0x200));
+    assert_eq!(view.va_to_offset(0x140001000), Some(0x200));
     assert_eq!(
-        image.bytes_at(0x140001000, 4),
+        view.bytes_at(0x140001000, 4),
         Some(&[0x48, 0x31, 0xc0, 0xc3][..])
     );
 }
@@ -244,8 +246,14 @@ fn analysis_view_normalizes_pe_imports_and_relocations() {
     let view = raw.analysis_view(&bytes).expect("view should build");
 
     assert!(view.capabilities.has_imports || view.capabilities.has_relocations);
-    assert!(view.imports.iter().any(|import| import.name.as_deref() == Some("ExitProcess")));
-    assert!(view.relocations.iter().any(|reloc| reloc.addr == 0x140001010));
+    assert!(view
+        .imports
+        .iter()
+        .any(|import| import.name.as_deref() == Some("ExitProcess")));
+    assert!(view
+        .relocations
+        .iter()
+        .any(|reloc| reloc.addr == 0x140001010));
 }
 
 #[test]

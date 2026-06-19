@@ -9,7 +9,7 @@ use ura_core::{
     Result, UraError,
 };
 
-fn load_image(bytes: &[u8]) -> Result<urloader::LoadedImage> {
+fn load_image(bytes: &[u8]) -> Result<urloader::RawImage> {
     urloader::load(bytes).map_err(|err| UraError::Analysis(err.to_string()))
 }
 
@@ -31,8 +31,10 @@ fn build_state_from_binary_view_preserves_disassembly_entry() -> Result<()> {
 }
 
 fn build_session(bytes: &[u8]) -> Result<AnalysisSession> {
-    let loaded = load_image(bytes)?;
-    let mut session = AnalysisSession::new(AnalysisInputs::from_loaded(&loaded));
+    let mut session = AnalysisSession::new(
+        AnalysisInputs::from_source_bytes(bytes.to_vec())
+            .map_err(|err| UraError::Analysis(err.to_string()))?,
+    );
     session.refresh()?;
     Ok(session)
 }
@@ -72,8 +74,10 @@ fn new_project_records_basic_blocks_and_cfg_edges() -> Result<()> {
 
 #[test]
 fn session_reanalysis_preserves_user_truth() -> Result<()> {
-    let loaded = load_image(&fixtures::minimal_elf64_aarch64_executable())?;
-    let mut session = AnalysisSession::new(AnalysisInputs::from_loaded(&loaded));
+    let mut session = AnalysisSession::new(
+        AnalysisInputs::from_source_bytes(fixtures::minimal_elf64_aarch64_executable())
+            .map_err(|err| UraError::Analysis(err.to_string()))?,
+    );
 
     session.refresh()?;
     session.rename(0x400080, "manual_ret")?;
@@ -95,8 +99,10 @@ fn session_reanalysis_preserves_user_truth() -> Result<()> {
 
 #[test]
 fn set_function_range_refreshes_only_the_graph_window() -> Result<()> {
-    let loaded = load_image(&fixtures::minimal_elf64_aarch64_executable())?;
-    let mut session = AnalysisSession::new(AnalysisInputs::from_loaded(&loaded));
+    let mut session = AnalysisSession::new(
+        AnalysisInputs::from_source_bytes(fixtures::minimal_elf64_aarch64_executable())
+            .map_err(|err| UraError::Analysis(err.to_string()))?,
+    );
 
     session.refresh()?;
     session.update_manual_function_range(0x400080, 0x400080, 0x400084)?;
@@ -113,8 +119,10 @@ fn set_function_range_refreshes_only_the_graph_window() -> Result<()> {
 
 #[test]
 fn invalid_user_function_root_is_retained_and_diagnosed() -> Result<()> {
-    let loaded = load_image(&fixtures::minimal_elf64_aarch64_executable())?;
-    let mut session = AnalysisSession::new(AnalysisInputs::from_loaded(&loaded));
+    let mut session = AnalysisSession::new(
+        AnalysisInputs::from_source_bytes(fixtures::minimal_elf64_aarch64_executable())
+            .map_err(|err| UraError::Analysis(err.to_string()))?,
+    );
 
     session.refresh()?;
     session.update_manual_function_range(0x500000, 0x500000, 0x500004)?;
@@ -227,8 +235,9 @@ fn unknown_entry_instruction_fails_cfg_import() {
     let mut bytes = fixtures::minimal_elf64_aarch64_executable();
     bytes[0x80..0x84].copy_from_slice(&0xffffffffu32.to_le_bytes());
 
-    let loaded = load_image(&bytes).expect("fixture should load");
-    let mut session = AnalysisSession::new(AnalysisInputs::from_loaded(&loaded));
+    let mut session = AnalysisSession::new(
+        AnalysisInputs::from_source_bytes(bytes).expect("inputs should build"),
+    );
     let err = match session.refresh() {
         Ok(summary) => panic!("expected refresh failure, got {:?}", summary.ran("cfg")),
         Err(err) => err.to_string(),
@@ -240,9 +249,13 @@ fn unknown_entry_instruction_fails_cfg_import() {
 
 #[test]
 fn pe_x86_64_input_creates_project_and_records_target() -> Result<()> {
-    let loaded = load_image(&fixtures::minimal_pe32_plus_x86_64())?;
-    let target = ura_core::analysis::target::AnalysisTarget::from_loaded(&loaded)?;
-    let state = analysis::build_state_from_loaded(&loaded, &UserFacts::default())?;
+    let bytes = fixtures::minimal_pe32_plus_x86_64();
+    let raw = load_image(&bytes)?;
+    let view = raw
+        .analysis_view(&bytes)
+        .map_err(|err| UraError::Analysis(err.to_string()))?;
+    let target = ura_core::analysis::target::AnalysisTarget::from_view(&view)?;
+    let state = analysis::build_state_from_view(&view, &UserFacts::default())?;
 
     assert_eq!(target.format, BinaryFormat::Pe);
     assert_eq!(target.architecture, Architecture::X86_64);

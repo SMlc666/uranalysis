@@ -8,7 +8,7 @@ This project is not a mature reverse-engineering suite. The current goal is to b
 
 | Crate | Purpose |
 | --- | --- |
-| `urloader` | Loads executable image metadata and bytes. |
+| `urloader` | Parses executable containers into raw format facts and normalized analysis-facing binary views. |
 | `urcodec` | Decodes and encodes AArch64 and x86-64 instruction subsets, owns the shared instruction model, and provides canonical text handling. |
 | `urdis2il` | Lifts decoded instructions into a small IL. |
 | `ura-core` | Pure analysis kernel: session state, pass scheduling, invalidation, and analysis passes. |

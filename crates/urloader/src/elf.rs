@@ -1,6 +1,6 @@
 use crate::{
-    Architecture, Endian, FormatDetails, ImageClass, ImageFormat, LoadError, LoadProfile,
-    LoadedImage, Result, Segment,
+    Architecture, Endian, FormatDetails, ImageClass, ImageFormat, LoadError, LoadProfile, RawImage,
+    Result, Segment,
 };
 
 const ELF: &str = "ELF";
@@ -19,13 +19,13 @@ const SHT_SYMTAB: u32 = 2;
 const SHT_NOBITS: u32 = 8;
 const SHT_DYNSYM: u32 = 11;
 
-pub fn load(bytes: &[u8]) -> Result<LoadedImage> {
+pub fn load(bytes: &[u8]) -> Result<RawImage> {
     let header = parse_header(bytes)?;
     let segments = parse_program_headers(bytes, &header)?;
     let raw_sections = parse_raw_sections(bytes, &header)?;
     let sections = normalize_sections(bytes, &raw_sections, header.shstrndx);
     let symbols = parse_symbols(bytes, &raw_sections)?;
-    Ok(LoadedImage {
+    Ok(RawImage {
         format: ImageFormat::Elf,
         architecture: elf_architecture(header.machine),
         class: ImageClass::Bits64,
@@ -44,7 +44,6 @@ pub fn load(bytes: &[u8]) -> Result<LoadedImage> {
             file_type: header.file_type,
             machine: header.machine,
         },
-        bytes: bytes.to_vec(),
     })
 }
 

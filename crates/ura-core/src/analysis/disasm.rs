@@ -13,8 +13,11 @@ pub fn linear_disassemble_with_limit(
     max_instructions: Option<usize>,
 ) -> Result<Vec<Instruction>> {
     match image.target.architecture {
-        crate::model::Architecture::Aarch64 => disassemble_aarch64(image, max_instructions),
-        crate::model::Architecture::X86_64 => disassemble_x86_64(image, max_instructions),
+        urloader::Architecture::Aarch64 => disassemble_aarch64(image, max_instructions),
+        urloader::Architecture::X86_64 => disassemble_x86_64(image, max_instructions),
+        urloader::Architecture::Unknown(value) => Err(UraError::Unsupported(format!(
+            "unsupported architecture: {value}"
+        ))),
     }
 }
 
@@ -106,8 +109,12 @@ fn executable_ranges_for_analysis(
         return ranges
             .into_iter()
             .flat_map(|(start, end)| {
-                if image.entry > start && image.entry < end {
-                    vec![(start, image.entry), (image.entry, end)]
+                if image
+                    .entry
+                    .is_some_and(|entry| entry > start && entry < end)
+                {
+                    let entry = image.entry.expect("entry checked above");
+                    vec![(start, entry), (entry, end)]
                 } else {
                     vec![(start, end)]
                 }
@@ -116,15 +123,18 @@ fn executable_ranges_for_analysis(
     }
     let mut prioritized = Vec::new();
     for (start, end) in &ranges {
-        if image.entry >= *start && image.entry < *end {
-            prioritized.push((image.entry, *end));
+        if let Some(entry) = image
+            .entry
+            .filter(|entry| *entry >= *start && *entry < *end)
+        {
+            prioritized.push((entry, *end));
         }
     }
-    prioritized.extend(
-        ranges
-            .into_iter()
-            .filter(|(start, end)| !(image.entry >= *start && image.entry < *end)),
-    );
+    prioritized.extend(ranges.into_iter().filter(|(start, end)| {
+        !image
+            .entry
+            .is_some_and(|entry| entry >= *start && entry < *end)
+    }));
     prioritized
 }
 

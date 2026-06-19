@@ -1,5 +1,3 @@
-use urloader::LoadedImage;
-
 use crate::{
     analysis::{
         invalidation::DirtyInputs,
@@ -12,17 +10,19 @@ use crate::{
 #[derive(Debug, Clone)]
 pub struct AnalysisInputs {
     pub source_bytes: Vec<u8>,
-    pub loaded: LoadedImage,
+    pub raw: urloader::RawImage,
     pub user_facts: UserFacts,
 }
 
 impl AnalysisInputs {
-    pub fn from_loaded(loaded: &LoadedImage) -> Self {
-        Self {
-            source_bytes: loaded.bytes.clone(),
-            loaded: loaded.clone(),
+    pub fn from_source_bytes(source_bytes: Vec<u8>) -> Result<Self> {
+        let raw = urloader::load(&source_bytes)
+            .map_err(|err| crate::UraError::Analysis(err.to_string()))?;
+        Ok(Self {
+            source_bytes,
+            raw,
             user_facts: UserFacts::default(),
-        }
+        })
     }
 }
 
@@ -78,11 +78,10 @@ impl AnalysisSession {
         } else {
             let view = self
                 .inputs
-                .loaded
+                .raw
                 .analysis_view(&self.inputs.source_bytes)
                 .map_err(|err| crate::UraError::Analysis(err.to_string()))?;
-            self.state =
-                crate::analysis::build_state_from_view(&view, &self.inputs.user_facts)?;
+            self.state = crate::analysis::build_state_from_view(&view, &self.inputs.user_facts)?;
             plan.clone_ids()
         };
         self.dirty = DirtyInputs::default();

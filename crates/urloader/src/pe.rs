@@ -1,7 +1,6 @@
 use crate::{
-    Architecture, Endian, FormatDetails, ImageClass, ImageFormat, LoadError, LoadProfile,
-    LoadedImage, Result, Section, Segment,
-    normalize::normalize_relocation,
+    normalize::normalize_relocation, Architecture, Endian, FormatDetails, ImageClass, ImageFormat,
+    LoadError, LoadProfile, RawImage, Result, Section, Segment,
 };
 
 const PE: &str = "PE";
@@ -18,7 +17,7 @@ struct DataDirectory {
     size: u32,
 }
 
-pub fn load(bytes: &[u8]) -> Result<LoadedImage> {
+pub fn load(bytes: &[u8]) -> Result<RawImage> {
     need(bytes, 0, 0x40, "dos header")?;
     if &bytes[0..2] != b"MZ" {
         return Err(LoadError::UnknownFormat);
@@ -71,7 +70,7 @@ pub fn load(bytes: &[u8]) -> Result<LoadedImage> {
     let imports = parse_imports(bytes, &sections, image_base, directories[1])?;
     let exports = parse_exports(bytes, &sections, image_base, directories[0])?;
     let relocations = parse_base_relocations(bytes, &sections, image_base, directories[5])?;
-    Ok(LoadedImage {
+    Ok(RawImage {
         format: ImageFormat::Pe,
         architecture: pe_arch(machine),
         class,
@@ -90,7 +89,6 @@ pub fn load(bytes: &[u8]) -> Result<LoadedImage> {
             machine,
             image_base,
         },
-        bytes: bytes.to_vec(),
     })
 }
 
@@ -175,13 +173,11 @@ fn parse_imports(
         return Ok(Vec::new());
     }
     let mut imports = Vec::new();
-    let mut desc_off =
-        rva_to_offset_sections(sections, image_base, u64::from(directory.rva)).ok_or_else(|| {
-            LoadError::Malformed {
-                format: PE,
-                field: "import directory",
-                message: "directory rva not mapped".to_string(),
-            }
+    let mut desc_off = rva_to_offset_sections(sections, image_base, u64::from(directory.rva))
+        .ok_or_else(|| LoadError::Malformed {
+            format: PE,
+            field: "import directory",
+            message: "directory rva not mapped".to_string(),
         })? as usize;
     let end_off = desc_off + directory.size as usize;
     while desc_off + 20 <= end_off {
@@ -212,16 +208,13 @@ fn parse_imports(
                 format!("ordinal:{}", thunk_value & 0xffff)
             } else {
                 let hint_name_rva = thunk_value as u32;
-                let hint_name_off = rva_to_offset_sections(
-                    sections,
-                    image_base,
-                    u64::from(hint_name_rva),
-                )
-                .ok_or_else(|| LoadError::Malformed {
-                    format: PE,
-                    field: "import name",
-                    message: "hint/name rva not mapped".to_string(),
-                })? as usize;
+                let hint_name_off =
+                    rva_to_offset_sections(sections, image_base, u64::from(hint_name_rva))
+                        .ok_or_else(|| LoadError::Malformed {
+                            format: PE,
+                            field: "import name",
+                            message: "hint/name rva not mapped".to_string(),
+                        })? as usize;
                 read_c_string(bytes, hint_name_off + 2)?
             };
             imports.push(crate::Import {
@@ -244,13 +237,11 @@ fn parse_exports(
     if directory.rva == 0 || directory.size == 0 {
         return Ok(Vec::new());
     }
-    let export_off =
-        rva_to_offset_sections(sections, image_base, u64::from(directory.rva)).ok_or_else(|| {
-            LoadError::Malformed {
-                format: PE,
-                field: "export directory",
-                message: "directory rva not mapped".to_string(),
-            }
+    let export_off = rva_to_offset_sections(sections, image_base, u64::from(directory.rva))
+        .ok_or_else(|| LoadError::Malformed {
+            format: PE,
+            field: "export directory",
+            message: "directory rva not mapped".to_string(),
         })? as usize;
     need(bytes, export_off, 40, "export directory")?;
     let number_of_names = u32_at(bytes, export_off + 24, "export name count")?;
@@ -298,13 +289,11 @@ fn parse_base_relocations(
         return Ok(Vec::new());
     }
     let mut relocations = Vec::new();
-    let mut off =
-        rva_to_offset_sections(sections, image_base, u64::from(directory.rva)).ok_or_else(|| {
-            LoadError::Malformed {
-                format: PE,
-                field: "base relocation directory",
-                message: "directory rva not mapped".to_string(),
-            }
+    let mut off = rva_to_offset_sections(sections, image_base, u64::from(directory.rva))
+        .ok_or_else(|| LoadError::Malformed {
+            format: PE,
+            field: "base relocation directory",
+            message: "directory rva not mapped".to_string(),
         })? as usize;
     let end = off + directory.size as usize;
     while off + 8 <= end {
@@ -355,14 +344,13 @@ fn read_c_string_rva(
     image_base: u64,
     rva: u32,
 ) -> Result<String> {
-    let off =
-        rva_to_offset_sections(sections, image_base, u64::from(rva)).ok_or_else(|| {
-            LoadError::Malformed {
-                format: PE,
-                field: "string rva",
-                message: "string rva not mapped".to_string(),
-            }
-        })? as usize;
+    let off = rva_to_offset_sections(sections, image_base, u64::from(rva)).ok_or_else(|| {
+        LoadError::Malformed {
+            format: PE,
+            field: "string rva",
+            message: "string rva not mapped".to_string(),
+        }
+    })? as usize;
     read_c_string(bytes, off)
 }
 

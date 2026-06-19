@@ -12,17 +12,6 @@ pub struct AnalysisTarget {
 }
 
 impl AnalysisTarget {
-    pub fn from_loaded(image: &urloader::LoadedImage) -> Result<Self> {
-        let target = Self {
-            format: convert_format(image.format),
-            architecture: convert_architecture(image.architecture)?,
-            class: convert_class(image.class),
-            endian: convert_endian(image.endian)?,
-        };
-        target.ensure_supported()?;
-        Ok(target)
-    }
-
     pub fn from_view(view: &urloader::BinaryView<'_>) -> Result<Self> {
         let target = Self {
             format: convert_format(view.target.format),

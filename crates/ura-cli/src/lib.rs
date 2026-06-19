@@ -19,7 +19,7 @@ impl SessionProject {
         let session = ura_core::analysis::session::AnalysisSession::from_parts(
             ura_core::analysis::session::AnalysisInputs {
                 source_bytes: stored.source.source_bytes.clone(),
-                loaded,
+                raw: loaded,
                 user_facts: stored.user_truth.facts.clone(),
             },
             stored.cache.state.clone(),
@@ -40,18 +40,18 @@ impl SessionProject {
 
         let path = output.as_ref().to_path_buf();
         let source_bytes = std::fs::read(input)?;
-        let loaded = urloader::load(&source_bytes).map_err(|err| anyhow!(err.to_string()))?;
+        let raw = urloader::load(&source_bytes).map_err(|err| anyhow!(err.to_string()))?;
         let mut hasher = DefaultHasher::new();
         source_bytes.hash(&mut hasher);
         let source_hash = format!("{:016x}", hasher.finish());
         let stored = urastore::StoredProject {
             source: urastore::ProjectSource {
-                source_bytes,
+                source_bytes: source_bytes.clone(),
                 source_hash: source_hash.clone(),
-                format: format!("{:?}", loaded.format),
-                architecture: format!("{:?}", loaded.architecture),
-                profile: format!("{:?}", loaded.profile),
-                entry: loaded.entry,
+                format: format!("{:?}", raw.format),
+                architecture: format!("{:?}", raw.architecture),
+                profile: format!("{:?}", raw.profile),
+                entry: raw.entry,
             },
             user_truth: urastore::UserTruth::default(),
             cache: urastore::AnalysisCache::default(),
@@ -63,7 +63,7 @@ impl SessionProject {
             ),
         };
         let session = ura_core::analysis::session::AnalysisSession::new(
-            ura_core::analysis::session::AnalysisInputs::from_loaded(&loaded),
+            ura_core::analysis::session::AnalysisInputs::from_source_bytes(source_bytes.clone())?,
         );
         Ok(Self {
             path,

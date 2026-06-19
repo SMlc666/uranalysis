@@ -50,7 +50,7 @@ fn load_session_project(path: &Path) -> Result<SessionProject> {
     let session = ura_core::analysis::session::AnalysisSession::from_parts(
         ura_core::analysis::session::AnalysisInputs {
             source_bytes: stored.source.source_bytes.clone(),
-            loaded,
+            raw: loaded,
             user_facts: stored.user_truth.facts.clone(),
         },
         stored.cache.state.clone(),

@@ -7,8 +7,10 @@ use ura_core::analysis::{
 
 #[test]
 fn refresh_plan_marks_cfg_and_downstream_passes_dirty_for_manual_function_range() {
-    let loaded = fixtures::load_minimal_aarch64_image();
-    let mut session = AnalysisSession::new(AnalysisInputs::from_loaded(&loaded));
+    let bytes = fixtures::minimal_elf64_aarch64_executable();
+    let mut session = AnalysisSession::new(
+        AnalysisInputs::from_source_bytes(bytes).expect("inputs should build"),
+    );
 
     session.mark_dirty(DirtyInputs::manual_function_ranges());
     let plan = session.refresh_plan().expect("plan should build");
@@ -21,8 +23,10 @@ fn refresh_plan_marks_cfg_and_downstream_passes_dirty_for_manual_function_range(
 
 #[test]
 fn refresh_rebuilds_functions_after_manual_range_change() {
-    let loaded = fixtures::load_minimal_aarch64_image();
-    let mut session = AnalysisSession::new(AnalysisInputs::from_loaded(&loaded));
+    let bytes = fixtures::minimal_elf64_aarch64_executable();
+    let mut session = AnalysisSession::new(
+        AnalysisInputs::from_source_bytes(bytes).expect("inputs should build"),
+    );
 
     session.refresh().expect("initial refresh");
     session
