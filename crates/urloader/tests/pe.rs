@@ -117,6 +117,39 @@ fn pe32_plus_x86_64_with_imports_and_relocs() -> Vec<u8> {
     bytes
 }
 
+fn minimal_pe32_plus_x86_64_with_pdata() -> Vec<u8> {
+    let mut bytes = minimal_pe32_plus_x86_64();
+
+    let coff = 0x84usize;
+    let opt = coff + 20;
+    let pdata_va = 0x5000u32;
+    let pdata_raw = 0x780u32;
+    let text = opt + 0xf0;
+
+    write_section(
+        &mut bytes,
+        text + 80,
+        b".pdata\0\0",
+        pdata_va,
+        0x100,
+        0x80,
+        pdata_raw,
+        0x4000_0040,
+    );
+    bytes[coff + 2..coff + 4].copy_from_slice(&3u16.to_le_bytes());
+
+    let exception_dir = opt + 112 + (8 * 3);
+    bytes[exception_dir..exception_dir + 4].copy_from_slice(&pdata_va.to_le_bytes());
+    bytes[exception_dir + 4..exception_dir + 8].copy_from_slice(&0x0cu32.to_le_bytes());
+
+    let pdata = pdata_raw as usize;
+    bytes[pdata..pdata + 4].copy_from_slice(&0x1000u32.to_le_bytes());
+    bytes[pdata + 4..pdata + 8].copy_from_slice(&0x1010u32.to_le_bytes());
+    bytes[pdata + 8..pdata + 12].copy_from_slice(&0x5100u32.to_le_bytes());
+
+    bytes
+}
+
 #[allow(clippy::too_many_arguments)]
 fn write_section(
     bytes: &mut [u8],
@@ -213,4 +246,14 @@ fn analysis_view_normalizes_pe_imports_and_relocations() {
     assert!(view.capabilities.has_imports || view.capabilities.has_relocations);
     assert!(view.imports.iter().any(|import| import.name.as_deref() == Some("ExitProcess")));
     assert!(view.relocations.iter().any(|reloc| reloc.addr == 0x140001010));
+}
+
+#[test]
+fn analysis_view_surfaces_pe_unwind_ranges_when_pdata_exists() {
+    let bytes = minimal_pe32_plus_x86_64_with_pdata();
+    let raw = load(&bytes).expect("raw image should load");
+    let view = raw.analysis_view(&bytes).expect("view should build");
+
+    assert!(view.capabilities.has_unwind_ranges);
+    assert!(view.unwind.is_some());
 }

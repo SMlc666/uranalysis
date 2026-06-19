@@ -7,3 +7,4 @@ license.workspace = true
 [dependencies]
 serde.workspace = true
 thiserror.workspace = true
+gimli = { version = "0.31", default-features = false, features = ["read", "std"] }

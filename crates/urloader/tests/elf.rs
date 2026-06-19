@@ -129,6 +129,42 @@ fn elf_with_sections_and_symbols() -> Vec<u8> {
     bytes
 }
 
+fn elf_with_mock_eh_frame() -> Vec<u8> {
+    let mut bytes = minimal_elf64_aarch64_executable();
+    bytes.resize(0x1500, 0);
+
+    let shoff = 0x1000u64;
+    bytes[0x28..0x30].copy_from_slice(&shoff.to_le_bytes());
+    bytes[0x3a..0x3c].copy_from_slice(&64u16.to_le_bytes());
+    bytes[0x3c..0x3e].copy_from_slice(&4u16.to_le_bytes());
+    bytes[0x3e..0x40].copy_from_slice(&2u16.to_le_bytes());
+
+    let shstr = b"\0.text\0.shstrtab\0.eh_frame\0";
+    bytes[0x300..0x300 + shstr.len()].copy_from_slice(shstr);
+
+    write_shdr(&mut bytes, 1, 1, 1, 0x6, 0x400080, 0x80, 4, 0, 0, 4, 0);
+    write_shdr(
+        &mut bytes,
+        2,
+        7,
+        3,
+        0,
+        0,
+        0x300,
+        shstr.len() as u64,
+        0,
+        0,
+        1,
+        0,
+    );
+    write_shdr(&mut bytes, 3, 17, 1, 0, 0x400200, 0x500, 0x40, 0, 0, 8, 0);
+
+    bytes[0x500..0x508].copy_from_slice(&0x400080u64.to_le_bytes());
+    bytes[0x508..0x510].copy_from_slice(&0x10u64.to_le_bytes());
+
+    bytes
+}
+
 #[allow(clippy::too_many_arguments)]
 fn write_shdr(
     bytes: &mut [u8],
@@ -208,6 +244,23 @@ fn loads_nobits_section_without_file_backing() {
         .sections
         .iter()
         .any(|section| section.addr == 0x600000 && section.offset == 0x2000));
+}
+
+#[test]
+fn analysis_view_surfaces_elf_unwind_ranges_when_eh_frame_exists() {
+    let bytes = elf_with_mock_eh_frame();
+    let raw = load(&bytes).expect("raw image should load");
+    let view = raw.analysis_view(&bytes).expect("view should build");
+
+    assert!(view.capabilities.has_unwind_ranges);
+    assert!(view.unwind.is_some());
+    assert!(view
+        .unwind
+        .as_ref()
+        .unwrap()
+        .function_ranges
+        .iter()
+        .any(|range| range.start == 0x400080));
 }
 
 #[test]
