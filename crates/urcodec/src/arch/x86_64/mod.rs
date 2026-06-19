@@ -1,4 +1,3 @@
-pub mod decode;
-pub mod format;
+pub(crate) mod adapters;
 pub mod forms;
 pub mod registers;

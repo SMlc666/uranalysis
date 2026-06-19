@@ -32,8 +32,12 @@ impl Encoder {
 
     pub fn encode_one(&self, instruction: &Instruction) -> Result<Vec<u8>, EncodeError> {
         match self.architecture {
-            Architecture::Aarch64 => crate::arch::aarch64::forms::encode(instruction),
-            Architecture::X86_64 => crate::arch::x86_64::forms::encode(instruction),
+            Architecture::Aarch64 => {
+                crate::runtime::encode_one(crate::arch::aarch64::forms::all_forms(), instruction)
+            }
+            Architecture::X86_64 => {
+                crate::runtime::encode_one(crate::arch::x86_64::forms::all_forms(), instruction)
+            }
         }
     }
 }

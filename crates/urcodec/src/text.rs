@@ -32,17 +32,30 @@ impl TextParser {
 
     pub fn parse_one(&self, text: &str, address: u64) -> Result<Instruction, TextError> {
         match self.architecture {
-            Architecture::Aarch64 => crate::arch::aarch64::forms::parse(text, address),
-            Architecture::X86_64 => crate::arch::x86_64::forms::parse(text, address),
+            Architecture::Aarch64 => crate::runtime::parse_one(
+                self.architecture,
+                crate::arch::aarch64::forms::all_forms(),
+                text,
+                address,
+            ),
+            Architecture::X86_64 => crate::runtime::parse_one(
+                self.architecture,
+                crate::arch::x86_64::forms::all_forms(),
+                text,
+                address,
+            ),
         }
     }
 }
 
 pub fn format_instruction(instruction: &Instruction) -> String {
-    let operands = instruction.operand_text();
-    if operands.is_empty() {
-        instruction.mnemonic.clone()
-    } else {
-        format!("{} {operands}", instruction.mnemonic)
+    match instruction.architecture {
+        Architecture::Aarch64 => crate::runtime::format_instruction(
+            crate::arch::aarch64::forms::all_forms(),
+            instruction,
+        ),
+        Architecture::X86_64 => {
+            crate::runtime::format_instruction(crate::arch::x86_64::forms::all_forms(), instruction)
+        }
     }
 }
