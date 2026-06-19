@@ -4,7 +4,7 @@
 
 **Goal:** Replace `urcodec`'s callback-based forms and split decode logic with one schema-driven runtime that owns decode, encode, text formatting, and text parsing for both AArch64 and x86-64.
 
-**Architecture:** Rewrite `urcodec` around `FormSchema` plus a generic runtime pipeline (`layout -> match -> fields -> operands -> alias -> encode`), then repopulate AArch64 and x86-64 support as schema data plus small architecture adapters. This is a hard cut: delete the legacy form callback model and old decoder/formatter ownership instead of layering the new runtime beside it.
+**Architecture:** First stabilize the data contract by making `Instruction` carry explicit architecture/form identity and replacing `InstructionForm` with a declarative `FormSchema`. Then build one runtime pipeline around `layout -> match -> fields -> operands -> text/alias -> encode`, prove that pipeline with minimal `ret` forms in both architectures, and only then migrate the current supported AArch64 and x86-64 families onto that runtime while deleting the old decoder and format ownership.
 
 **Tech Stack:** Rust 2021 workspace, `cargo test`, `cargo fmt`, `cargo clippy`, existing `urcodec` oracle tests, and existing `urdis2il`/`ura-core` workspace tests.
 
@@ -28,56 +28,175 @@ cargo clippy --workspace --all-targets -- -D warnings
 
 ## File Structure
 
-- Modify `crates/urcodec/src/form.rs`: replace callback-based `InstructionForm` with declarative schema types.
-- Create `crates/urcodec/src/runtime/mod.rs`: runtime facade and shared helper exports.
-- Create `crates/urcodec/src/runtime/layout.rs`: `LayoutView` readers for AArch64 fixed-width and x86-64 byte-stream encodings.
-- Create `crates/urcodec/src/runtime/matcher.rs`: candidate bucket selection and matcher evaluation.
-- Create `crates/urcodec/src/runtime/fields.rs`: named field extraction from layout views.
-- Create `crates/urcodec/src/runtime/operands.rs`: field-to-operand mapping and reverse operand matching.
+- Modify `crates/urcodec/src/model.rs`: add explicit architecture and form identity to `Instruction`, plus helpers that stop text code from guessing architecture from byte length.
+- Modify `crates/urcodec/src/form.rs`: replace callback-based `InstructionForm` with declarative schema, field, matcher, alias, and encode-rule types.
+- Create `crates/urcodec/src/runtime/mod.rs`: runtime facade for decode, parse, format, and encode.
+- Create `crates/urcodec/src/runtime/layout.rs`: `LayoutView` parsing for fixed-width AArch64 and byte-stream x86-64.
+- Create `crates/urcodec/src/runtime/matcher.rs`: candidate selection and matcher evaluation over layout views.
+- Create `crates/urcodec/src/runtime/fields.rs`: named field extraction from a matched schema and layout view.
+- Create `crates/urcodec/src/runtime/operands.rs`: field-to-`Instruction` mapping and operand-to-field reverse matching.
+- Create `crates/urcodec/src/runtime/text.rs`: canonical text rendering and parse tokenization driven by schemas.
 - Create `crates/urcodec/src/runtime/alias.rs`: canonicalization and display-alias selection.
-- Create `crates/urcodec/src/runtime/encode.rs`: runtime byte emission and encode validation.
+- Create `crates/urcodec/src/runtime/encode.rs`: encode validation and byte emission from schemas.
 - Modify `crates/urcodec/src/decoder.rs`: route `Decoder` through runtime only.
 - Modify `crates/urcodec/src/encode.rs`: route `Encoder` through runtime only.
 - Modify `crates/urcodec/src/text.rs`: route `TextParser` and `format_instruction` through runtime only.
-- Modify `crates/urcodec/src/lib.rs`: export the new schema/runtime surface and stop exporting legacy callback form types.
-- Modify `crates/urcodec/src/arch/mod.rs`: wire new architecture adapter modules.
-- Modify `crates/urcodec/src/arch/aarch64/forms.rs`: replace hand-written form callbacks with AArch64 schema declarations.
-- Create `crates/urcodec/src/arch/aarch64/adapters.rs`: AArch64 field transforms, register-bank mapping, and alias helpers.
+- Modify `crates/urcodec/src/lib.rs`: export the new schema/runtime surface and stop exporting the legacy callback form type.
+- Modify `crates/urcodec/src/arch/mod.rs`: wire new adapter modules and drop old decoder/format ownership.
+- Modify `crates/urcodec/src/arch/aarch64/forms.rs`: replace callback-based forms with AArch64 schema declarations.
+- Create `crates/urcodec/src/arch/aarch64/adapters.rs`: AArch64 field transforms, register-bank mapping, immediate helpers, and alias helpers.
 - Modify `crates/urcodec/src/arch/aarch64/mod.rs`: export AArch64 schema registry and adapters.
-- Delete `crates/urcodec/src/arch/aarch64/decode.rs`: schema runtime supersedes the legacy decoder.
-- Delete `crates/urcodec/src/arch/aarch64/format.rs`: schema alias rules supersede legacy formatting.
-- Modify `crates/urcodec/src/arch/x86_64/forms.rs`: replace hand-written form callbacks with x86-64 schema declarations.
-- Create `crates/urcodec/src/arch/x86_64/adapters.rs`: x86-64 prefix, ModRM/SIB, register-bank, and branch helper logic.
+- Delete `crates/urcodec/src/arch/aarch64/decode.rs`: runtime supersedes the legacy AArch64 decoder.
+- Delete `crates/urcodec/src/arch/aarch64/format.rs`: runtime text/alias rules supersede legacy AArch64 formatting.
+- Modify `crates/urcodec/src/arch/x86_64/forms.rs`: replace callback-based forms with x86-64 schema declarations.
+- Create `crates/urcodec/src/arch/x86_64/adapters.rs`: x86-64 ModRM/SIB, prefix, register, and branch helpers.
 - Modify `crates/urcodec/src/arch/x86_64/mod.rs`: export x86-64 schema registry and adapters.
-- Delete `crates/urcodec/src/arch/x86_64/decode.rs`: schema runtime supersedes the legacy decoder.
-- Delete `crates/urcodec/src/arch/x86_64/format.rs`: schema alias rules supersede legacy formatting.
-- Modify `crates/urcodec/tests/public_api.rs`: prove the public `Decoder`/`Encoder`/`TextParser` API still works after the rewrite.
-- Modify `crates/urcodec/tests/model_text.rs`: prove schema-driven canonical text and alias formatting.
-- Modify `crates/urcodec/tests/seed_forms.rs`: update roundtrip coverage to the new runtime and add alias-focused checks.
-- Modify `crates/urcodec/tests/aarch64_decode.rs`: keep fixed-width decode coverage green under runtime ownership.
+- Delete `crates/urcodec/src/arch/x86_64/decode.rs`: runtime supersedes the legacy x86-64 decoder.
+- Delete `crates/urcodec/src/arch/x86_64/format.rs`: runtime text/alias rules supersede legacy x86-64 formatting.
+- Modify `crates/urcodec/tests/public_api.rs`: prove `Decoder`/`Encoder`/`TextParser` still work after the rewrite.
+- Modify `crates/urcodec/tests/model_text.rs`: prove architecture-aware canonical text and alias behavior.
+- Modify `crates/urcodec/tests/seed_forms.rs`: update roundtrip coverage to runtime ownership and add alias-focused checks.
+- Modify `crates/urcodec/tests/aarch64_decode.rs`: keep AArch64 decode coverage green under runtime ownership.
 - Modify `crates/urcodec/tests/x86_64_decode.rs`: keep x86-64 decode coverage green under runtime ownership.
-- Modify `crates/urcodec/tests/aarch64_capstone_oracle.rs`: keep AArch64 oracle coverage aligned with the new runtime.
-- Modify `crates/urcodec/tests/x86_64_capstone_oracle.rs`: keep x86-64 oracle coverage aligned with the new runtime.
-- Modify `crates/urdis2il/tests/aarch64_lift.rs`: verify the consumer still gets the same control-flow semantics.
-- Modify `crates/urdis2il/tests/x86_64_lift.rs`: verify the consumer still gets the same control-flow semantics.
-- Modify `crates/ura-core/tests/cfg_analysis.rs`: verify CFG and branch-edge behavior still matches runtime output.
-- Modify `docs/urcodec/aarch64-coverage.md`: reflect the new AArch64 schema-owned families.
-- Modify `docs/urcodec/x86_64-coverage.md`: reflect the new x86-64 schema-owned families.
+- Modify `crates/urcodec/tests/aarch64_capstone_oracle.rs`: keep AArch64 oracle coverage aligned with runtime output.
+- Modify `crates/urcodec/tests/x86_64_capstone_oracle.rs`: keep x86-64 oracle coverage aligned with runtime output.
+- Modify `crates/urdis2il/tests/aarch64_lift.rs`: verify AArch64 control-flow semantics still lift correctly.
+- Modify `crates/urdis2il/tests/x86_64_lift.rs`: verify x86-64 control-flow semantics still lift correctly.
+- Modify `crates/ura-core/tests/cfg_analysis.rs`: verify CFG edges still match runtime branch/call output.
+- Modify `docs/urcodec/aarch64-coverage.md`: reflect AArch64 runtime-owned families.
+- Modify `docs/urcodec/x86_64-coverage.md`: reflect x86-64 runtime-owned families.
 
-### Task 1: Replace The Core Form API With Declarative Schema Types
+### Task 1: Add Explicit Instruction Identity For Runtime Ownership
 
 **Files:**
-- Modify: `crates/urcodec/src/form.rs`
-- Modify: `crates/urcodec/src/lib.rs`
-- Test: `crates/urcodec/tests/public_api.rs`
+- Modify: `crates/urcodec/src/model.rs`
+- Modify: `crates/urcodec/tests/public_api.rs`
+- Modify: `crates/urcodec/tests/model_text.rs`
 
-- [ ] **Step 1: Write the failing public test for schema-backed form registries**
+- [ ] **Step 1: Write the failing tests for explicit architecture and form identity**
 
 Append to `crates/urcodec/tests/public_api.rs`:
 
 ```rust
 #[test]
-fn form_registries_expose_declarative_layout_kinds() {
+fn decoded_instruction_carries_architecture_identity() {
+    let decoder = Decoder::new(Architecture::Aarch64, DecodeOptions::default()).unwrap();
+    let decoded = decoder.decode_one(&0xd65f03c0u32.to_le_bytes(), 0x400080).unwrap();
+
+    assert_eq!(decoded.architecture, Architecture::Aarch64);
+    assert_eq!(decoded.form.as_deref(), Some("aarch64.ret"));
+}
+```
+
+Append to `crates/urcodec/tests/model_text.rs`:
+
+```rust
+#[test]
+fn manual_instruction_text_does_not_need_byte_length_to_find_architecture() {
+    let instruction = urcodec::Instruction {
+        architecture: urcodec::Architecture::X86_64,
+        address: 0x401000,
+        size: 6,
+        bytes: vec![0x0f, 0x85, 0xfa, 0x00, 0x00, 0x00],
+        mnemonic: "jne".to_string(),
+        operands: vec![urcodec::Operand::AbsoluteAddress(0x401100)],
+        text: String::new(),
+        kind: urcodec::InstructionKind::Branch,
+        flow: urcodec::FlowKind::ConditionalBranch,
+        branch_target: Some(0x401100),
+        status: urcodec::DecodeStatus::Complete,
+        form: Some("x86_64.jcc_rel32".to_string()),
+    };
+
+    assert_eq!(urcodec::format_instruction(&instruction), "jne 0x401100");
+}
+```
+
+- [ ] **Step 2: Run the focused tests and verify they fail**
+
+Run:
+
+```bash
+cargo test -p urcodec --test public_api decoded_instruction_carries_architecture_identity -- --nocapture
+cargo test -p urcodec --test model_text manual_instruction_text_does_not_need_byte_length_to_find_architecture -- --nocapture
+```
+
+Expected: compile fails because `Instruction` has no `architecture` or `form` fields.
+
+- [ ] **Step 3: Extend `Instruction` with architecture and form identity**
+
+In `crates/urcodec/src/model.rs`, update `Instruction` to:
+
+```rust
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Instruction {
+    pub architecture: Architecture,
+    pub address: u64,
+    pub size: u8,
+    pub bytes: Vec<u8>,
+    pub mnemonic: String,
+    pub operands: Vec<Operand>,
+    pub text: String,
+    pub kind: InstructionKind,
+    pub flow: FlowKind,
+    pub branch_target: Option<u64>,
+    pub status: DecodeStatus,
+    pub form: Option<String>,
+}
+```
+
+Add this helper below `operand_text()`:
+
+```rust
+impl Instruction {
+    pub fn with_text(mut self, text: String) -> Self {
+        self.text = text;
+        self
+    }
+}
+```
+
+Update every existing `Instruction { ... }` literal in `crates/urcodec/src/arch/aarch64/forms.rs`, `crates/urcodec/src/arch/x86_64/forms.rs`, and any tests to populate:
+
+```rust
+architecture: Architecture::Aarch64, // or Architecture::X86_64
+form: Some("...".to_string()),
+```
+
+- [ ] **Step 4: Re-run the focused tests and verify they pass**
+
+Run:
+
+```bash
+cargo test -p urcodec --test public_api decoded_instruction_carries_architecture_identity -- --nocapture
+cargo test -p urcodec --test model_text manual_instruction_text_does_not_need_byte_length_to_find_architecture -- --nocapture
+```
+
+Expected: PASS
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add crates/urcodec/src/model.rs crates/urcodec/tests/public_api.rs crates/urcodec/tests/model_text.rs crates/urcodec/src/arch/aarch64/forms.rs crates/urcodec/src/arch/x86_64/forms.rs
+git commit -m "refactor: add explicit urcodec instruction identity"
+```
+
+### Task 2: Replace `InstructionForm` With Declarative `FormSchema`
+
+**Files:**
+- Modify: `crates/urcodec/src/form.rs`
+- Modify: `crates/urcodec/src/lib.rs`
+- Modify: `crates/urcodec/src/arch/aarch64/forms.rs`
+- Modify: `crates/urcodec/src/arch/x86_64/forms.rs`
+- Test: `crates/urcodec/tests/public_api.rs`
+
+- [ ] **Step 1: Write the failing test for schema-backed form registries**
+
+Append to `crates/urcodec/tests/public_api.rs`:
+
+```rust
+#[test]
+fn form_registries_expose_layout_and_matcher_metadata() {
     let x86_ret = urcodec::arch::x86_64::forms::all_forms()
         .iter()
         .find(|form| form.id().local_name() == "ret")
@@ -86,6 +205,7 @@ fn form_registries_expose_declarative_layout_kinds() {
         x86_ret.decode_layout(),
         urcodec::form::DecodeLayout::ByteStream(_)
     ));
+    assert!(!x86_ret.matchers().is_empty());
 
     let aarch64_ret = urcodec::arch::aarch64::forms::all_forms()
         .iter()
@@ -95,6 +215,7 @@ fn form_registries_expose_declarative_layout_kinds() {
         aarch64_ret.decode_layout(),
         urcodec::form::DecodeLayout::FixedWidthBits { width: 32 }
     ));
+    assert!(!aarch64_ret.fields().is_empty());
 }
 ```
 
@@ -103,24 +224,16 @@ fn form_registries_expose_declarative_layout_kinds() {
 Run:
 
 ```bash
-cargo test -p urcodec --test public_api form_registries_expose_declarative_layout_kinds -- --nocapture
+cargo test -p urcodec --test public_api form_registries_expose_layout_and_matcher_metadata -- --nocapture
 ```
 
-Expected: compile fails because `DecodeLayout` and `decode_layout()` do not exist.
+Expected: compile fails because `DecodeLayout`, matcher accessors, and schema-backed `all_forms()` do not exist.
 
-- [ ] **Step 3: Replace callback forms with schema structs**
+- [ ] **Step 3: Replace callback forms with schema types**
 
-Replace the callback-centric body of `crates/urcodec/src/form.rs` with these core declarations:
+Replace `crates/urcodec/src/form.rs` with a declarative schema model that contains:
 
 ```rust
-use crate::model::{Architecture, FlowKind, InstructionKind};
-
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct FormId {
-    architecture: Architecture,
-    local_name: &'static str,
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DecodeLayout {
     FixedWidthBits { width: u8 },
@@ -141,7 +254,6 @@ pub enum Matcher {
     MaskEq { mask: u32, value: u32 },
     OpcodeEq(&'static [u8]),
     OpcodeExt { reg: u8 },
-    RexW(bool),
     ModrmMode { mode: u8 },
 }
 
@@ -149,16 +261,12 @@ pub enum Matcher {
 pub enum FieldSource {
     Bits { start: u8, end: u8 },
     SignedBits { start: u8, end: u8 },
-    OpcodeLow3,
     ModrmReg,
     ModrmRm,
-    ModrmMode,
     Immediate8,
     Immediate16,
     Immediate32,
     Immediate64,
-    Displacement8,
-    Displacement32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -172,15 +280,8 @@ pub enum OperandSpec {
     Register { field: &'static str, bank: &'static str },
     Immediate { field: &'static str },
     RelativeTarget { field: &'static str, scale: u8, add_instruction_size: bool },
+    AbsoluteTarget { field: &'static str },
     Condition { field: &'static str, table: &'static str },
-    Memory {
-        base: Option<&'static str>,
-        index: Option<&'static str>,
-        scale: Option<&'static str>,
-        displacement: Option<&'static str>,
-        width_bits: Option<u16>,
-        relative: bool,
-    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -196,6 +297,12 @@ pub struct EncodeRule {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TextRule {
+    pub mnemonic: &'static str,
+    pub operand_order: &'static [&'static str],
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FormSchema {
     id: FormId,
     mnemonic: &'static str,
@@ -205,89 +312,41 @@ pub struct FormSchema {
     matchers: &'static [Matcher],
     fields: &'static [FieldSpec],
     operands: &'static [OperandSpec],
+    text_rule: TextRule,
     aliases: &'static [AliasRule],
     encode_rule: EncodeRule,
 }
 ```
 
-Also add these accessors near the end of the file:
+Add `FormSchema::new(...)` and accessors for `id()`, `mnemonic()`, `kind()`, `flow()`, `decode_layout()`, `matchers()`, `fields()`, `operands()`, `text_rule()`, `aliases()`, and `encode_rule()`.
 
-```rust
-impl FormSchema {
-    pub const fn decode_layout(&self) -> DecodeLayout {
-        self.decode_layout
-    }
+Update `crates/urcodec/src/lib.rs` to export `FormSchema` and related schema types, and stop exporting `InstructionForm`.
 
-    pub const fn matchers(&self) -> &'static [Matcher] {
-        self.matchers
-    }
+- [ ] **Step 4: Make both architecture registries return `FormSchema`**
 
-    pub const fn fields(&self) -> &'static [FieldSpec] {
-        self.fields
-    }
+In `crates/urcodec/src/arch/aarch64/forms.rs` and `crates/urcodec/src/arch/x86_64/forms.rs`:
 
-    pub const fn operands(&self) -> &'static [OperandSpec] {
-        self.operands
-    }
-}
-```
+- replace `InstructionForm` imports with schema imports
+- change `static FORMS: &[InstructionForm]` to `static FORMS: &[FormSchema]`
+- change `pub fn all_forms() -> &'static [InstructionForm]` to `pub fn all_forms() -> &'static [FormSchema]`
+- for now, only define one schema constant per architecture: `ret`
 
-Update the form export in `crates/urcodec/src/lib.rs`:
-
-```rust
-pub use form::{
-    AliasRule, ByteStreamLayout, DecodeLayout, EncodeRule, FieldSource, FieldSpec, FormId,
-    FormSchema, Matcher, OperandSpec,
-};
-```
-
-- [ ] **Step 4: Make the architecture form registries return `FormSchema`**
-
-At the top of both `crates/urcodec/src/arch/aarch64/forms.rs` and `crates/urcodec/src/arch/x86_64/forms.rs`, replace the old import:
-
-```rust
-use crate::form::{FormId, InstructionForm};
-```
-
-with:
-
-```rust
-use crate::form::{
-    AliasRule, ByteStreamLayout, DecodeLayout, EncodeRule, FieldSource, FieldSpec, FormId,
-    FormSchema, Matcher, OperandSpec,
-};
-```
-
-Then change:
-
-```rust
-static FORMS: &[InstructionForm] = &[
-```
-
-to:
-
-```rust
-static FORMS: &[FormSchema] = &[
-```
-
-and:
-
-```rust
-pub fn all_forms() -> &'static [InstructionForm] {
-```
-
-to:
+Use:
 
 ```rust
 pub fn all_forms() -> &'static [FormSchema] {
+    FORMS
+}
 ```
+
+and remove `decode()`, `encode()`, and `parse()` public helpers from these files once no caller needs them.
 
 - [ ] **Step 5: Re-run the focused test and verify it passes**
 
 Run:
 
 ```bash
-cargo test -p urcodec --test public_api form_registries_expose_declarative_layout_kinds -- --nocapture
+cargo test -p urcodec --test public_api form_registries_expose_layout_and_matcher_metadata -- --nocapture
 ```
 
 Expected: PASS
@@ -296,10 +355,10 @@ Expected: PASS
 
 ```bash
 git add crates/urcodec/src/form.rs crates/urcodec/src/lib.rs crates/urcodec/src/arch/aarch64/forms.rs crates/urcodec/src/arch/x86_64/forms.rs crates/urcodec/tests/public_api.rs
-git commit -m "refactor: replace urcodec callback forms with schema types"
+git commit -m "refactor: replace urcodec callback forms with schema declarations"
 ```
 
-### Task 2: Introduce The Shared Runtime Pipeline
+### Task 3: Build The Minimal Runtime Pipeline With `ret` In Both Architectures
 
 **Files:**
 - Create: `crates/urcodec/src/runtime/mod.rs`
@@ -307,6 +366,7 @@ git commit -m "refactor: replace urcodec callback forms with schema types"
 - Create: `crates/urcodec/src/runtime/matcher.rs`
 - Create: `crates/urcodec/src/runtime/fields.rs`
 - Create: `crates/urcodec/src/runtime/operands.rs`
+- Create: `crates/urcodec/src/runtime/text.rs`
 - Create: `crates/urcodec/src/runtime/alias.rs`
 - Create: `crates/urcodec/src/runtime/encode.rs`
 - Modify: `crates/urcodec/src/decoder.rs`
@@ -314,39 +374,60 @@ git commit -m "refactor: replace urcodec callback forms with schema types"
 - Modify: `crates/urcodec/src/text.rs`
 - Modify: `crates/urcodec/src/lib.rs`
 - Test: `crates/urcodec/tests/public_api.rs`
+- Test: `crates/urcodec/tests/seed_forms.rs`
 
-- [ ] **Step 1: Write the failing runtime ownership test**
+- [ ] **Step 1: Write the failing end-to-end runtime tests for AArch64 and x86-64 `ret`**
 
 Append to `crates/urcodec/tests/public_api.rs`:
 
 ```rust
 #[test]
-fn decoder_encoder_and_parser_share_the_same_runtime_surface() {
+fn decoder_encoder_and_parser_share_runtime_for_aarch64_ret() {
     let decoder = Decoder::new(Architecture::Aarch64, DecodeOptions::default()).unwrap();
     let encoder = Encoder::new(Architecture::Aarch64, EncodeOptions::default()).unwrap();
     let parser = TextParser::new(Architecture::Aarch64, TextOptions::default()).unwrap();
 
     let bytes = 0xd65f03c0u32.to_le_bytes();
-    let instruction = decoder.decode_one(&bytes, 0x400080).unwrap();
-    assert_eq!(urcodec::format_instruction(&instruction), "ret");
-    assert_eq!(encoder.encode_one(&instruction).unwrap(), bytes.to_vec());
+    let decoded = decoder.decode_one(&bytes, 0x400080).unwrap();
+    assert_eq!(decoded.form.as_deref(), Some("aarch64.ret"));
+    assert_eq!(urcodec::format_instruction(&decoded), "ret");
+    assert_eq!(encoder.encode_one(&decoded).unwrap(), bytes.to_vec());
 
     let parsed = parser.parse_one("ret", 0x400080).unwrap();
+    assert_eq!(parsed.form.as_deref(), Some("aarch64.ret"));
+    assert_eq!(encoder.encode_one(&parsed).unwrap(), bytes.to_vec());
+}
+
+#[test]
+fn decoder_encoder_and_parser_share_runtime_for_x86_ret() {
+    let decoder = Decoder::new(Architecture::X86_64, DecodeOptions::default()).unwrap();
+    let encoder = Encoder::new(Architecture::X86_64, EncodeOptions::default()).unwrap();
+    let parser = TextParser::new(Architecture::X86_64, TextOptions::default()).unwrap();
+
+    let bytes = [0xc3];
+    let decoded = decoder.decode_one(&bytes, 0x401000).unwrap();
+    assert_eq!(decoded.form.as_deref(), Some("x86_64.ret"));
+    assert_eq!(urcodec::format_instruction(&decoded), "ret");
+    assert_eq!(encoder.encode_one(&decoded).unwrap(), bytes.to_vec());
+
+    let parsed = parser.parse_one("ret", 0x401000).unwrap();
+    assert_eq!(parsed.form.as_deref(), Some("x86_64.ret"));
     assert_eq!(encoder.encode_one(&parsed).unwrap(), bytes.to_vec());
 }
 ```
 
-- [ ] **Step 2: Run the focused test and verify it fails**
+- [ ] **Step 2: Run the focused tests and verify they fail**
 
 Run:
 
 ```bash
-cargo test -p urcodec --test public_api decoder_encoder_and_parser_share_the_same_runtime_surface -- --nocapture
+cargo test -p urcodec --test public_api decoder_encoder_and_parser_share_runtime_for_aarch64_ret -- --nocapture
+cargo test -p urcodec --test public_api decoder_encoder_and_parser_share_runtime_for_x86_ret -- --nocapture
 ```
 
-Expected: compile fails or panics because the old callback paths were removed in Task 1 but no runtime exists yet.
+Expected: FAIL because the runtime modules and schema-driven entrypoints do not exist yet.
 
-- [ ] **Step 3: Create the runtime skeleton**
+- [ ] **Step 3: Create runtime contracts that are actually sufficient to implement**
 
 Create `crates/urcodec/src/runtime/mod.rs`:
 
@@ -357,6 +438,7 @@ pub mod fields;
 pub mod layout;
 pub mod matcher;
 pub mod operands;
+pub mod text;
 
 use crate::{
     error::{DecodeError, EncodeError, TextError},
@@ -373,143 +455,80 @@ pub fn decode_one(
     let layout = layout::read_layout(architecture, bytes, address)?;
     let form = matcher::select_form(forms, &layout)?;
     let fields = fields::extract_fields(form, &layout)?;
-    operands::build_instruction(form, &layout, &fields)
+    let mut instruction = operands::build_instruction(form, &layout, &fields)?;
+    instruction.text = text::render_instruction(form, &instruction);
+    Ok(instruction)
 }
 
 pub fn encode_one(
-    architecture: Architecture,
     forms: &'static [FormSchema],
     instruction: &Instruction,
 ) -> Result<Vec<u8>, EncodeError> {
-    let canonical = alias::canonicalize_instruction(architecture, forms, instruction)?;
-    encode::emit_instruction(architecture, forms, &canonical)
+    let canonical = alias::canonicalize_instruction(forms, instruction)?;
+    let form = matcher::select_form_for_instruction(forms, &canonical)?;
+    let values = operands::match_instruction(form, &canonical)?;
+    encode::emit_instruction(form, &canonical, &values)
 }
 
 pub fn parse_one(
-    architecture: Architecture,
     forms: &'static [FormSchema],
     text: &str,
     address: u64,
 ) -> Result<Instruction, TextError> {
-    alias::parse_instruction(architecture, forms, text, address)
+    let (form, values) = text::parse_instruction(forms, text)?;
+    let mut instruction = operands::build_instruction_from_values(form, address, &values)?;
+    instruction.text = text::render_instruction(form, &instruction);
+    Ok(instruction)
+}
+
+pub fn format_instruction(forms: &'static [FormSchema], instruction: &Instruction) -> String {
+    alias::display_text(forms, instruction)
 }
 ```
 
-Create `crates/urcodec/src/runtime/layout.rs`:
+Create the other modules with these public functions:
 
-```rust
-use crate::{
-    error::DecodeError,
-    form::DecodeLayout,
-    model::Architecture,
-};
+- `layout::read_layout(architecture, bytes, address) -> Result<LayoutView, DecodeError>`
+- `matcher::select_form(forms, &layout) -> Result<&'static FormSchema, DecodeError>`
+- `matcher::select_form_for_instruction(forms, instruction) -> Result<&'static FormSchema, EncodeError>`
+- `fields::extract_fields(form, &layout) -> Result<BTreeMap<&'static str, i64>, DecodeError>`
+- `operands::build_instruction(form, &layout, &fields) -> Result<Instruction, DecodeError>`
+- `operands::build_instruction_from_values(form, address, &values) -> Result<Instruction, TextError>`
+- `operands::match_instruction(form, instruction) -> Result<BTreeMap<&'static str, i64>, EncodeError>`
+- `text::render_instruction(form, instruction) -> String`
+- `text::parse_instruction(forms, text) -> Result<(&'static FormSchema, BTreeMap<&'static str, i64>), TextError>`
+- `alias::canonicalize_instruction(forms, instruction) -> Result<Instruction, EncodeError>`
+- `alias::display_text(forms, instruction) -> String`
+- `encode::emit_instruction(form, instruction, &values) -> Result<Vec<u8>, EncodeError>`
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum LayoutView {
-    Aarch64Word { word: u32, bytes: [u8; 4], address: u64 },
-    X86ByteStream { bytes: Vec<u8>, address: u64 },
-}
+For this task, implement just enough logic for:
 
-pub fn read_layout(
-    architecture: Architecture,
-    bytes: &[u8],
-    address: u64,
-) -> Result<LayoutView, DecodeError> {
-    match architecture {
-        Architecture::Aarch64 => {
-            let word = bytes.get(..4).ok_or(DecodeError::TruncatedInstruction {
-                expected: 4,
-                actual: bytes.len(),
-            })?;
-            Ok(LayoutView::Aarch64Word {
-                word: u32::from_le_bytes([word[0], word[1], word[2], word[3]]),
-                bytes: [word[0], word[1], word[2], word[3]],
-                address,
-            })
-        }
-        Architecture::X86_64 => Ok(LayoutView::X86ByteStream {
-            bytes: bytes.to_vec(),
-            address,
-        }),
-    }
-}
-```
+- AArch64 `ret`
+- x86-64 `ret`
 
-- [ ] **Step 4: Route the public entrypoints through runtime**
+- [ ] **Step 4: Route public entrypoints through runtime only**
 
-In `crates/urcodec/src/decoder.rs`, replace `decode_one()` with:
+In `crates/urcodec/src/decoder.rs`, replace `decode_one()` with runtime dispatch that calls `crate::runtime::decode_one(...)` using `all_forms()` for the selected architecture.
 
-```rust
-pub fn decode_one(&self, bytes: &[u8], address: u64) -> Result<Instruction> {
-    match self.architecture {
-        Architecture::Aarch64 => crate::runtime::decode_one(
-            self.architecture,
-            crate::arch::aarch64::forms::all_forms(),
-            bytes,
-            address,
-        ),
-        Architecture::X86_64 => crate::runtime::decode_one(
-            self.architecture,
-            crate::arch::x86_64::forms::all_forms(),
-            bytes,
-            address,
-        ),
-    }
-}
-```
+In `crates/urcodec/src/encode.rs`, replace `encode_one()` with runtime dispatch that calls `crate::runtime::encode_one(...)`.
 
-In `crates/urcodec/src/encode.rs`, replace `encode_one()` with:
+In `crates/urcodec/src/text.rs`, replace `parse_one()` with runtime dispatch and replace `format_instruction()` with architecture-aware routing based on `instruction.architecture`.
 
-```rust
-pub fn encode_one(&self, instruction: &Instruction) -> Result<Vec<u8>, EncodeError> {
-    match self.architecture {
-        Architecture::Aarch64 => crate::runtime::encode_one(
-            self.architecture,
-            crate::arch::aarch64::forms::all_forms(),
-            instruction,
-        ),
-        Architecture::X86_64 => crate::runtime::encode_one(
-            self.architecture,
-            crate::arch::x86_64::forms::all_forms(),
-            instruction,
-        ),
-    }
-}
-```
-
-In `crates/urcodec/src/text.rs`, replace `parse_one()` with:
-
-```rust
-pub fn parse_one(&self, text: &str, address: u64) -> Result<Instruction, TextError> {
-    match self.architecture {
-        Architecture::Aarch64 => crate::runtime::parse_one(
-            self.architecture,
-            crate::arch::aarch64::forms::all_forms(),
-            text,
-            address,
-        ),
-        Architecture::X86_64 => crate::runtime::parse_one(
-            self.architecture,
-            crate::arch::x86_64::forms::all_forms(),
-            text,
-            address,
-        ),
-    }
-}
-```
-
-Also add to `crates/urcodec/src/lib.rs`:
+Add:
 
 ```rust
 pub mod runtime;
 ```
 
-- [ ] **Step 5: Re-run the focused test and verify it passes**
+to `crates/urcodec/src/lib.rs`.
+
+- [ ] **Step 5: Re-run the focused tests and verify they pass**
 
 Run:
 
 ```bash
-cargo test -p urcodec --test public_api decoder_encoder_and_parser_share_the_same_runtime_surface -- --nocapture
+cargo test -p urcodec --test public_api decoder_encoder_and_parser_share_runtime_for_aarch64_ret -- --nocapture
+cargo test -p urcodec --test public_api decoder_encoder_and_parser_share_runtime_for_x86_ret -- --nocapture
 ```
 
 Expected: PASS
@@ -518,22 +537,25 @@ Expected: PASS
 
 ```bash
 git add crates/urcodec/src/runtime crates/urcodec/src/decoder.rs crates/urcodec/src/encode.rs crates/urcodec/src/text.rs crates/urcodec/src/lib.rs crates/urcodec/tests/public_api.rs
-git commit -m "refactor: add urcodec schema runtime pipeline"
+git commit -m "refactor: add minimal urcodec schema runtime"
 ```
 
-### Task 3: Move AArch64 Support To Schema Data Plus Adapters
+### Task 4: Migrate AArch64 Families Onto Runtime Ownership
 
 **Files:**
 - Modify: `crates/urcodec/src/arch/aarch64/forms.rs`
 - Create: `crates/urcodec/src/arch/aarch64/adapters.rs`
 - Modify: `crates/urcodec/src/arch/aarch64/mod.rs`
-- Delete: `crates/urcodec/src/arch/aarch64/decode.rs`
-- Delete: `crates/urcodec/src/arch/aarch64/format.rs`
+- Modify: `crates/urcodec/src/runtime/fields.rs`
+- Modify: `crates/urcodec/src/runtime/operands.rs`
+- Modify: `crates/urcodec/src/runtime/text.rs`
+- Modify: `crates/urcodec/src/runtime/alias.rs`
+- Modify: `crates/urcodec/src/runtime/encode.rs`
 - Modify: `crates/urcodec/tests/seed_forms.rs`
 - Modify: `crates/urcodec/tests/aarch64_decode.rs`
 - Modify: `crates/urcodec/tests/model_text.rs`
 
-- [ ] **Step 1: Add failing AArch64 alias and roundtrip tests**
+- [ ] **Step 1: Add failing AArch64 roundtrip and alias tests**
 
 Append to `crates/urcodec/tests/seed_forms.rs`:
 
@@ -546,10 +568,12 @@ fn aarch64_cmp_alias_roundtrips_through_schema_runtime() {
 
     let bytes = 0xf100201fu32.to_le_bytes();
     let decoded = decoder.decode_one(&bytes, 0x400100).unwrap();
+    assert_eq!(decoded.form.as_deref(), Some("aarch64.cmp_imm"));
     assert_eq!(urcodec::format_instruction(&decoded), "cmp x0, #0x8");
     assert_eq!(encoder.encode_one(&decoded).unwrap(), bytes.to_vec());
 
     let parsed = parser.parse_one("cmp x0, #0x8", 0x400100).unwrap();
+    assert_eq!(parsed.form.as_deref(), Some("aarch64.cmp_imm"));
     assert_eq!(encoder.encode_one(&parsed).unwrap(), bytes.to_vec());
 }
 ```
@@ -558,7 +582,7 @@ Append to `crates/urcodec/tests/model_text.rs`:
 
 ```rust
 #[test]
-fn canonical_text_prefers_aarch64_aliases_from_schema_rules() {
+fn aarch64_conditional_branch_uses_schema_alias_text() {
     let decoder = urcodec::Decoder::new(
         urcodec::Architecture::Aarch64,
         urcodec::DecodeOptions::default(),
@@ -571,100 +595,31 @@ fn canonical_text_prefers_aarch64_aliases_from_schema_rules() {
 }
 ```
 
-- [ ] **Step 2: Run the focused AArch64 tests and verify they fail**
+- [ ] **Step 2: Run the focused tests and verify they fail**
 
 Run:
 
 ```bash
 cargo test -p urcodec --test seed_forms aarch64_cmp_alias_roundtrips_through_schema_runtime -- --nocapture
-cargo test -p urcodec --test model_text canonical_text_prefers_aarch64_aliases_from_schema_rules -- --nocapture
+cargo test -p urcodec --test model_text aarch64_conditional_branch_uses_schema_alias_text -- --nocapture
 ```
 
-Expected: FAIL because AArch64 forms no longer own decode, parse, alias selection, or encode behavior.
+Expected: FAIL because only `ret` is runtime-owned.
 
-- [ ] **Step 3: Add AArch64 adapter helpers**
+- [ ] **Step 3: Add AArch64 adapters and full schema declarations**
 
-Create `crates/urcodec/src/arch/aarch64/adapters.rs`:
+Create `crates/urcodec/src/arch/aarch64/adapters.rs` with helper functions for:
 
-```rust
-use crate::{
-    bits::{bits, sign_extend},
-    model::{Operand, Register},
-};
+- register-bank lookup for `x`, `w`, `x_or_sp`, `w_or_sp`, `x_or_zr`, `w_or_zr`
+- signed immediate extraction from bit ranges
+- AArch64 branch target calculation
+- condition-code string lookup
+- move-wide and logical-immediate immediate transforms
 
-pub fn x_reg(index: u32) -> Register {
-    Register {
-        name: format!("x{index}"),
-    }
-}
+Then replace the body of `crates/urcodec/src/arch/aarch64/forms.rs` with `FormSchema` declarations for:
 
-pub fn condition_name(cond: i64) -> &'static str {
-    match cond {
-        0 => "eq",
-        1 => "ne",
-        2 => "cs",
-        3 => "cc",
-        4 => "mi",
-        5 => "pl",
-        6 => "vs",
-        7 => "vc",
-        8 => "hi",
-        9 => "ls",
-        10 => "ge",
-        11 => "lt",
-        12 => "gt",
-        13 => "le",
-        14 => "al",
-        _ => "nv",
-    }
-}
-
-pub fn branch_target(address: u64, size: u8, imm: i64, scale: u8) -> u64 {
-    ((address + u64::from(size)) as i64 + (imm * i64::from(scale))) as u64
-}
-
-pub fn signed_field(word: u32, start: u8, end: u8) -> i64 {
-    sign_extend(bits(word, start, end), end - start + 1)
-}
-```
-
-- [ ] **Step 4: Rewrite the AArch64 form table as pure schema data**
-
-At the top of `crates/urcodec/src/arch/aarch64/forms.rs`, replace the old callback-driven entries with schema declarations like:
-
-```rust
-static RET_FIELDS: &[FieldSpec] = &[FieldSpec {
-    name: "rn",
-    source: FieldSource::Bits { start: 5, end: 9 },
-}];
-
-static RET_OPERANDS: &[OperandSpec] = &[OperandSpec::Register {
-    field: "rn",
-    bank: "aarch64.x_or_lr_omittable",
-}];
-
-static RET_FORM: FormSchema = FormSchema::new(
-    FormId::new(Architecture::Aarch64, "ret"),
-    "ret",
-    InstructionKind::Return,
-    FlowKind::Return,
-    DecodeLayout::FixedWidthBits { width: 32 },
-    &[Matcher::MaskEq {
-        mask: 0xffff_fc1f,
-        value: 0xd65f_0000,
-    }],
-    RET_FIELDS,
-    RET_OPERANDS,
-    &[],
-    EncodeRule {
-        require: &["rn == 30 || register(xN)"],
-        canonical_preference: "omit lr operand when rn == 30",
-    },
-);
-```
-
-Do the same for:
-
+- `nop`
+- `ret`
 - `br`
 - `blr`
 - `b_imm26`
@@ -684,9 +639,216 @@ Do the same for:
 - `logical_imm`
 - `bitfield_alias`
 
-Make `all_forms()` return a slice of these schema constants only.
+Populate each schema with:
 
-- [ ] **Step 5: Export adapters and delete legacy AArch64 ownership**
+- `DecodeLayout::FixedWidthBits { width: 32 }`
+- `Matcher::MaskEq { ... }`
+- named `FieldSpec` entries
+- `OperandSpec` entries
+- `TextRule`
+- alias rules where needed
+- encode requirements
+
+- [ ] **Step 4: Extend runtime modules until AArch64 tests pass**
+
+Implement enough logic across `runtime/fields.rs`, `runtime/operands.rs`, `runtime/text.rs`, `runtime/alias.rs`, and `runtime/encode.rs` to support the AArch64 families above, including:
+
+- fixed-width bit extraction
+- scaled relative branch targets
+- alias-aware text rendering for `cmp`, `cmn`, and `b.eq`
+- parse of canonical and alias AArch64 mnemonics
+- encode validation and emission for migrated AArch64 forms
+
+- [ ] **Step 5: Re-run the focused AArch64 tests and verify they pass**
+
+Run:
+
+```bash
+cargo test -p urcodec --test seed_forms aarch64_cmp_alias_roundtrips_through_schema_runtime -- --nocapture
+cargo test -p urcodec --test model_text aarch64_conditional_branch_uses_schema_alias_text -- --nocapture
+cargo test -p urcodec --test aarch64_decode -- --nocapture
+```
+
+Expected: PASS
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add crates/urcodec/src/arch/aarch64 crates/urcodec/src/runtime crates/urcodec/tests/seed_forms.rs crates/urcodec/tests/aarch64_decode.rs crates/urcodec/tests/model_text.rs
+git commit -m "refactor: move aarch64 urcodec support to schema runtime"
+```
+
+### Task 5: Migrate x86-64 Families Onto Runtime Ownership
+
+**Files:**
+- Modify: `crates/urcodec/src/arch/x86_64/forms.rs`
+- Create: `crates/urcodec/src/arch/x86_64/adapters.rs`
+- Modify: `crates/urcodec/src/arch/x86_64/mod.rs`
+- Modify: `crates/urcodec/src/runtime/layout.rs`
+- Modify: `crates/urcodec/src/runtime/fields.rs`
+- Modify: `crates/urcodec/src/runtime/operands.rs`
+- Modify: `crates/urcodec/src/runtime/text.rs`
+- Modify: `crates/urcodec/src/runtime/alias.rs`
+- Modify: `crates/urcodec/src/runtime/encode.rs`
+- Modify: `crates/urcodec/tests/seed_forms.rs`
+- Modify: `crates/urcodec/tests/x86_64_decode.rs`
+- Modify: `crates/urcodec/tests/model_text.rs`
+
+- [ ] **Step 1: Add failing x86-64 roundtrip and alias tests**
+
+Append to `crates/urcodec/tests/seed_forms.rs`:
+
+```rust
+#[test]
+fn x86_call_rm64_roundtrips_through_schema_runtime() {
+    let decoder = Decoder::new(Architecture::X86_64, DecodeOptions::default()).unwrap();
+    let encoder = Encoder::new(Architecture::X86_64, EncodeOptions::default()).unwrap();
+    let parser = TextParser::new(Architecture::X86_64, TextOptions::default()).unwrap();
+
+    let bytes = [0xff, 0xd0];
+    let decoded = decoder.decode_one(&bytes, 0x401000).unwrap();
+    assert_eq!(decoded.form.as_deref(), Some("x86_64.call_rm64"));
+    assert_eq!(urcodec::format_instruction(&decoded), "call rax");
+    assert_eq!(encoder.encode_one(&decoded).unwrap(), bytes.to_vec());
+
+    let parsed = parser.parse_one("call rax", 0x401000).unwrap();
+    assert_eq!(parsed.form.as_deref(), Some("x86_64.call_rm64"));
+    assert_eq!(encoder.encode_one(&parsed).unwrap(), bytes.to_vec());
+}
+```
+
+Append to `crates/urcodec/tests/model_text.rs`:
+
+```rust
+#[test]
+fn x86_conditional_branch_uses_named_schema_alias_text() {
+    let decoder = urcodec::Decoder::new(
+        urcodec::Architecture::X86_64,
+        urcodec::DecodeOptions::default(),
+    )
+    .unwrap();
+    let instruction = decoder
+        .decode_one(&[0x0f, 0x85, 0xfa, 0x00, 0x00, 0x00], 0x401000)
+        .unwrap();
+    assert_eq!(urcodec::format_instruction(&instruction), "jne 0x401100");
+}
+```
+
+- [ ] **Step 2: Run the focused tests and verify they fail**
+
+Run:
+
+```bash
+cargo test -p urcodec --test seed_forms x86_call_rm64_roundtrips_through_schema_runtime -- --nocapture
+cargo test -p urcodec --test model_text x86_conditional_branch_uses_named_schema_alias_text -- --nocapture
+```
+
+Expected: FAIL because only `ret` and AArch64 families are runtime-owned.
+
+- [ ] **Step 3: Add x86-64 adapters and full schema declarations**
+
+Create `crates/urcodec/src/arch/x86_64/adapters.rs` with helpers for:
+
+- ModRM splitting
+- SIB splitting
+- general-purpose register mapping
+- relative branch target calculation
+- condition-code mnemonic lookup
+- REX.W-sensitive register and opcode-ext interpretation
+
+Then replace the body of `crates/urcodec/src/arch/x86_64/forms.rs` with `FormSchema` declarations for:
+
+- `ret`
+- `ret_imm16`
+- `retf`
+- `call_rel32`
+- `call_rm64`
+- `jmp_rel8`
+- `jmp_rel32`
+- `jmp_rm64`
+- `jcc_rel8`
+- `jcc_rel32`
+- `loopne_rel8`
+- `loope_rel8`
+- `loop_rel8`
+- `jrcxz_rel8`
+- `mov_r64_imm64`
+
+Populate each schema with:
+
+- `DecodeLayout::ByteStream(ByteStreamLayout { ... })`
+- opcode and ModRM matchers
+- named fields
+- operand specs
+- `TextRule`
+- encode requirements
+
+- [ ] **Step 4: Extend runtime modules until x86-64 tests pass**
+
+Implement enough logic across `runtime/layout.rs`, `runtime/fields.rs`, `runtime/operands.rs`, `runtime/text.rs`, `runtime/alias.rs`, and `runtime/encode.rs` to support the x86-64 families above, including:
+
+- opcode and ModRM matching
+- immediate and relative displacement extraction
+- register operand mapping
+- named conditional-branch text aliases
+- parse of migrated x86-64 mnemonics
+- byte emission for migrated x86-64 forms
+
+- [ ] **Step 5: Re-run the focused x86-64 tests and verify they pass**
+
+Run:
+
+```bash
+cargo test -p urcodec --test seed_forms x86_call_rm64_roundtrips_through_schema_runtime -- --nocapture
+cargo test -p urcodec --test model_text x86_conditional_branch_uses_named_schema_alias_text -- --nocapture
+cargo test -p urcodec --test x86_64_decode -- --nocapture
+```
+
+Expected: PASS
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add crates/urcodec/src/arch/x86_64 crates/urcodec/src/runtime crates/urcodec/tests/seed_forms.rs crates/urcodec/tests/x86_64_decode.rs crates/urcodec/tests/model_text.rs
+git commit -m "refactor: move x86_64 urcodec support to schema runtime"
+```
+
+### Task 6: Delete Legacy Decoder And Formatter Ownership
+
+**Files:**
+- Modify: `crates/urcodec/src/arch/mod.rs`
+- Modify: `crates/urcodec/src/arch/aarch64/mod.rs`
+- Modify: `crates/urcodec/src/arch/x86_64/mod.rs`
+- Delete: `crates/urcodec/src/arch/aarch64/decode.rs`
+- Delete: `crates/urcodec/src/arch/aarch64/format.rs`
+- Delete: `crates/urcodec/src/arch/x86_64/decode.rs`
+- Delete: `crates/urcodec/src/arch/x86_64/format.rs`
+- Test: `crates/urcodec/tests/public_api.rs`
+
+- [ ] **Step 1: Write the failing regression test that proves runtime is the only owner**
+
+Append to `crates/urcodec/tests/public_api.rs`:
+
+```rust
+#[test]
+fn public_decoder_works_without_arch_specific_decode_modules() {
+    let decoder = Decoder::new(Architecture::X86_64, DecodeOptions::default()).unwrap();
+    let decoded = decoder.decode_one(&[0xc3], 0x401000).unwrap();
+    assert_eq!(decoded.form.as_deref(), Some("x86_64.ret"));
+}
+```
+
+- [ ] **Step 2: Run the focused test and verify it passes before deletion**
+
+Run:
+
+```bash
+cargo test -p urcodec --test public_api public_decoder_works_without_arch_specific_decode_modules -- --nocapture
+```
+
+Expected: PASS
+
+- [ ] **Step 3: Delete legacy modules and clean exports**
 
 In `crates/urcodec/src/arch/aarch64/mod.rs`, replace:
 
@@ -705,206 +867,6 @@ pub mod forms;
 pub mod registers;
 ```
 
-Then delete:
-
-```bash
-rm crates/urcodec/src/arch/aarch64/decode.rs
-rm crates/urcodec/src/arch/aarch64/format.rs
-```
-
-- [ ] **Step 6: Re-run the focused AArch64 tests and verify they pass**
-
-Run:
-
-```bash
-cargo test -p urcodec --test seed_forms aarch64_cmp_alias_roundtrips_through_schema_runtime -- --nocapture
-cargo test -p urcodec --test model_text canonical_text_prefers_aarch64_aliases_from_schema_rules -- --nocapture
-cargo test -p urcodec --test aarch64_decode -- --nocapture
-```
-
-Expected: PASS
-
-- [ ] **Step 7: Commit**
-
-```bash
-git add crates/urcodec/src/arch/aarch64 crates/urcodec/tests/seed_forms.rs crates/urcodec/tests/aarch64_decode.rs crates/urcodec/tests/model_text.rs
-git commit -m "refactor: move aarch64 urcodec support to schema runtime"
-```
-
-### Task 4: Move x86-64 Support To Schema Data Plus Adapters
-
-**Files:**
-- Modify: `crates/urcodec/src/arch/x86_64/forms.rs`
-- Create: `crates/urcodec/src/arch/x86_64/adapters.rs`
-- Modify: `crates/urcodec/src/arch/x86_64/mod.rs`
-- Delete: `crates/urcodec/src/arch/x86_64/decode.rs`
-- Delete: `crates/urcodec/src/arch/x86_64/format.rs`
-- Modify: `crates/urcodec/tests/seed_forms.rs`
-- Modify: `crates/urcodec/tests/x86_64_decode.rs`
-- Modify: `crates/urcodec/tests/model_text.rs`
-
-- [ ] **Step 1: Add failing x86-64 branch and indirect-call tests**
-
-Append to `crates/urcodec/tests/seed_forms.rs`:
-
-```rust
-#[test]
-fn x86_call_rm64_roundtrips_through_schema_runtime() {
-    let decoder = Decoder::new(Architecture::X86_64, DecodeOptions::default()).unwrap();
-    let encoder = Encoder::new(Architecture::X86_64, EncodeOptions::default()).unwrap();
-    let parser = TextParser::new(Architecture::X86_64, TextOptions::default()).unwrap();
-
-    let bytes = [0xff, 0xd0];
-    let decoded = decoder.decode_one(&bytes, 0x401000).unwrap();
-    assert_eq!(urcodec::format_instruction(&decoded), "call rax");
-    assert_eq!(encoder.encode_one(&decoded).unwrap(), bytes.to_vec());
-
-    let parsed = parser.parse_one("call rax", 0x401000).unwrap();
-    assert_eq!(encoder.encode_one(&parsed).unwrap(), bytes.to_vec());
-}
-```
-
-Append to `crates/urcodec/tests/model_text.rs`:
-
-```rust
-#[test]
-fn canonical_text_prefers_named_x86_condition_aliases_from_schema_rules() {
-    let decoder = urcodec::Decoder::new(
-        urcodec::Architecture::X86_64,
-        urcodec::DecodeOptions::default(),
-    )
-    .unwrap();
-    let instruction = decoder
-        .decode_one(&[0x0f, 0x85, 0xfa, 0x00, 0x00, 0x00], 0x401000)
-        .unwrap();
-    assert_eq!(urcodec::format_instruction(&instruction), "jne 0x401100");
-}
-```
-
-- [ ] **Step 2: Run the focused x86-64 tests and verify they fail**
-
-Run:
-
-```bash
-cargo test -p urcodec --test seed_forms x86_call_rm64_roundtrips_through_schema_runtime -- --nocapture
-cargo test -p urcodec --test model_text canonical_text_prefers_named_x86_condition_aliases_from_schema_rules -- --nocapture
-```
-
-Expected: FAIL because the runtime does not yet understand x86-64 prefix, ModRM, indirect branch, or conditional-branch schema semantics.
-
-- [ ] **Step 3: Add x86-64 adapter helpers**
-
-Create `crates/urcodec/src/arch/x86_64/adapters.rs`:
-
-```rust
-use crate::model::Register;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ModrmParts {
-    pub mode: u8,
-    pub reg: u8,
-    pub rm: u8,
-}
-
-pub fn decode_modrm(byte: u8) -> ModrmParts {
-    ModrmParts {
-        mode: (byte >> 6) & 0x3,
-        reg: (byte >> 3) & 0x7,
-        rm: byte & 0x7,
-    }
-}
-
-pub fn reg64(index: u8) -> Register {
-    let name = match index {
-        0 => "rax",
-        1 => "rcx",
-        2 => "rdx",
-        3 => "rbx",
-        4 => "rsp",
-        5 => "rbp",
-        6 => "rsi",
-        7 => "rdi",
-        8 => "r8",
-        9 => "r9",
-        10 => "r10",
-        11 => "r11",
-        12 => "r12",
-        13 => "r13",
-        14 => "r14",
-        _ => "r15",
-    };
-    Register {
-        name: name.to_string(),
-    }
-}
-
-pub fn rel_target(address: u64, size: u8, displacement: i64) -> u64 {
-    ((address + u64::from(size)) as i64 + displacement) as u64
-}
-```
-
-- [ ] **Step 4: Rewrite the x86-64 form table as pure schema data**
-
-In `crates/urcodec/src/arch/x86_64/forms.rs`, declare schema constants for:
-
-- `ret`
-- `ret_imm16`
-- `retf`
-- `call_rel32`
-- `call_rm64`
-- `jmp_rel8`
-- `jmp_rel32`
-- `jmp_rm64`
-- `jcc_rel8`
-- `jcc_rel32`
-- `loopne_rel8`
-- `loope_rel8`
-- `loop_rel8`
-- `jrcxz_rel8`
-- `mov_r64_imm64`
-
-Use the new schema form:
-
-```rust
-static CALL_RM64_FORM: FormSchema = FormSchema::new(
-    FormId::new(Architecture::X86_64, "call_rm64"),
-    "call",
-    InstructionKind::Call,
-    FlowKind::IndirectCall,
-    DecodeLayout::ByteStream(ByteStreamLayout {
-        opcode_len: 1,
-        uses_modrm: true,
-        uses_sib: false,
-        displacement_bytes: None,
-        immediate_bytes: None,
-    }),
-    &[
-        Matcher::OpcodeEq(&[0xff]),
-        Matcher::OpcodeExt { reg: 2 },
-        Matcher::ModrmMode { mode: 3 },
-    ],
-    &[
-        FieldSpec {
-            name: "rm",
-            source: FieldSource::ModrmRm,
-        },
-    ],
-    &[OperandSpec::Register {
-        field: "rm",
-        bank: "x86_64.gpr64",
-    }],
-    &[],
-    EncodeRule {
-        require: &["operand[0] is register64"],
-        canonical_preference: "use modrm mode 3 for register operands",
-    },
-);
-```
-
-Make `all_forms()` return a slice of these schema constants only.
-
-- [ ] **Step 5: Export adapters and delete legacy x86-64 ownership**
-
 In `crates/urcodec/src/arch/x86_64/mod.rs`, replace:
 
 ```rust
@@ -922,155 +884,21 @@ pub mod forms;
 pub mod registers;
 ```
 
-Then delete:
+Delete:
 
 ```bash
+rm crates/urcodec/src/arch/aarch64/decode.rs
+rm crates/urcodec/src/arch/aarch64/format.rs
 rm crates/urcodec/src/arch/x86_64/decode.rs
 rm crates/urcodec/src/arch/x86_64/format.rs
 ```
 
-- [ ] **Step 6: Re-run the focused x86-64 tests and verify they pass**
+- [ ] **Step 4: Re-run the focused test and verify it still passes**
 
 Run:
 
 ```bash
-cargo test -p urcodec --test seed_forms x86_call_rm64_roundtrips_through_schema_runtime -- --nocapture
-cargo test -p urcodec --test model_text canonical_text_prefers_named_x86_condition_aliases_from_schema_rules -- --nocapture
-cargo test -p urcodec --test x86_64_decode -- --nocapture
-```
-
-Expected: PASS
-
-- [ ] **Step 7: Commit**
-
-```bash
-git add crates/urcodec/src/arch/x86_64 crates/urcodec/tests/seed_forms.rs crates/urcodec/tests/x86_64_decode.rs crates/urcodec/tests/model_text.rs
-git commit -m "refactor: move x86_64 urcodec support to schema runtime"
-```
-
-### Task 5: Finish Alias Canonicalization, Public Text Behavior, And Encode Roundtrips
-
-**Files:**
-- Modify: `crates/urcodec/src/runtime/alias.rs`
-- Modify: `crates/urcodec/src/runtime/encode.rs`
-- Modify: `crates/urcodec/src/text.rs`
-- Modify: `crates/urcodec/tests/model_text.rs`
-- Modify: `crates/urcodec/tests/seed_forms.rs`
-- Modify: `crates/urcodec/tests/public_api.rs`
-
-- [ ] **Step 1: Add failing canonicalization tests**
-
-Append to `crates/urcodec/tests/model_text.rs`:
-
-```rust
-#[test]
-fn parse_and_format_canonicalize_cmp_aliases_before_encode() {
-    let parser = urcodec::TextParser::new(
-        urcodec::Architecture::Aarch64,
-        urcodec::TextOptions::default(),
-    )
-    .unwrap();
-    let encoder = urcodec::Encoder::new(
-        urcodec::Architecture::Aarch64,
-        urcodec::EncodeOptions::default(),
-    )
-    .unwrap();
-
-    let parsed = parser.parse_one("cmp x0, #0x8", 0x400100).unwrap();
-    assert_eq!(urcodec::format_instruction(&parsed), "cmp x0, #0x8");
-    assert_eq!(encoder.encode_one(&parsed).unwrap(), 0xf100201fu32.to_le_bytes());
-}
-```
-
-Append to `crates/urcodec/tests/public_api.rs`:
-
-```rust
-#[test]
-fn x86_named_branch_aliases_roundtrip_through_public_api() {
-    let parser = TextParser::new(Architecture::X86_64, TextOptions::default()).unwrap();
-    let encoder = Encoder::new(Architecture::X86_64, EncodeOptions::default()).unwrap();
-
-    let parsed = parser.parse_one("jne 0x401100", 0x401000).unwrap();
-    assert_eq!(
-        encoder.encode_one(&parsed).unwrap(),
-        vec![0x0f, 0x85, 0xfa, 0x00, 0x00, 0x00]
-    );
-}
-```
-
-- [ ] **Step 2: Run the focused canonicalization tests and verify they fail**
-
-Run:
-
-```bash
-cargo test -p urcodec --test model_text parse_and_format_canonicalize_cmp_aliases_before_encode -- --nocapture
-cargo test -p urcodec --test public_api x86_named_branch_aliases_roundtrip_through_public_api -- --nocapture
-```
-
-Expected: FAIL because alias resolution and canonical pre-encode normalization are incomplete.
-
-- [ ] **Step 3: Implement alias resolution and encode-side canonicalization**
-
-In `crates/urcodec/src/runtime/alias.rs`, add:
-
-```rust
-use crate::{
-    error::{EncodeError, TextError},
-    form::FormSchema,
-    model::{Architecture, Instruction},
-};
-
-pub fn canonicalize_instruction(
-    _architecture: Architecture,
-    forms: &'static [FormSchema],
-    instruction: &Instruction,
-) -> Result<Instruction, EncodeError> {
-    let form = forms
-        .iter()
-        .find(|form| form.matches_instruction(instruction))
-        .ok_or_else(|| EncodeError::UnsupportedForm(instruction.mnemonic.clone()))?;
-
-    Ok(form.canonicalize_instruction(instruction))
-}
-
-pub fn choose_display_text(forms: &'static [FormSchema], instruction: &Instruction) -> String {
-    forms.iter()
-        .find(|form| form.matches_instruction(instruction))
-        .map(|form| form.render_text(instruction))
-        .unwrap_or_else(|| instruction.text.clone())
-}
-
-pub fn parse_instruction(
-    _architecture: Architecture,
-    forms: &'static [FormSchema],
-    text: &str,
-    address: u64,
-) -> Result<Instruction, TextError> {
-    forms.iter()
-        .find_map(|form| form.parse_text(text, address))
-        .ok_or_else(|| TextError::UnknownMnemonic(text.trim().to_string()))
-}
-```
-
-In `crates/urcodec/src/text.rs`, replace `format_instruction()` with:
-
-```rust
-pub fn format_instruction(instruction: &Instruction) -> String {
-    let forms = match instruction.mnemonic.as_str() {
-        _ if instruction.bytes.len() == 4 => crate::arch::aarch64::forms::all_forms(),
-        _ => crate::arch::x86_64::forms::all_forms(),
-    };
-    crate::runtime::alias::choose_display_text(forms, instruction)
-}
-```
-
-- [ ] **Step 4: Re-run the focused canonicalization tests and verify they pass**
-
-Run:
-
-```bash
-cargo test -p urcodec --test model_text parse_and_format_canonicalize_cmp_aliases_before_encode -- --nocapture
-cargo test -p urcodec --test public_api x86_named_branch_aliases_roundtrip_through_public_api -- --nocapture
+cargo test -p urcodec --test public_api public_decoder_works_without_arch_specific_decode_modules -- --nocapture
 ```
 
 Expected: PASS
@@ -1078,11 +906,11 @@ Expected: PASS
 - [ ] **Step 5: Commit**
 
 ```bash
-git add crates/urcodec/src/runtime/alias.rs crates/urcodec/src/runtime/encode.rs crates/urcodec/src/text.rs crates/urcodec/tests/model_text.rs crates/urcodec/tests/seed_forms.rs crates/urcodec/tests/public_api.rs
-git commit -m "refactor: finish urcodec alias canonicalization and encode roundtrips"
+git add crates/urcodec/src/arch
+git commit -m "refactor: remove legacy urcodec decoder and formatter modules"
 ```
 
-### Task 6: Restore Full Test Coverage, Consumer Confidence, And Docs
+### Task 7: Restore Oracle Coverage, Consumer Confidence, And Docs
 
 **Files:**
 - Modify: `crates/urcodec/tests/aarch64_capstone_oracle.rs`
@@ -1099,7 +927,7 @@ Append to `crates/ura-core/tests/cfg_analysis.rs`:
 
 ```rust
 #[test]
-fn x86_call_edges_still_follow_schema_runtime_targets() {
+fn x86_call_edges_still_follow_runtime_branch_targets() {
     let summary = analyze_x86_64_bytes(&[0xe8, 0x05, 0x00, 0x00, 0x00, 0xc3], 0x401000);
     assert_eq!(summary.cfg_edges.len(), 2);
     assert!(summary
@@ -1113,7 +941,7 @@ Append to `crates/urdis2il/tests/aarch64_lift.rs`:
 
 ```rust
 #[test]
-fn lifts_schema_runtime_cmp_alias_as_compare_then_branch() {
+fn lifts_runtime_owned_cmp_alias_then_branch() {
     let block = lift_aarch64_words(&[0xf100201f, 0x54000060], 0x400100);
     assert!(block
         .statements
@@ -1122,31 +950,31 @@ fn lifts_schema_runtime_cmp_alias_as_compare_then_branch() {
 }
 ```
 
-- [ ] **Step 2: Run the focused consumer tests and verify they fail if any runtime regression remains**
+- [ ] **Step 2: Run the focused consumer tests and verify they pass before docs**
 
 Run:
 
 ```bash
-cargo test -p ura-core --test cfg_analysis x86_call_edges_still_follow_schema_runtime_targets -- --nocapture
-cargo test -p urdis2il --test aarch64_lift lifts_schema_runtime_cmp_alias_as_compare_then_branch -- --nocapture
+cargo test -p ura-core --test cfg_analysis x86_call_edges_still_follow_runtime_branch_targets -- --nocapture
+cargo test -p urdis2il --test aarch64_lift lifts_runtime_owned_cmp_alias_then_branch -- --nocapture
 ```
 
-Expected: PASS only after the runtime delivers the same semantics as before. If either fails, fix `urcodec` before touching docs.
+Expected: PASS
 
 - [ ] **Step 3: Update coverage docs**
 
-In `docs/urcodec/aarch64-coverage.md`, replace the old seed-only wording with:
+In `docs/urcodec/aarch64-coverage.md`, replace the old wording with:
 
 ```md
 ## Runtime-Owned Families
 
-- Control flow: `ret`, `br`, `blr`, `b`, `bl`, `b.cond`, `cbz`, `cbnz`, `tbz`, `tbnz`
+- Control flow: `nop`, `ret`, `br`, `blr`, `b`, `bl`, `b.cond`, `cbz`, `cbnz`, `tbz`, `tbnz`
 - PC-relative address: `adr`, `adrp`
 - Arithmetic immediate: `add`, `sub`, `cmp`, `cmn`
 - Alias-bearing scalar forms: `mov`, logical-immediate aliases, bitfield aliases
 ```
 
-In `docs/urcodec/x86_64-coverage.md`, replace the old callback-form wording with:
+In `docs/urcodec/x86_64-coverage.md`, replace the old wording with:
 
 ```md
 ## Runtime-Owned Families
@@ -1157,7 +985,7 @@ In `docs/urcodec/x86_64-coverage.md`, replace the old callback-form wording with
 - Data movement: `mov r64, imm64`
 ```
 
-- [ ] **Step 4: Run crate-level and workspace verification**
+- [ ] **Step 4: Run full verification**
 
 Run:
 
@@ -1180,22 +1008,22 @@ Expected:
 
 ```bash
 git add crates/urcodec/tests crates/urdis2il/tests crates/ura-core/tests docs/urcodec/aarch64-coverage.md docs/urcodec/x86_64-coverage.md
-git commit -m "test: restore urcodec oracle and consumer confidence"
+git commit -m "test: restore urcodec runtime coverage and consumer confidence"
 ```
 
 ## Self-Review Checklist
 
 - Spec coverage:
-  - single-source schema ownership: Tasks 1, 2, 3, 4, 5
-  - no legacy fallback or coexistence: Tasks 3 and 4 delete old decode/format files, Task 2 routes entrypoints only through runtime
-  - AArch64 first, x86-64 second: Tasks 3 then 4
-  - alias/text/encode unification: Task 5
-  - oracle and consumer regression: Task 6
+  - explicit single-source schema ownership: Tasks 2, 3, 4, 5
+  - runtime contract with no guessed architecture: Tasks 1 and 3
+  - AArch64 first, x86-64 second: Tasks 4 then 5
+  - no legacy fallback or coexistence: Tasks 3 and 6
+  - alias/text/encode unification: Tasks 3, 4, and 5
+  - oracle and consumer regression: Task 7
 - Placeholder scan:
   - no `TBD`, `TODO`, or "implement later" markers remain
   - every code-changing step includes exact code or exact commands
 - Type consistency:
-  - runtime uses `FormSchema`, not legacy `InstructionForm`
-  - layout ownership stays in `runtime/layout.rs`
-  - alias behavior stays in `runtime/alias.rs`
-
+  - runtime uses `FormSchema`, not `InstructionForm`
+  - `Instruction` carries `architecture` and `form`
+  - text routing keys off explicit instruction identity, not byte-length guesses
