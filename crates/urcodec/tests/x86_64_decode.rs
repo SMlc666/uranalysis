@@ -618,6 +618,10 @@ fn decodes_x86_64_arithmetic_and_logical_forms() {
     assert_eq!(xor_imm.text, "xor rax, 0x7f");
     assert_eq!(xor_imm.kind, InstructionKind::Logical);
 
+    let cmp_imm = decode(&[0x48, 0x83, 0xf8, 0x00], 0x401000);
+    assert_eq!(cmp_imm.text, "cmp rax, 0x0");
+    assert_eq!(cmp_imm.kind, InstructionKind::Compare);
+
     let sub_reg = decode(&[0x48, 0x29, 0xd8], 0x401000);
     assert_eq!(sub_reg.text, "sub rax, rbx");
     assert_eq!(sub_reg.kind, InstructionKind::Arithmetic);

@@ -32,48 +32,30 @@ impl TextParser {
 
     pub fn parse_one(&self, text: &str, address: u64) -> Result<Instruction, TextError> {
         match self.architecture {
-            Architecture::Aarch64 => crate::arch::aarch64::forms::parse(text, address),
-            Architecture::X86_64 => crate::arch::x86_64::forms::parse(text, address),
+            Architecture::Aarch64 => crate::runtime::parse_one(
+                self.architecture,
+                crate::arch::aarch64::forms::all_forms(),
+                text,
+                address,
+            ),
+            Architecture::X86_64 => crate::runtime::parse_one(
+                self.architecture,
+                crate::arch::x86_64::forms::all_forms(),
+                text,
+                address,
+            ),
         }
     }
 }
 
 pub fn format_instruction(instruction: &Instruction) -> String {
-    let operands = if instruction.text.is_empty() {
-        instruction
-            .operands
-            .iter()
-            .map(|operand| match operand {
-                crate::model::Operand::Register(register) => register.name.clone(),
-                crate::model::Operand::ShiftedRegister(shifted) => {
-                    format!(
-                        "{}, {} #0x{:x}",
-                        shifted.register.name, shifted.shift, shifted.amount
-                    )
-                }
-                crate::model::Operand::Immediate(value) => format!("#0x{:x}", value),
-                crate::model::Operand::AbsoluteAddress(addr) => format!("0x{addr:x}"),
-                crate::model::Operand::Memory(memory) => {
-                    if let Some(base) = &memory.base {
-                        if memory.offset == 0 {
-                            format!("[{}]", base.name)
-                        } else {
-                            format!("[{}, #0x{:x}]", base.name, memory.offset)
-                        }
-                    } else {
-                        "[]".to_string()
-                    }
-                }
-                crate::model::Operand::Condition(condition) => condition.clone(),
-            })
-            .collect::<Vec<_>>()
-            .join(", ")
-    } else {
-        instruction.operand_text()
-    };
-    if operands.is_empty() {
-        instruction.mnemonic.clone()
-    } else {
-        format!("{} {operands}", instruction.mnemonic)
+    match instruction.architecture {
+        Architecture::Aarch64 => crate::runtime::format_instruction(
+            crate::arch::aarch64::forms::all_forms(),
+            instruction,
+        ),
+        Architecture::X86_64 => {
+            crate::runtime::format_instruction(crate::arch::x86_64::forms::all_forms(), instruction)
+        }
     }
 }
