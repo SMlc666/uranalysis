@@ -11,12 +11,21 @@ pub fn build_instruction(
     layout: &LayoutView,
     values: &ValueMap,
 ) -> Result<Instruction, DecodeError> {
-    let (architecture, address, bytes) = match layout {
+    let (architecture, address, bytes, size) = match layout {
         LayoutView::Aarch64Word { word, address } => {
-            (Architecture::Aarch64, *address, word.to_le_bytes().to_vec())
+            let bytes = word.to_le_bytes().to_vec();
+            (Architecture::Aarch64, *address, bytes, 4)
         }
         LayoutView::X86ByteStream { bytes, address } => {
-            (Architecture::X86_64, *address, bytes.clone())
+            let size = usize::from(instruction_size(form, bytes)?);
+            let bytes = bytes
+                .get(..size)
+                .ok_or(DecodeError::TruncatedInstruction {
+                    expected: size,
+                    actual: bytes.len(),
+                })?
+                .to_vec();
+            (Architecture::X86_64, *address, bytes, size as u8)
         }
     };
 
@@ -29,7 +38,7 @@ pub fn build_instruction(
     {
         return Err(DecodeError::UnsupportedTarget);
     }
-    let operands = build_operands(form, Some(layout), values, address, bytes.len() as u8)?;
+    let operands = build_operands(form, Some(layout), values, address, size)?;
     let branch_target = operands.iter().find_map(|operand| match operand {
         Operand::AbsoluteAddress(target) => Some(*target),
         _ => None,
@@ -38,7 +47,7 @@ pub fn build_instruction(
     Ok(Instruction {
         architecture,
         address,
-        size: bytes.len() as u8,
+        size,
         bytes,
         mnemonic,
         operands,
@@ -1889,6 +1898,23 @@ fn instruction_size_for_form(form: &FormSchema) -> u8 {
                 + u8::from(layout.uses_sib)
                 + layout.displacement_bytes.unwrap_or(0)
                 + layout.immediate_bytes.unwrap_or(0)
+        }
+    }
+}
+
+fn instruction_size(form: &FormSchema, bytes: &[u8]) -> Result<u8, DecodeError> {
+    match form.decode_layout() {
+        crate::form::DecodeLayout::FixedWidthBits { width } => Ok(width / 8),
+        crate::form::DecodeLayout::ByteStream(layout) => {
+            let payload_offset = if layout.uses_modrm {
+                x86_adapters::modrm_operand_end(bytes, usize::from(layout.opcode_len))?
+            } else {
+                usize::from(layout.opcode_len)
+                    + usize::from(layout.uses_sib)
+                    + layout.displacement_bytes.map(usize::from).unwrap_or(0)
+            };
+            let size = payload_offset + usize::from(layout.immediate_bytes.unwrap_or(0));
+            u8::try_from(size).map_err(|_| DecodeError::UnsupportedTarget)
         }
     }
 }
