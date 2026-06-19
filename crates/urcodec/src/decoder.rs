@@ -1,5 +1,4 @@
 use crate::{
-    arch::{aarch64, x86_64},
     error::{DecodeError, Result},
     model::{Architecture, DecodeOptions, Endian, Instruction},
 };
@@ -30,21 +29,18 @@ impl Decoder {
 
     pub fn decode_one(&self, bytes: &[u8], address: u64) -> Result<Instruction> {
         match self.architecture {
-            Architecture::Aarch64 => {
-                if let Some(instruction) = aarch64::forms::decode(bytes, address)? {
-                    Ok(instruction)
-                } else {
-                    let word = Self::require_word(bytes)?;
-                    Ok(aarch64::decode::decode_word(word, address))
-                }
-            }
-            Architecture::X86_64 => {
-                if let Some(instruction) = x86_64::forms::decode(bytes, address)? {
-                    Ok(instruction)
-                } else {
-                    x86_64::decode::decode_instruction(bytes, address)
-                }
-            }
+            Architecture::Aarch64 => crate::runtime::decode_one(
+                self.architecture,
+                crate::arch::aarch64::forms::all_forms(),
+                bytes,
+                address,
+            ),
+            Architecture::X86_64 => crate::runtime::decode_one(
+                self.architecture,
+                crate::arch::x86_64::forms::all_forms(),
+                bytes,
+                address,
+            ),
         }
     }
 

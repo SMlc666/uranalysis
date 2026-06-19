@@ -72,6 +72,13 @@ fn decodes_x86_64_returns_calls_and_jumps() {
     assert_eq!(call.branch_target, Some(0x40100a));
     assert_eq!(call.flow, FlowKind::Call);
 
+    let call_with_tail = decode(&[0xe8, 0x05, 0x00, 0x00, 0x00, 0xff, 0xff, 0xff], 0x401000);
+    assert_eq!(call_with_tail.text, "call 0x40100a");
+    assert_eq!(call_with_tail.size, 5);
+    assert_eq!(call_with_tail.bytes, vec![0xe8, 0x05, 0x00, 0x00, 0x00]);
+    assert_eq!(call_with_tail.branch_target, Some(0x40100a));
+    assert_eq!(call_with_tail.flow, FlowKind::Call);
+
     let jmp_rel8 = decode(&[0xeb, 0x06], 0x401000);
     assert_eq!(jmp_rel8.text, "jmp 0x401008");
     assert_eq!(jmp_rel8.size, 2);
@@ -361,6 +368,24 @@ fn decodes_x86_64_memory_moves_and_lea() {
     assert_eq!(store.text, "mov [rbx+0x8], rax");
     assert_eq!(store.kind, InstructionKind::Store);
 
+    let store32 = decode(&[0x89, 0x45, 0xfc], 0x401000);
+    assert_eq!(store32.text, "mov [rbp+-0x4], eax");
+    assert_eq!(store32.size, 3);
+    assert_eq!(store32.kind, InstructionKind::Store);
+    let mem = memory_operand(&store32.operands[0]);
+    assert_eq!(mem.base.as_ref().unwrap().name, "rbp");
+    assert_eq!(mem.offset, -4);
+    assert_eq!(mem.width_bits, Some(32));
+
+    let load32 = decode(&[0x8b, 0x45, 0xfc], 0x401000);
+    assert_eq!(load32.text, "mov eax, [rbp+-0x4]");
+    assert_eq!(load32.size, 3);
+    assert_eq!(load32.kind, InstructionKind::Load);
+    let mem = memory_operand(&load32.operands[1]);
+    assert_eq!(mem.base.as_ref().unwrap().name, "rbp");
+    assert_eq!(mem.offset, -4);
+    assert_eq!(mem.width_bits, Some(32));
+
     let lea = decode(&[0x48, 0x8d, 0x44, 0x8b, 0x10], 0x401000);
     assert_eq!(lea.text, "lea rax, [rbx+rcx*4+0x10]");
     let mem = memory_operand(&lea.operands[1]);
@@ -617,6 +642,10 @@ fn decodes_x86_64_arithmetic_and_logical_forms() {
     let xor_imm = decode(&[0x48, 0x83, 0xf0, 0x7f], 0x401000);
     assert_eq!(xor_imm.text, "xor rax, 0x7f");
     assert_eq!(xor_imm.kind, InstructionKind::Logical);
+
+    let cmp_imm = decode(&[0x48, 0x83, 0xf8, 0x00], 0x401000);
+    assert_eq!(cmp_imm.text, "cmp rax, 0x0");
+    assert_eq!(cmp_imm.kind, InstructionKind::Compare);
 
     let sub_reg = decode(&[0x48, 0x29, 0xd8], 0x401000);
     assert_eq!(sub_reg.text, "sub rax, rbx");
@@ -1220,6 +1249,12 @@ fn decodes_x86_64_mmx_forms() {
     assert_eq!(pcmpgtb.text, "pcmpgtb mm1, [rdx+rcx]");
     assert_eq!(pcmpgtb.size, 4);
     assert_eq!(pcmpgtb.kind, InstructionKind::Compare);
+
+    let pcmpgtb_with_tail = decode(&[0x0f, 0x64, 0x0c, 0x0a, 0xff, 0xff], 0x401000);
+    assert_eq!(pcmpgtb_with_tail.text, "pcmpgtb mm1, [rdx+rcx]");
+    assert_eq!(pcmpgtb_with_tail.size, 4);
+    assert_eq!(pcmpgtb_with_tail.bytes, vec![0x0f, 0x64, 0x0c, 0x0a]);
+    assert_eq!(pcmpgtb_with_tail.kind, InstructionKind::Compare);
 
     let pand = decode(&[0x66, 0x0f, 0xdb, 0x15, 0x34, 0x12, 0x00, 0x00], 0x401000);
     assert_eq!(pand.text, "pand xmm2, [rip+0x1234]");

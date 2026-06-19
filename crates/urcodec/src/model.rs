@@ -26,6 +26,7 @@ impl Default for DecodeOptions {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Instruction {
+    pub architecture: Architecture,
     pub address: u64,
     pub size: u8,
     pub bytes: Vec<u8>,
@@ -36,6 +37,7 @@ pub struct Instruction {
     pub flow: FlowKind,
     pub branch_target: Option<u64>,
     pub status: DecodeStatus,
+    pub form: Option<String>,
 }
 
 impl Instruction {
@@ -45,6 +47,11 @@ impl Instruction {
             .map(str::trim)
             .unwrap_or("")
             .to_string()
+    }
+
+    pub fn with_text(mut self, text: String) -> Self {
+        self.text = text;
+        self
     }
 }
 
