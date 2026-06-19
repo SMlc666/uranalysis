@@ -575,6 +575,36 @@ fn x86_mov_r64_m64_roundtrips_through_form() {
 }
 
 #[test]
+fn x86_mov_m32_r32_roundtrips_through_form() {
+    let decoder = Decoder::new(Architecture::X86_64, DecodeOptions::default()).unwrap();
+    let encoder = Encoder::new(Architecture::X86_64, EncodeOptions::default()).unwrap();
+    let parser = TextParser::new(Architecture::X86_64, TextOptions::default()).unwrap();
+
+    let bytes = [0x89, 0x45, 0xfc];
+    let decoded = decoder.decode_one(&bytes, 0x401000).unwrap();
+    assert_eq!(urcodec::format_instruction(&decoded), "mov [rbp+-0x4], eax");
+    assert_eq!(encoder.encode_one(&decoded).unwrap(), bytes.to_vec());
+
+    let parsed = parser.parse_one("mov [rbp+-0x4], eax", 0x401000).unwrap();
+    assert_eq!(encoder.encode_one(&parsed).unwrap(), bytes.to_vec());
+}
+
+#[test]
+fn x86_mov_r32_m32_roundtrips_through_form() {
+    let decoder = Decoder::new(Architecture::X86_64, DecodeOptions::default()).unwrap();
+    let encoder = Encoder::new(Architecture::X86_64, EncodeOptions::default()).unwrap();
+    let parser = TextParser::new(Architecture::X86_64, TextOptions::default()).unwrap();
+
+    let bytes = [0x8b, 0x45, 0xfc];
+    let decoded = decoder.decode_one(&bytes, 0x401000).unwrap();
+    assert_eq!(urcodec::format_instruction(&decoded), "mov eax, [rbp+-0x4]");
+    assert_eq!(encoder.encode_one(&decoded).unwrap(), bytes.to_vec());
+
+    let parsed = parser.parse_one("mov eax, [rbp+-0x4]", 0x401000).unwrap();
+    assert_eq!(encoder.encode_one(&parsed).unwrap(), bytes.to_vec());
+}
+
+#[test]
 fn x86_mov_m64_imm32_roundtrips_through_form() {
     let decoder = Decoder::new(Architecture::X86_64, DecodeOptions::default()).unwrap();
     let encoder = Encoder::new(Architecture::X86_64, EncodeOptions::default()).unwrap();

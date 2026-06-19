@@ -621,6 +621,46 @@ pub fn emit_instruction(
                 0xc0 | (((reg as u8) & 0x07) << 3) | ((rm as u8) & 0x07),
             ])
         }
+        (Architecture::X86_64, "x86_64.mov_m32_r32") => {
+            let memory = expect_memory_operand(instruction, 0)?;
+            let encoded = crate::arch::x86_64::adapters::encode_modrm_memory(memory)?;
+            let reg = get_u32(values, "reg", instruction)?;
+            let mut out = Vec::new();
+            if reg >= 8 || encoded.rex_x != 0 || encoded.rex_b != 0 {
+                out.push(0x40 | (u8::from(reg >= 8) << 2) | (encoded.rex_x << 1) | encoded.rex_b);
+            }
+            out.push(0x89);
+            out.push(
+                ((encoded.mod_bits & 0x03) << 6)
+                    | (((reg as u8) & 0x07) << 3)
+                    | encoded.rm_low_bits,
+            );
+            if let Some(sib) = encoded.sib {
+                out.push(sib);
+            }
+            out.extend_from_slice(&encoded.displacement);
+            Ok(out)
+        }
+        (Architecture::X86_64, "x86_64.mov_r32_m32") => {
+            let memory = expect_memory_operand(instruction, 1)?;
+            let encoded = crate::arch::x86_64::adapters::encode_modrm_memory(memory)?;
+            let reg = get_u32(values, "reg", instruction)?;
+            let mut out = Vec::new();
+            if reg >= 8 || encoded.rex_x != 0 || encoded.rex_b != 0 {
+                out.push(0x40 | (u8::from(reg >= 8) << 2) | (encoded.rex_x << 1) | encoded.rex_b);
+            }
+            out.push(0x8b);
+            out.push(
+                ((encoded.mod_bits & 0x03) << 6)
+                    | (((reg as u8) & 0x07) << 3)
+                    | encoded.rm_low_bits,
+            );
+            if let Some(sib) = encoded.sib {
+                out.push(sib);
+            }
+            out.extend_from_slice(&encoded.displacement);
+            Ok(out)
+        }
         (Architecture::X86_64, "x86_64.mov_m64_r64") => {
             let memory = expect_memory_operand(instruction, 0)?;
             let encoded = crate::arch::x86_64::adapters::encode_modrm_memory(memory)?;

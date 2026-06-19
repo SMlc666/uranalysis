@@ -282,6 +282,26 @@ pub fn match_instruction(
             values.insert("rm", i64::from(rm));
             values.insert("reg", i64::from(reg));
         }
+        "x86_64.mov_m32_r32" => {
+            let [Operand::Memory(memory), Operand::Register(src)] = instruction.operands.as_slice()
+            else {
+                return Err(EncodeError::OperandMismatch(instruction.mnemonic.clone()));
+            };
+            ensure_x86_memory_width(memory, 32, &instruction.mnemonic)?;
+            let reg = x86_adapters::parse_r32_register(&src.name)
+                .ok_or_else(|| EncodeError::OperandMismatch(instruction.mnemonic.clone()))?;
+            values.insert("reg", i64::from(reg));
+        }
+        "x86_64.mov_r32_m32" => {
+            let [Operand::Register(dst), Operand::Memory(memory)] = instruction.operands.as_slice()
+            else {
+                return Err(EncodeError::OperandMismatch(instruction.mnemonic.clone()));
+            };
+            ensure_x86_memory_width(memory, 32, &instruction.mnemonic)?;
+            let reg = x86_adapters::parse_r32_register(&dst.name)
+                .ok_or_else(|| EncodeError::OperandMismatch(instruction.mnemonic.clone()))?;
+            values.insert("reg", i64::from(reg));
+        }
         "x86_64.mov_m64_r64" => {
             let [Operand::Memory(memory), Operand::Register(src)] = instruction.operands.as_slice()
             else {

@@ -361,6 +361,24 @@ fn decodes_x86_64_memory_moves_and_lea() {
     assert_eq!(store.text, "mov [rbx+0x8], rax");
     assert_eq!(store.kind, InstructionKind::Store);
 
+    let store32 = decode(&[0x89, 0x45, 0xfc], 0x401000);
+    assert_eq!(store32.text, "mov [rbp+-0x4], eax");
+    assert_eq!(store32.size, 3);
+    assert_eq!(store32.kind, InstructionKind::Store);
+    let mem = memory_operand(&store32.operands[0]);
+    assert_eq!(mem.base.as_ref().unwrap().name, "rbp");
+    assert_eq!(mem.offset, -4);
+    assert_eq!(mem.width_bits, Some(32));
+
+    let load32 = decode(&[0x8b, 0x45, 0xfc], 0x401000);
+    assert_eq!(load32.text, "mov eax, [rbp+-0x4]");
+    assert_eq!(load32.size, 3);
+    assert_eq!(load32.kind, InstructionKind::Load);
+    let mem = memory_operand(&load32.operands[1]);
+    assert_eq!(mem.base.as_ref().unwrap().name, "rbp");
+    assert_eq!(mem.offset, -4);
+    assert_eq!(mem.width_bits, Some(32));
+
     let lea = decode(&[0x48, 0x8d, 0x44, 0x8b, 0x10], 0x401000);
     assert_eq!(lea.text, "lea rax, [rbx+rcx*4+0x10]");
     let mem = memory_operand(&lea.operands[1]);
